@@ -7,6 +7,10 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import logging
 from config import LEVERAGE, RISK_PER_TRADE, ACCOUNT_BALANCE, MAX_POSITION_SIZE
+import logging
+from helpers import validate_signal_data  # Si está en el mismo archivo, no necesitas este import
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -107,13 +111,27 @@ def parse_signal_message(message_text: str) -> Optional[Dict[str, Any]]:
         signal_data['parsed_successfully'] = True
         
         logger.info(f"✅ Señal parseada CORRECTAMENTE: {signal_data['pair']} {signal_data['direction']} @ {signal_data['entry']} (x{signal_data['leverage']})")
-        return signal_data
+        
+        # ✅ AGREGAR AL FINAL DEL TRY, ANTES DEL RETURN:
+        if signal_data:
+            # Registrar actividad para health monitor
+            try:
+                from health_monitor import health_monitor
+                health_monitor.record_telegram_activity()
+            except Exception as e:
+                logger.debug(f"No se pudo registrar actividad en health monitor: {e}")
+        
+        return signal_data  # ✅ SOLO UN RETURN AQUÍ
+        
+    except Exception as e:
+        logger.error(f"❌ Error parseando señal: {e}")
+        return None
         
     except Exception as e:
         logger.error(f"❌ Error parseando señal: {e}")
         logger.error(f"📝 Mensaje completo: {message_text}")
         return None
-
+    
 def validate_signal_data(signal_data: Dict) -> bool:
     """
     Valida que los datos de la señal sean consistentes

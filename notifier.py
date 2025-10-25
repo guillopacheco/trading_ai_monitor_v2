@@ -21,12 +21,20 @@ class TelegramNotifier:
         self._initialize_bot()
     
     def _initialize_bot(self):
-        """Inicializa el bot de Telegram"""
+        """Inicializa el bot de Telegram - ACTUALIZADO"""
         try:
             if not TELEGRAM_BOT_TOKEN:
                 raise ValueError("TELEGRAM_BOT_TOKEN no configurado")
             
             self.bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            
+            # ✅ REGISTRAR ACTIVIDAD EN HEALTH MONITOR
+            try:
+                from health_monitor import health_monitor
+                health_monitor.record_telegram_bot_activity()
+            except Exception as e:
+                logger.debug(f"No se pudo registrar actividad del bot: {e}")
+            
             logger.info("✅ Bot de notificaciones inicializado")
         except Exception as e:
             logger.error(f"❌ Error inicializando bot: {e}")
@@ -315,12 +323,19 @@ class TelegramNotifier:
     
     async def send_alert(self, title: str, message: str, alert_type: str = "info") -> bool:
         """
-        Envía alerta genérica al canal
+        Envía alerta genérica al canal - ACTUALIZADO CON HEALTH MONITOR
         """
         try:
             if not self.bot:
                 logger.error("Bot no inicializado")
                 return False
+            
+            # ✅ REGISTRAR ACTIVIDAD EN HEALTH MONITOR
+            try:
+                from health_monitor import health_monitor
+                health_monitor.record_telegram_bot_activity()
+            except Exception as e:
+                logger.debug(f"No se pudo registrar actividad del bot: {e}")
             
             # Emojis según tipo de alerta
             emojis = {
