@@ -41,19 +41,30 @@ class TelegramNotifier:
             self.bot = None
     
     async def setup_commands(self, application):
-        """Configura los handlers de comandos - ✅ NUEVA FUNCIÓN"""
+        """Configura los handlers de comandos"""
         try:
-            # Handler para /operaciones
-            application.add_handler(CommandHandler("operaciones", self.handle_operaciones_command))
-            # Handler para /estado
-            application.add_handler(CommandHandler("estado", self.handle_estado_command))
-            # Handler para /revisar
-            application.add_handler(CommandHandler("revisar", self.handle_revisar_command))
-            # Handler para /seguimiento
-            application.add_handler(CommandHandler("seguimiento", self.handle_seguimiento_command))
-            logger.info("✅ Comandos de Telegram configurados")
+            from commands import (
+                start_command, status_command, operations_command, 
+                review_command, follow_command, help_command
+            )
+            
+            # Limpiar handlers existentes
+            if application.handlers:
+                application.handlers.clear()
+            
+            # Agregar handlers de comandos
+            application.add_handler(CommandHandler("start", start_command))
+            application.add_handler(CommandHandler("estado", status_command))
+            application.add_handler(CommandHandler("operaciones", operations_command))
+            application.add_handler(CommandHandler("revisar", review_command))
+            application.add_handler(CommandHandler("seguimiento", follow_command))
+            application.add_handler(CommandHandler("help", help_command))
+            
+            logger.info("✅ Comandos configurados correctamente")
+            
         except Exception as e:
             logger.error(f"❌ Error configurando comandos: {e}")
+            raise
     
     async def handle_operaciones_command(self, update: Update, context: CallbackContext):
         """Maneja el comando /operaciones - ✅ NUEVA FUNCIÓN"""

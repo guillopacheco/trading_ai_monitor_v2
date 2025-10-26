@@ -18,6 +18,48 @@ class TradingDatabase:
         self.db_path = db_path
         self._init_database()
     
+    def reconnect(self):
+        """
+        Método para reconexión - requerido por el sistema de autoreconexión
+        """
+        try:
+            # Para SQLite, la reconexión es automática
+            # Solo verificamos que la base de datos esté accesible
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT 1')
+            logger.info("✅ Base de datos reconectada/verificada")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error verificando base de datos: {e}")
+            return False
+    
+    def test_connection(self):
+        """
+        Método para test de conexión - requerido por el sistema de autoreconexión
+        """
+        try:
+            # Para SQLite, simplemente verificamos que la base de datos esté accesible
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT 1')
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error en test de conexión BD: {e}")
+            return False
+    
+    @property
+    def is_connected(self):
+        """Propiedad para verificar conexión - requerida por autoreconexión"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT 1')
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error en verificación de conexión BD: {e}")
+            return False
+    
     def _init_database(self):
         """Inicializa la base de datos con las tablas necesarias - MEJORADO"""
         try:
