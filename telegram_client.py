@@ -51,6 +51,21 @@ class TelegramUserClient:
         except Exception as e:
             logger.error(f"❌ Error conectando cliente de Telegram: {e}")
             return False
+        
+    def is_connected(self):
+        """Verifica si el cliente está conectado"""
+        return self.client and self.client.is_connected()
+
+    async def get_messages(self, channel_id, limit=10):
+        """Obtiene mensajes de un canal"""
+        try:
+            messages = []
+            async for message in self.client.iter_messages(int(channel_id), limit=limit):
+                messages.append(message)
+            return messages
+        except Exception as e:
+            logger.error(f"Error obteniendo mensajes: {e}")
+            return []
     
     async def disconnect(self):
         """Desconecta el cliente"""

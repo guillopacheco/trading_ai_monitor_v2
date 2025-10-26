@@ -307,6 +307,20 @@ class TradingDatabase:
         except Exception as e:
             logger.error(f"❌ Error actualizando señal {signal_id}: {e}")
             return False
+        def get_connection(self):
+            """Retorna la conexión a la base de datos"""
+        return self.conn
+
+    def is_connected(self):
+        """Verifica si la base de datos está conectada"""
+        try:
+            if self.conn:
+                cursor = self.conn.cursor()
+                cursor.execute("SELECT 1")
+                return True
+            return False
+        except:
+            return False
     
     def get_pending_signals(self) -> List[Dict]:
         """Obtiene señales en estado 'waiting' o 'received' - MEJORADO"""

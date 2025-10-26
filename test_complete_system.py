@@ -47,24 +47,25 @@ Take-Profit:
     # 4. Test de base de datos - CORREGIDO
     print("4. Probando base de datos...")
     try:
-        # Intentar usar métodos existentes en lugar de test_connection
-        cursor = trading_db.conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        cursor.close()
-        
-        if tables:
-            print(f"   ✅ Base de datos operativa ({len(tables)} tablas encontradas)")
+        # Verificar si la base de datos tiene el método correcto
+        if hasattr(trading_db, 'get_connection'):
+            conn = trading_db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = cursor.fetchall()
+            cursor.close()
             
-            # Mostrar tablas existentes
-            table_names = [table[0] for table in tables]
-            print(f"      Tablas: {', '.join(table_names)}")
+            if tables:
+                print(f"   ✅ Base de datos operativa ({len(tables)} tablas encontradas)")
+                table_names = [table[0] for table in tables]
+                print(f"      Tablas: {', '.join(table_names)}")
+            else:
+                print("   ⚠️  Base de datos conectada pero sin tablas")
         else:
-            print("   ⚠️  Base de datos conectada pero sin tablas")
+            print("   ⚠️  Método de conexión no disponible en database.py")
             
     except Exception as e:
         print(f"   ❌ Error en base de datos: {e}")
-        # No retornamos False aquí porque la BD no es crítica para pruebas básicas
     
     # 5. Test de configuración
     print("5. Verificando configuración...")
@@ -106,32 +107,25 @@ Take-Profit:
     advanced_modules = []
     
     try:
-        from risk_manager import risk_manager
-        print("   ✅ Risk Manager cargado")
-        advanced_modules.append("Risk Manager")
-    except ImportError as e:
-        print(f"   ⚠️  Risk Manager no disponible: {e}")
-    
-    try:
-        from position_sizer import position_sizer
-        print("   ✅ Position Sizer cargado")
-        advanced_modules.append("Position Sizer")
-    except ImportError as e:
-        print(f"   ⚠️  Position Sizer no disponible: {e}")
-    
-    try:
-        from volatility_analyzer import volatility_analyzer
-        print("   ✅ Volatility Analyzer cargado")
-        advanced_modules.append("Volatility Analyzer")
-    except ImportError as e:
-        print(f"   ⚠️  Volatility Analyzer no disponible: {e}")
-    
-    try:
         from connection_monitor import connection_monitor
         print("   ✅ Connection Monitor cargado")
         advanced_modules.append("Connection Monitor")
     except ImportError as e:
         print(f"   ⚠️  Connection Monitor no disponible: {e}")
+    
+    try:
+        from signal_manager import signal_manager
+        print("   ✅ Signal Manager cargado")
+        advanced_modules.append("Signal Manager")
+    except ImportError as e:
+        print(f"   ⚠️  Signal Manager no disponible: {e}")
+    
+    try:
+        from divergence_detector import divergence_detector
+        print("   ✅ Divergence Detector cargado")
+        advanced_modules.append("Divergence Detector")
+    except ImportError as e:
+        print(f"   ⚠️  Divergence Detector no disponible: {e}")
     
     print("\n" + "=" * 50)
     print("🎯 RESUMEN DEL SISTEMA")
@@ -156,20 +150,23 @@ async def test_telegram_integration():
         from telegram_client import telegram_user_client
         from notifier import telegram_notifier
         
-        # Test cliente usuario
+        # Test cliente usuario - CORREGIDO
         print("1. Probando cliente de usuario...")
         user_ok = await telegram_user_client.connect()
         if user_ok:
             print("   ✅ Cliente de usuario conectado")
             
-            # Probar lectura de canal
+            # Probar métodos disponibles
             try:
-                from config import SIGNALS_CHANNEL_ID
-                messages = await telegram_user_client.get_channel_messages(SIGNALS_CHANNEL_ID, limit=3)
-                if messages:
-                    print(f"   ✅ Puede leer canal de señales ({len(messages)} mensajes)")
+                # Verificar métodos reales del cliente
+                if hasattr(telegram_user_client, 'get_messages'):
+                    messages = await telegram_user_client.get_messages(SIGNALS_CHANNEL_ID, limit=3)
+                    if messages:
+                        print(f"   ✅ Puede leer canal de señales ({len(messages)} mensajes)")
+                    else:
+                        print("   ⚠️  Conectado pero no hay mensajes")
                 else:
-                    print("   ⚠️  Conectado pero no puede leer el canal")
+                    print("   ⚠️  Método get_messages no disponible")
             except Exception as e:
                 print(f"   ⚠️  Error leyendo canal: {e}")
             
@@ -202,19 +199,62 @@ async def test_telegram_integration():
         print(f"   ❌ Error en integración Telegram: {e}")
         return False
 
+async def test_commands():
+    """Test específico de comandos"""
+    print("\n⌨️  TEST DE COMANDOS")
+    print("=" * 50)
+    
+    try:
+        from commands import command_handler
+        from notifier import telegram_notifier
+        
+        print("1. Probando comando /estado...")
+        
+        # Simular mensaje de comando
+        class MockMessage:
+            def __init__(self, text):
+                self.text = text
+                self.chat_id = "test_chat"
+        
+        mock_msg = MockMessage("/estado")
+        
+        # Procesar comando
+        result = await command_handler.handle_command(mock_msg)
+        
+        if result:
+            print("   ✅ Comando /estado procesado correctamente")
+            print(f"      Respuesta: {result}")
+        else:
+            print("   ❌ Comando /estado no devolvió respuesta")
+            
+        return result is not None
+        
+    except Exception as e:
+        print(f"   ❌ Error en comandos: {e}")
+        return False
+
 if __name__ == "__main__":
     # Test principal síncrono
     success = test_complete_system()
     
-    # Test Telegram opcional (asíncrono)
+    # Test Telegram y comandos (asíncrono)
     if success:
         try:
+            # Test integración Telegram
             telegram_ok = asyncio.run(test_telegram_integration())
-            if telegram_ok:
+            
+            # Test específico de comandos
+            commands_ok = asyncio.run(test_commands())
+            
+            if telegram_ok and commands_ok:
                 print("\n🎉 ¡SISTEMA COMPLETAMENTE OPERATIVO! 🎉")
             else:
-                print("\n⚠️  Sistema base operativo, Telegram requiere ajustes")
+                print("\n⚠️  Sistema operativo pero con algunos issues:")
+                if not commands_ok:
+                    print("   • Comandos requieren ajustes")
+                if not telegram_ok:
+                    print("   • Telegram requiere ajustes")
         except Exception as e:
-            print(f"\n⚠️  Error en test Telegram: {e}")
+            print(f"\n⚠️  Error en tests asíncronos: {e}")
     else:
         print("\n❌ Sistema base requiere ajustes")
