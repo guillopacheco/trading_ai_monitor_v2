@@ -1,470 +1,344 @@
 """
-Funciones auxiliares para Trading AI Monitor v2 - PARSER ULTRA ROBUSTO
+Helpers y utilities para el Trading Bot - CORREGIDO SIN CIRCULAR IMPORTS
 """
 import re
-import pandas as pd
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
 import logging
-from config import LEVERAGE, RISK_PER_TRADE, ACCOUNT_BALANCE, MAX_POSITION_SIZE
-import logging
-from helpers import validate_signal_data  # Si está en el mismo archivo, no necesitas este import
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
+# ✅ ELIMINADO: from helpers import validate_signal_data  # Esta línea causa circular import
 
-def parse_signal_message(message_text: str) -> Optional[Dict[str, Any]]:
+def parse_signal_message(message_text: str) -> Optional[Dict]:
     """
-    Parsea mensajes de señales - VERSIÓN ULTRA ROBUSTA PARA CUALQUIER FORMATO
-    """
-    try:
-        signal_data = {}
-        
-        # ✅ CORRECCIÓN DEFINITIVA: Limpieza ultra-agresiva de asteriscos
-        # Remover TODOS los asteriscos sin importar cuántos haya
-        clean_text = re.sub(r'\*+', '', message_text)  # ✅ Esto removerá *, **, ***, etc.
-        clean_text = re.sub(r'\s+', ' ', clean_text.strip())
-        
-        # ✅ DEBUG: Log del texto limpio para ver qué está pasando
-        logger.debug(f"🔧 Texto después de limpieza: {clean_text[:100]}")
-        
-        # ✅ MÉTODO MÁS ROBUSTO: Buscar el patrón #PAR/USDT directamente
-        # Primero intentar el formato más común
-        pair_match = re.search(r'#([A-Za-z0-9]+)/USDT', clean_text)
-        if pair_match:
-            pair = f"{pair_match.group(1)}/USDT"
-        else:
-            # Fallback: buscar cualquier par que termine en /USDT
-            pair_match = re.search(r'([A-Za-z0-9]+)/USDT', clean_text)
-            if pair_match:
-                pair = pair_match.group(0)
-            else:
-                logger.error(f"❌ No se pudo encontrar par /USDT en: {clean_text[:100]}")
-                return None
-        
-        signal_data['pair'] = pair.upper()
-        
-        # Extraer apalancamiento (x20)
-        leverage_match = re.search(r'x(\d+)', clean_text)
-        signal_data['leverage'] = int(leverage_match.group(1)) if leverage_match else LEVERAGE
-        
-        # Extraer dirección
-        if 'Short' in clean_text or '📉' in clean_text:
-            signal_data['direction'] = 'SHORT'
-        elif 'Long' in clean_text or '📈' in clean_text:
-            signal_data['direction'] = 'LONG'
-        else:
-            logger.warning("No se pudo determinar la dirección de la señal")
-            return None
-        
-        # Extraer entry price con múltiples formatos
-        entry_match = re.search(r'Entry\s*-\s*([0-9.]+)', clean_text)
-        if entry_match:
-            signal_data['entry'] = float(entry_match.group(1))
-        else:
-            # Intentar otros formatos de entry
-            entry_alt = re.search(r'Entry[:\s]*([0-9.]+)', clean_text)
-            if entry_alt:
-                signal_data['entry'] = float(entry_alt.group(1))
-            else:
-                logger.warning("No se pudo extraer el precio de entrada")
-                return None
-        
-        # Extraer take profits
-        tp_matches = re.findall(r'[🥉🥈🥇🚀]\s*([0-9.]+)\s*\(([0-9]+)%', clean_text)
-        
-        if len(tp_matches) >= 4:
-            tp_matches.sort(key=lambda x: int(x[1]))
-            signal_data['tp1'] = float(tp_matches[0][0])
-            signal_data['tp2'] = float(tp_matches[1][0])
-            signal_data['tp3'] = float(tp_matches[2][0])
-            signal_data['tp4'] = float(tp_matches[3][0])
-            signal_data['tp1_percent'] = int(tp_matches[0][1])
-            signal_data['tp2_percent'] = int(tp_matches[1][1])
-            signal_data['tp3_percent'] = int(tp_matches[2][1])
-            signal_data['tp4_percent'] = int(tp_matches[3][1])
-        else:
-            # Fallback: buscar TPs sin porcentajes
-            tp_matches = re.findall(r'[🥉🥈🥇🚀]\s*([0-9.]+)', clean_text)
-            if len(tp_matches) >= 4:
-                signal_data['tp1'] = float(tp_matches[0])
-                signal_data['tp2'] = float(tp_matches[1])
-                signal_data['tp3'] = float(tp_matches[2])
-                signal_data['tp4'] = float(tp_matches[3])
-                signal_data['tp1_percent'] = 40
-                signal_data['tp2_percent'] = 60
-                signal_data['tp3_percent'] = 80
-                signal_data['tp4_percent'] = 100
-            else:
-                logger.warning(f"Solo se encontraron {len(tp_matches)} take profits")
-                return None
-        
-        # Validar la señal
-        if not validate_signal_data(signal_data):
-            logger.error("Señal no pasó validación")
-            return None
-        
-        # Metadata adicional
-        signal_data['timestamp'] = datetime.now()
-        signal_data['message_text'] = message_text
-        signal_data['parsed_successfully'] = True
-        
-        logger.info(f"✅ Señal parseada CORRECTAMENTE: {signal_data['pair']} {signal_data['direction']} @ {signal_data['entry']} (x{signal_data['leverage']})")
-        
-        # ✅ AGREGAR AL FINAL DEL TRY, ANTES DEL RETURN:
-        if signal_data:
-            # Registrar actividad para health monitor
-            try:
-                from health_monitor import health_monitor
-                health_monitor.record_telegram_activity()
-            except Exception as e:
-                logger.debug(f"No se pudo registrar actividad en health monitor: {e}")
-        
-        return signal_data  # ✅ SOLO UN RETURN AQUÍ
-        
-    except Exception as e:
-        logger.error(f"❌ Error parseando señal: {e}")
-        return None
-        
-    except Exception as e:
-        logger.error(f"❌ Error parseando señal: {e}")
-        logger.error(f"📝 Mensaje completo: {message_text}")
-        return None
-    
-def validate_signal_data(signal_data: Dict) -> bool:
-    """
-    Valida que los datos de la señal sean consistentes
+    Parsea mensajes de señal de trading - OPTIMIZADO PARA ANDY INSIDER
     """
     try:
-        required_fields = ['pair', 'direction', 'entry', 'tp1', 'tp2', 'tp3', 'tp4', 'leverage']
+        if not message_text or len(message_text.strip()) < 10:
+            return None
         
-        # Verificar campos requeridos
+        logger.debug(f"📨 Mensaje original: {message_text[:200]}...")
+        
+        # Limpieza agresiva de formato Markdown y emojis
+        clean_text = re.sub(r'\*+', '', message_text)  # Elimina **
+        clean_text = re.sub(r'`', '', clean_text)      # Elimina `
+        clean_text = re.sub(r'[🔥🎯📈📉⚡️️🟢🔴🟡🟠🔵🟣🟤⚫⚪]', '', clean_text)  # Elimina emojis comunes
+        clean_text = clean_text.replace('$', '').replace('/', ' / ')  # Normaliza separadores
+        
+        logger.debug(f"🔧 Texto limpio: {clean_text[:200]}...")
+        
+        # PATRONES ESPECÍFICOS PARA ANDY INSIDER
+        patterns = [
+            # Patrón 1: Formato con par entre ** y dirección con emoji
+            r'\*{0,2}#?(\w+)\*{0,2}.*?\/?USDT.*?(LONG|SHORT).*?x(\d+)',
+            
+            # Patrón 2: Formato con emojis de dirección
+            r'#?(\w+).*?\/?USDT.*?(LONG|SHORT)[📈📉].*?x(\d+)',
+            
+            # Patrón 3: Formato con entry explícito
+            r'#?(\w+).*?(LONG|SHORT).*?[Ee]ntr[yi][\s:\-]*(\d+\.?\d*)',
+            
+            # Patrón 4: Formato simple con par y dirección
+            r'#?(\w+).*?\/?USDT.*?(LONG|SHORT)',
+            
+            # Patrón 5: Formato alternativo
+            r'(\w+)\s+(LONG|SHORT)\s+(\d+\.?\d*)'
+        ]
+        
+        pair = None
+        direction = None
+        leverage = 20  # Default
+        entry_price = None
+        stop_loss = None
+        take_profits = []
+        
+        # Buscar patrón que coincida
+        for i, pattern in enumerate(patterns):
+            match = re.search(pattern, clean_text, re.IGNORECASE | re.DOTALL)
+            if match:
+                logger.debug(f"🎯 Patrón {i+1} coincidió: {match.groups()}")
+                
+                # Extraer información básica según el patrón
+                if i == 0:  # Patrón 1: **#PAR**/USDT (Direction📈, x20)
+                    pair = match.group(1).upper() + 'USDT'
+                    direction = match.group(2).upper()
+                    leverage = int(match.group(3))
+                elif i == 1:  # Patrón 2: #PAR/USDT Direction📈 x20
+                    pair = match.group(1).upper() + 'USDT'
+                    direction = match.group(2).upper()
+                    leverage = int(match.group(3))
+                elif i == 2:  # Patrón 3: Con entry explícito
+                    pair = match.group(1).upper() + 'USDT'
+                    direction = match.group(2).upper()
+                    entry_price = float(match.group(3))
+                elif i == 3:  # Patrón 4: Solo par y dirección
+                    pair = match.group(1).upper() + 'USDT'
+                    direction = match.group(2).upper()
+                elif i == 4:  # Patrón 5: Formato simple
+                    pair = match.group(1).upper() + 'USDT'
+                    direction = match.group(2).upper()
+                    entry_price = float(match.group(3))
+                
+                break
+        
+        if not pair or not direction:
+            logger.warning("❌ No se pudo extraer par o dirección")
+            return None
+        
+        # EXTRACCIÓN DE PRECIOS - MÁS ROBUSTA
+        price_patterns = [
+            r'[Ee]ntr[yi][\s:\-]*(\d+\.?\d*)',                    # Entry: 1.538
+            r'[Ee]ntr[yi][\s\-]*(\d+\.?\d*)',                     # Entry - 1.538
+            r'[Pp]rice[\s:\-]*(\d+\.?\d*)',                       # Price - 9.054
+            r'(\d+\.\d{3,})',                                     # Números con 3+ decimales
+            r'(\d+\.\d+)',                                        # Números con decimales
+        ]
+        
+        # Buscar entry price
+        if not entry_price:
+            for price_pattern in price_patterns:
+                price_match = re.search(price_pattern, clean_text)
+                if price_match:
+                    try:
+                        entry_price = float(price_match.group(1))
+                        logger.debug(f"💰 Entry price encontrado: {entry_price}")
+                        break
+                    except (ValueError, IndexError):
+                        continue
+        
+        # Buscar take profits
+        tp_patterns = [
+            r'[Tt]ake[-\\s]?[Pp]rofit[:\s]*([\d\.\s\/]+)',        # Take-Profit: 1.5072 / 1.4919
+            r'[Tt][Pp][:\s]*([\d\.\s\/]+)',                       # TP: 1.5072 / 1.4919
+            r'🥉\s*(\d+\.?\d*).*?🥈\s*(\d+\.?\d*)',              # Emojis de medallas
+            r'(\d+\.\d+)\s*\([^)]*\)',                           # 1.5072 (40% of profit)
+        ]
+        
+        for tp_pattern in tp_patterns:
+            tp_match = re.search(tp_pattern, clean_text)
+            if tp_match:
+                try:
+                    # Manejar múltiples formatos de take profits
+                    if len(tp_match.groups()) > 1:
+                        # Múltiples TPs en grupos separados
+                        for group in tp_match.groups():
+                            if group:
+                                take_profits.append(float(group))
+                    else:
+                        # TPs en formato 1.5072/1.4919
+                        tps_text = tp_match.group(1)
+                        for tp in re.findall(r'\d+\.\d+', tps_text):
+                            take_profits.append(float(tp))
+                    
+                    logger.debug(f"🎯 Take profits encontrados: {take_profits}")
+                    break
+                except (ValueError, IndexError) as e:
+                    logger.debug(f"⚠️ Error parseando TPs: {e}")
+                    continue
+        
+        # CALCULAR STOP LOSS si no se encontró
+        if entry_price and not stop_loss:
+            if direction == 'LONG':
+                stop_loss = entry_price * 0.98  # -2% para LONG
+            else:  # SHORT
+                stop_loss = entry_price * 1.02  # +2% para SHORT
+            logger.debug(f"🛑 Stop loss calculado: {stop_loss}")
+        
+        # Si no se encontraron take profits, calcular algunos
+        if entry_price and not take_profits:
+            if direction == 'LONG':
+                take_profits = [
+                    entry_price * 1.02,  # +2%
+                    entry_price * 1.04,  # +4%
+                    entry_price * 1.06   # +6%
+                ]
+            else:  # SHORT
+                take_profits = [
+                    entry_price * 0.98,  # -2%
+                    entry_price * 0.96,  # -4%
+                    entry_price * 0.94   # -6%
+                ]
+            logger.debug(f"🎯 Take profits calculados: {take_profits}")
+        
+        # Validar que tenemos los datos mínimos
+        if not entry_price:
+            logger.warning("⚠️ No se pudo determinar entry price, usando fallback")
+            # Podríamos obtener el precio actual desde Bybit aquí
+            entry_price = 1.0  # Fallback
+        
+        signal_data = {
+            'pair': pair,
+            'direction': direction,
+            'entry_price': entry_price,
+            'stop_loss': stop_loss,
+            'take_profit': take_profits,
+            'leverage': leverage,
+            'timestamp': datetime.now(),
+            'raw_message': message_text[:500],
+            'source': 'andy_insider'
+        }
+        
+        logger.info(f"✅ Señal parseada: {pair} {direction} @ {entry_price} "
+                   f"SL: {stop_loss} TP: {take_profits} Leverage: {leverage}x")
+        
+        return signal_data
+        
+    except Exception as e:
+        logger.error(f"💥 Error parseando señal: {e}")
+        logger.debug(f"Mensaje problemático: {message_text}")
+        return None
+
+def validate_signal_data(signal_data: Dict) -> Tuple[bool, str]:
+    """
+    Valida los datos de una señal de trading
+    """
+    try:
+        if not signal_data:
+            return False, "Datos de señal vacíos"
+        
+        required_fields = ['pair', 'direction', 'entry_price', 'stop_loss', 'take_profit']
         for field in required_fields:
             if field not in signal_data:
-                logger.error(f"Campo requerido faltante: {field}")
-                return False
+                return False, f"Campo requerido faltante: {field}"
+        
+        # Validar pair
+        pair = signal_data['pair']
+        if not isinstance(pair, str) or len(pair) < 4 or 'USDT' not in pair:
+            return False, f"Par inválido: {pair}"
         
         # Validar dirección
-        if signal_data['direction'] not in ['LONG', 'SHORT']:
-            logger.error(f"Dirección inválida: {signal_data['direction']}")
-            return False
+        direction = signal_data['direction']
+        if direction not in ['LONG', 'SHORT']:
+            return False, f"Dirección inválida: {direction}"
         
-        # Validar apalancamiento
-        if not isinstance(signal_data['leverage'], int) or signal_data['leverage'] <= 0:
-            logger.error(f"Apalancamiento inválido: {signal_data['leverage']}")
-            return False
+        # Validar precios
+        entry = signal_data['entry_price']
+        stop_loss = signal_data['stop_loss']
+        take_profits = signal_data['take_profit']
         
-        # Validar que los precios sean números positivos
-        price_fields = ['entry', 'tp1', 'tp2', 'tp3', 'tp4']
-        for field in price_fields:
-            if not isinstance(signal_data[field], (int, float)) or signal_data[field] <= 0:
-                logger.error(f"Precio inválido en {field}: {signal_data[field]}")
-                return False
+        if not isinstance(entry, (int, float)) or entry <= 0:
+            return False, f"Precio de entrada inválido: {entry}"
         
-        # Validar que los TPs estén en el orden correcto según dirección
-        tps = [signal_data['tp1'], signal_data['tp2'], signal_data['tp3'], signal_data['tp4']]
+        if not isinstance(stop_loss, (int, float)) or stop_loss <= 0:
+            return False, f"Stop loss inválido: {stop_loss}"
         
-        if signal_data['direction'] == 'LONG':
-            # Para LONG: TPs deben ser mayores que entry
-            if not all(tp > signal_data['entry'] for tp in tps):
-                logger.error("Para LONG, todos los TPs deben ser mayores que el entry")
-                return False
-            # Deben estar en orden ascendente
-            if not all(tps[i] < tps[i+1] for i in range(len(tps)-1)):
-                logger.error("TPs para LONG deben estar en orden ascendente")
-                return False
+        if not isinstance(take_profits, list) or not take_profits:
+            return False, "Take profits inválidos"
+        
+        for tp in take_profits:
+            if not isinstance(tp, (int, float)) or tp <= 0:
+                return False, f"Take profit inválido: {tp}"
+        
+        # Validar leverage
+        leverage = signal_data.get('leverage', 20)
+        if not isinstance(leverage, int) or leverage < 1 or leverage > 100:
+            return False, f"Leverage inválido: {leverage}"
+        
+        # Validar lógica de precios
+        if direction == 'LONG':
+            if stop_loss >= entry:
+                return False, "Stop loss debe ser menor que entry en LONG"
+            if any(tp <= entry for tp in take_profits):
+                return False, "Take profits deben ser mayores que entry en LONG"
         else:  # SHORT
-            # Para SHORT: TPs deben ser menores que entry
-            if not all(tp < signal_data['entry'] for tp in tps):
-                logger.error("Para SHORT, todos los TPs deben ser menores que el entry")
-                return False
-            # Deben estar en orden descendente
-            if not all(tps[i] > tps[i+1] for i in range(len(tps)-1)):
-                logger.error("TPs para SHORT deben estar en orden descendente")
-                return False
+            if stop_loss <= entry:
+                return False, "Stop loss debe ser mayor que entry en SHORT"
+            if any(tp >= entry for tp in take_profits):
+                return False, "Take profits deben ser menores que entry en SHORT"
         
-        # Validar formato del par
-        if not re.match(r'^[A-Z0-9]+/[A-Z0-9]+$', signal_data['pair']):
-            logger.error(f"Formato de par inválido: {signal_data['pair']}")
-            return False
-        
-        logger.debug(f"✅ Señal validada correctamente: {signal_data['pair']} (x{signal_data['leverage']})")
-        return True
+        return True, "Señal válida"
         
     except Exception as e:
-        logger.error(f"❌ Error validando señal: {e}")
-        return False
+        return False, f"Error en validación: {str(e)}"
 
-def calculate_position_size(entry_price: float, stop_loss: float, 
-                          account_balance: float = ACCOUNT_BALANCE, 
-                          risk_per_trade: float = RISK_PER_TRADE,
-                          leverage: int = LEVERAGE,
-                          max_position_size: float = MAX_POSITION_SIZE) -> Dict[str, float]:
+def format_telegram_message(signal_data: Dict, analysis_summary: Dict) -> str:
     """
-    Calcula el tamaño de posición considerando apalancamiento
-    """
-    try:
-        # Calcular riesgo en precio
-        price_risk = abs(entry_price - stop_loss)
-        
-        if price_risk <= 0:
-            return {
-                'position_size': 0,
-                'dollar_risk': 0,
-                'risk_reward_ratio': 0,
-                'leverage_used': leverage,
-                'error': 'Riesgo de precio inválido'
-            }
-        
-        # Calcular riesgo en dinero (2% del balance)
-        dollar_risk = account_balance * risk_per_trade
-        
-        # Calcular tamaño de posición base (sin leverage)
-        position_size_base = dollar_risk / price_risk
-        
-        # Aplicar apalancamiento
-        position_size_leveraged = position_size_base * leverage
-        
-        # Aplicar límite máximo de posición (10% del balance con leverage)
-        max_position = account_balance * max_position_size * leverage
-        final_position_size = min(position_size_leveraged, max_position)
-        
-        # Calcular riesgo real considerando leverage
-        real_risk_pct = (price_risk / entry_price) * leverage * 100
-        
-        return {
-            'position_size': round(final_position_size, 2),
-            'dollar_risk': round(dollar_risk, 2),
-            'risk_reward_ratio': round(real_risk_pct, 2),
-            'leverage_used': leverage,
-            'real_risk_percent': round(real_risk_pct, 2),
-            'max_position_allowed': round(max_position, 2)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error calculando tamaño de posición: {e}")
-        return {
-            'position_size': 0,
-            'dollar_risk': 0,
-            'risk_reward_ratio': 0,
-            'leverage_used': leverage,
-            'error': str(e)
-        }
-
-def calculate_atr_multiplier(atr_value: float, base_atr: float = 0.02) -> float:
-    """
-    Calcula multiplicador para SL basado en ATR
-    """
-    try:
-        if atr_value <= 0:
-            return 1.0
-            
-        volatility_ratio = atr_value / base_atr
-        
-        if volatility_ratio <= 1.2:
-            return 1.0  # Volatilidad normal
-        elif volatility_ratio <= 1.5:
-            return 1.3  # Volatilidad moderada
-        elif volatility_ratio <= 2.0:
-            return 1.7  # Volatilidad alta
-        else:
-            return 2.0  # Volatilidad muy alta
-            
-    except Exception as e:
-        logger.error(f"Error calculando ATR multiplier: {e}")
-        return 1.0
-
-def should_review_frequently(atr_value: float, base_atr: float = 0.02) -> bool:
-    """
-    Determina si se debe revisar frecuentemente (cada 5min) por alta volatilidad
-    """
-    try:
-        return atr_value > base_atr * 1.5
-    except Exception as e:
-        logger.error(f"Error determinando frecuencia de revisión: {e}")
-        return False
-
-def format_telegram_message(signal_data: Dict, analysis_result: Dict) -> str:
-    """
-    Formatea mensaje para Telegram con emojis y estructura clara
+    Formatea mensaje para Telegram con análisis completo
     """
     try:
         pair = signal_data.get('pair', 'N/A')
         direction = signal_data.get('direction', 'N/A')
-        leverage = signal_data.get('leverage', LEVERAGE)
+        leverage = signal_data.get('leverage', 20)
+        entry = signal_data.get('entry_price', 'N/A')
+        stop_loss = signal_data.get('stop_loss', 'N/A')
+        take_profits = signal_data.get('take_profit', [])
         
         # Emojis según dirección
-        direction_emoji = "📉" if direction == "SHORT" else "📈"
+        direction_emoji = "📈" if direction == "LONG" else "📉"
+        leverage_emoji = "⚡" if leverage > 30 else "🔸"
         
-        # Obtener análisis por timeframe
-        timeframe_analysis = ""
-        for tf in ['1', '5', '15']:
-            trend_key = f'trend_{tf}m'
-            trend = analysis_result.get(trend_key, 'N/A')
-            emoji = "🟢" if trend == "ALCISTA" else "🔴" if trend == "BAJISTA" else "⚪"
-            timeframe_analysis += f"{emoji} {tf}m: {trend}\n"
-        
-        # Información de gestión de riesgo
-        risk_info = ""
-        if analysis_result.get('position_size'):
-            risk_info = f"""
-**Gestión de Riesgo (x{leverage}):**
-💰 Tamaño posición: {analysis_result.get('position_size', 'N/A')} USDT
-🎯 Stop Loss: {analysis_result.get('stop_loss', 'N/A')}
-📊 Riesgo/Operación: {analysis_result.get('dollar_risk', 'N/A')} USDT ({RISK_PER_TRADE*100}%)
-⚡ Riesgo Real: {analysis_result.get('real_risk_percent', 'N/A')}% (con leverage)
-"""
+        # Formatear take profits
+        tp_text = " / ".join([f"{tp:.2f}" for tp in take_profits]) if take_profits else "N/A"
         
         message = f"""
-🎯 **ANÁLISIS DE SEÑAL - {pair}** {direction_emoji}
+{direction_emoji} **SEÑAL DE TRADING DETECTADA** {direction_emoji}
 
-**Señal Original:**
-- Par: {pair}
-- Dirección: {direction}
-- Apalancamiento: x{leverage}
-- Entry: {signal_data.get('entry', 'N/A')}
+**Par:** {pair}
+**Dirección:** {direction} {leverage_emoji} (x{leverage})
+**Entry:** `{entry}`
+**Stop Loss:** `{stop_loss}`
+**Take Profits:** `{tp_text}`
 
-**Take Profits:**
-🥉 TP1 ({signal_data.get('tp1_percent', 40)}%): {signal_data.get('tp1', 'N/A')}
-🥈 TP2 ({signal_data.get('tp2_percent', 60)}%): {signal_data.get('tp2', 'N/A')}  
-🥇 TP3 ({signal_data.get('tp3_percent', 80)}%): {signal_data.get('tp3', 'N/A')}
-🚀 TP4 ({signal_data.get('tp4_percent', 100)}%): {signal_data.get('tp4', 'N/A')}
+**📊 ANÁLISIS:**
+• Confianza: {analysis_summary.get('confidence', 0)}%
+• Riesgo: {analysis_summary.get('risk_score', 'N/A')}/100
+• Decisión: {analysis_summary.get('trading_decision', 'PENDING')}
+• Volatilidad: {analysis_summary.get('volatility_alert', 'N/A')}
 
-**Análisis Técnico:**
-{timeframe_analysis.strip()}
+**🔍 DETALLES:**
+• Momentum: {analysis_summary.get('momentum_strength', 'N/A')}
+• Divergencia: {analysis_summary.get('divergence_detected', 'No')}
+• Condición: {analysis_summary.get('market_condition', 'N/A')}
 
-**Indicadores Consolidados:**
-📈 Tendencia: {analysis_result.get('predominant_trend', 'N/A')}
-⚡ RSI Promedio: {analysis_result.get('avg_rsi', 'N/A')}
-🔍 MACD: {analysis_result.get('predominant_macd', 'N/A')}
-🌊 Volatilidad: {analysis_result.get('max_atr_multiplier', 'N/A')}x
-
-**Confirmación:**
-🔄 Estado: {analysis_result.get('confirmation_status', 'N/A')}
-🎯 Coincidencia: {analysis_result.get('match_percentage', 'N/A')}%
-💪 Confianza: {analysis_result.get('confidence', 'N/A')}
-{risk_info.strip()}
-
-**Recomendación:** {analysis_result.get('recommendation_action', 'N/A')}
+**⚠️ RIESGO CALCULADO:** {analysis_summary.get('real_risk_percent', 0):.1f}%
 """
-        
-        # Agregar alerta de divergencia si existe
-        if analysis_result.get('divergence_detected') == 'Sí':
-            divergence_type = analysis_result.get('divergence_type', '')
-            message += f"\n\n⚠️ **ALERTA DE DIVERGENCIA** ⚠️\n{divergence_type}"
         
         return message.strip()
         
     except Exception as e:
-        logger.error(f"Error formateando mensaje de Telegram: {e}")
-        return f"📊 Análisis para {signal_data.get('pair', 'N/A')} - Error formateando detalles"
+        logger.error(f"❌ Error formateando mensaje Telegram: {e}")
+        return f"❌ Error generando análisis para {signal_data.get('pair', 'N/A')}"
 
-def calculate_time_until_review(volatility_high: bool, confirmation_status: str = None) -> int:
+def calculate_position_size(account_balance: float, risk_percent: float, 
+                          entry_price: float, stop_loss: float) -> float:
     """
-    Calcula tiempo hasta próximo re-análisis basado en volatilidad y estado
+    Calcula el tamaño de posición basado en riesgo
     """
     try:
-        base_interval = 300 if volatility_high else 900  # 5min o 15min
+        risk_amount = account_balance * (risk_percent / 100)
+        price_diff = abs(entry_price - stop_loss)
         
-        # Ajustar según estado de confirmación
-        if confirmation_status:
-            if confirmation_status in ["DÉBILMENTE CONFIRMADA", "NO CONFIRMADA"]:
-                # Revisar más frecuentemente señales no confirmadas
-                return min(base_interval, 600)  # Máximo 10 minutos
-            elif confirmation_status == "CONFIRMADA":
-                # Señales confirmadas pueden esperar más
-                return min(base_interval + 300, 1800)  # Máximo 30 minutos
+        if price_diff == 0:
+            return 0
         
-        return base_interval
+        position_size = risk_amount / (price_diff / entry_price)
+        return round(position_size, 2)
         
     except Exception as e:
-        logger.error(f"Error calculando tiempo de revisión: {e}")
-        return 900  # Default 15 minutos
+        logger.error(f"❌ Error calculando tamaño de posición: {e}")
+        return 0
 
-def extract_price_levels(message_text: str) -> List[float]:
+def extract_hashtags(text: str) -> List[str]:
     """
-    Extrae todos los niveles de precio de un mensaje
+    Extrae hashtags de un texto
     """
     try:
-        # Encontrar todos los números decimales
-        price_matches = re.findall(r'(\d+\.\d+)', message_text)
-        prices = []
-        
-        for match in price_matches:
-            try:
-                price = float(match)
-                # Filtrar precios razonables (asumiendo trading crypto)
-                if 0.000001 <= price <= 100000:
-                    prices.append(price)
-            except ValueError:
-                continue
-        
-        return sorted(list(set(prices)))  # Ordenar y eliminar duplicados
-        
+        hashtags = re.findall(r'#(\w+)', text)
+        return [tag.upper() for tag in hashtags]
     except Exception as e:
-        logger.error(f"Error extrayendo niveles de precio: {e}")
+        logger.error(f"❌ Error extrayendo hashtags: {e}")
         return []
 
-def calculate_risk_reward_ratio(entry: float, stop_loss: float, take_profits: List[float]) -> Dict[str, float]:
+def safe_float_conversion(value: str) -> Optional[float]:
     """
-    Calcula ratios de riesgo/recompensa para cada TP
+    Conversión segura a float
     """
     try:
-        if not take_profits:
-            return {}
-        
-        risk = abs(entry - stop_loss)
-        if risk == 0:
-            return {}
-        
-        ratios = {}
-        for i, tp in enumerate(take_profits, 1):
-            reward = abs(tp - entry)
-            rr_ratio = reward / risk
-            ratios[f'tp{i}_rr'] = round(rr_ratio, 2)
-        
-        return ratios
-        
-    except Exception as e:
-        logger.error(f"Error calculando ratios riesgo/recompensa: {e}")
-        return {}
+        # Limpiar caracteres no numéricos excepto punto y negativo
+        clean_value = re.sub(r'[^\d\.\-]', '', str(value))
+        return float(clean_value) if clean_value else None
+    except (ValueError, TypeError):
+        return None
 
-if __name__ == "__main__":
-    # Test del parser ultra robusto
-    test_messages = [
-        """🔥 **#CLANKER**/USDT (Short📉, x20) 🔥
-Entry - 50.64
-Take-Profit:
-🥉 49.6272 (40% of profit)
-🥈 49.1208 (60% of profit)
-🥇 48.6144 (80% of profit)
-🚀 48.108 (100% of profit)""",
-        
-        """🔥 **#PIPPIN**/USDT (Long📈, x20) 🔥
-Entry - 0.0247
-Take-Profit:
-🥉 0.02519 (40% of profit)
-🥈 0.02544 (60% of profit)
-🥇 0.02569 (80% of profit)
-🚀 0.02593 (100% of profit)""",
-        
-        """🔥 #LIGHT/USDT (Long📈, x20) 🔥
-Entry - 2.3868
-Take-Profit:
-🥉 2.4345 (40% of profit)
-🥈 2.4584 (60% of profit)
-🥇 2.4823 (80% of profit)
-🚀 2.5061 (100% of profit)"""
-    ]
-    
-    print("🧪 Testeando parser ULTRA ROBUSTO...")
-    
-    for i, test_msg in enumerate(test_messages, 1):
-        print(f"\n--- Test {i} ---")
-        parsed = parse_signal_message(test_msg)
-        if parsed:
-            print(f"✅ Parseado: {parsed['pair']} {parsed['direction']} @ {parsed['entry']} (x{parsed['leverage']})")
-            print(f"   TPs: {parsed['tp1']} ({parsed['tp1_percent']}%), {parsed['tp2']} ({parsed['tp2_percent']}%), {parsed['tp3']} ({parsed['tp3_percent']}%), {parsed['tp4']} ({parsed['tp4_percent']}%)")
-        else:
-            print("❌ No se pudo parsear el mensaje")
+# ✅ ELIMINADO: El circular import que estaba aquí

@@ -1,243 +1,348 @@
-# telegram_client.py
+# telegram_client.py - VERSIÓN COMPLETA Y CORREGIDA
 """
-Cliente de Telegram usando Telethon para leer canales como usuario - CON RECONEXIÓN COMPLETA
+Cliente de Telegram para leer señales de canales - VERSIÓN COMPLETA
 """
 import logging
 import asyncio
-from telethon import TelegramClient, events
-from telethon.errors import SessionPasswordNeededError, FloodWaitError, AuthKeyError
-from telethon.network import ConnectionError as TelethonConnectionError
-from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE, SIGNALS_CHANNEL_ID
-from reconnection_manager import reconnection_manager
+from typing import List, Optional, Dict
+from datetime import datetime, timedelta
+
+# ✅ Importaciones actualizadas para Telethon
+from telethon import TelegramClient
+from telethon.errors import (
+    SessionPasswordNeededError,
+    PhoneCodeInvalidError,
+    FloodWaitError,
+    AuthKeyError,
+    RPCError,
+    ChannelPrivateError
+)
+from telethon.tl.types import Message, Channel, InputPeerChannel
+from telethon.tl.functions.messages import GetHistoryRequest
+
+# ✅ Sistema de reconexión
+from connection_monitor import connection_monitor
 from health_monitor import health_monitor
 
 logger = logging.getLogger(__name__)
 
 class TelegramUserClient:
-    """Cliente de Telegram para leer mensajes como usuario - CON RECONEXIÓN COMPLETA"""
+    """Cliente de usuario de Telegram para leer señales - VERSIÓN COMPLETA"""
     
     def __init__(self):
         self.client = None
         self.is_connected = False
-        self.signal_callback = None
-        self.is_listening = False
-        self.reconnect_task = None
-        self.message_handler = None
+        self.session_name = "telegram_user_session"
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 5
+        self.available_channels = {}  # Cache de canales disponibles
         
-    def set_signal_callback(self, callback):
-        """Establece el callback para procesar señales recibidas"""
-        self.signal_callback = callback
+        # Configuración desde config.py
+        from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE
+        
+        self.api_id = TELEGRAM_API_ID
+        self.api_hash = TELEGRAM_API_HASH
+        self.phone = TELEGRAM_PHONE
+        
+        logger.info("✅ Cliente de usuario de Telegram inicializado")
     
     async def connect(self) -> bool:
-        """Conecta el cliente de Telegram con reconexión automática"""
+        """Conecta el cliente de usuario - CON CACHE DE CANALES"""
         try:
-            logger.info("🔗 Conectando cliente de Telegram...")
-            
-            if not all([TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE]):
-                raise ValueError("Faltan credenciales de Telegram User API")
+            if self.is_connected and self.client:
+                logger.info("✅ Cliente ya conectado")
+                return True
             
             self.client = TelegramClient(
-                session='user_session',
-                api_id=int(TELEGRAM_API_ID),
-                api_hash=TELEGRAM_API_HASH
+                self.session_name,
+                self.api_id,
+                self.api_hash
             )
             
-            await self.client.start(phone=TELEGRAM_PHONE)
+            await self.client.start(phone=self.phone)
             
-            if not await self.client.is_user_authorized():
-                raise SessionPasswordNeededError("Se requiere verificación en dos pasos")
-            
-            self.is_connected = True
-            logger.info("✅ Cliente de Telegram (Usuario) conectado correctamente")
-            
-            # Registrar actividad en health monitor
-            health_monitor.record_telegram_activity()
-            
-            return True
+            if await self.client.is_user_authorized():
+                self.is_connected = True
+                self.reconnect_attempts = 0
+                
+                # ✅ ACTUALIZAR CACHE DE CANALES DISPONIBLES
+                await self._update_available_channels()
+                
+                # ✅ REGISTRAR EN HEALTH MONITOR
+                health_monitor.record_telegram_bot_activity()
+                
+                logger.info("✅ Cliente de usuario conectado y autorizado")
+                return True
+            else:
+                logger.error("❌ Cliente no autorizado")
+                return False
+                
+        except AuthKeyError as e:
+            logger.error(f"❌ Error de autenticación: {e}")
+            # Eliminar sesión corrupta y reintentar
+            import os
+            if os.path.exists(f"{self.session_name}.session"):
+                os.remove(f"{self.session_name}.session")
+            logger.info("🗑️ Sesión corrupta eliminada, reintentando...")
+            return await self._handle_reconnection()
             
         except SessionPasswordNeededError:
-            logger.error("❌ Se requiere verificación en dos pasos. Configura la contraseña.")
+            logger.error("❌ Sesión requiere contraseña 2FA")
             return False
+            
         except FloodWaitError as e:
-            logger.error(f"⏳ Flood wait de Telegram: {e.seconds} segundos")
+            logger.error(f"⏳ Flood wait: {e.seconds} segundos")
             await asyncio.sleep(e.seconds)
-            return False
-        except (ConnectionError, TelethonConnectionError) as e:
-            logger.error(f"🌐 Error de conexión de red: {e}")
-            return False
-        except AuthKeyError as e:
-            logger.error(f"🔑 Error de autenticación: {e}. Es posible que necesites reautenticar.")
-            return False
-        except Exception as e:
-            logger.error(f"❌ Error conectando cliente de Telegram: {e}")
-            return False
-    
-    async def resilient_connect(self) -> bool:
-        """Conexión con reintentos automáticos"""
-        success = await reconnection_manager.execute_with_retry(
-            "telegram_user",
-            self.connect
-        )
-        
-        if success:
-            logger.info("🎉 Reconexión exitosa de Telegram User")
-            # Limpiar cualquier alerta de salud relacionada
-            health_monitor.record_telegram_activity()
-        else:
-            logger.error("💥 No se pudo reconectar Telegram User después de múltiples intentos")
+            return await self._handle_reconnection()
             
-        return success
+        except Exception as e:
+            logger.error(f"❌ Error conectando cliente: {e}")
+            return await self._handle_reconnection()
     
-    async def start_listening_with_reconnection(self):
-        """Inicia la escucha con supervisión de conexión"""
-        self.is_listening = True
-        
-        logger.info("🚀 Iniciando sistema de escucha con reconexión automática")
-        
-        while self.is_listening:
-            try:
-                # Intentar conectar con reconexión
-                if await self.resilient_connect():
-                    # Configurar handler de mensajes
-                    await self._setup_message_handler()
-                    
-                    logger.info(f"🎧 Escuchando canal: {SIGNALS_CHANNEL_ID}")
-                    
-                    # Notificar reconexión exitosa
-                    await self._notify_reconnection_success()
-                    
-                    # Mantener conexión activa - esta llamada bloquea hasta desconexión
-                    await self.client.run_until_disconnected()
-                
-                # Si llegamos aquí, la conexión se cayó
-                logger.warning("🔌 Conexión de Telegram perdida, intentando reconectar...")
-                await self._safe_disconnect()
-                
-                # Esperar antes del próximo intento de reconexión
-                await asyncio.sleep(10)
-                
-            except asyncio.CancelledError:
-                logger.info("🛑 Escucha cancelada por el sistema")
-                break
-            except Exception as e:
-                logger.error(f"❌ Error en loop de escucha: {e}")
-                await self._safe_disconnect()
-                await asyncio.sleep(30)  # Esperar más tiempo por errores graves
-    
-    async def _setup_message_handler(self):
-        """Configura el manejador de mensajes"""
-        # Remover handler anterior si existe
-        if self.message_handler:
-            self.client.remove_event_handler(self.message_handler)
-        
-        @self.client.on(events.NewMessage(chats=int(SIGNALS_CHANNEL_ID)))
-        async def handler(event):
-            await self._handle_channel_message(event)
-        
-        self.message_handler = handler
-        logger.debug("📝 Handler de mensajes configurado")
-    
-    async def _notify_reconnection_success(self):
-        """Notifica reconexión exitosa"""
+    async def _update_available_channels(self):
+        """Actualiza la cache de canales disponibles"""
         try:
-            from notifier import telegram_notifier
-            status = reconnection_manager.get_component_status("telegram_user")
+            dialogs = await self.client.get_dialogs()
+            self.available_channels = {}
             
-            message = f"""
-🔄 **RECONEXIÓN EXITOSA - Telegram User**
-
-✅ Conexión restablecida correctamente
-📊 Estadísticas:
-- Reintentos: {status.get('retry_count', 0)}
-- Éxitos consecutivos: {status.get('success_count', 0)}
-- Estado: CONECTADO
-
-Continuando con el monitoreo de señales...
-"""
-            await telegram_notifier.send_alert("Reconexión Exitosa", message, "success")
+            for dialog in dialogs:
+                if dialog.is_channel or dialog.is_group:
+                    channel_info = {
+                        'id': dialog.id,
+                        'name': dialog.name,
+                        'entity': dialog.entity,
+                        'access_hash': getattr(dialog.entity, 'access_hash', None) if dialog.entity else None
+                    }
+                    self.available_channels[dialog.id] = channel_info
+                    
+                    # También mapear por nombre para búsqueda flexible
+                    if dialog.name:
+                        self.available_channels[dialog.name.lower()] = channel_info
+            
+            logger.info(f"📊 Cache actualizada: {len([c for c in self.available_channels.values() if isinstance(c, dict)])} canales disponibles")
             
         except Exception as e:
-            logger.warning(f"No se pudo enviar notificación de reconexión: {e}")
+            logger.error(f"❌ Error actualizando cache de canales: {e}")
     
-    async def _safe_disconnect(self):
-        """Desconexión segura"""
+    async def _handle_reconnection(self) -> bool:
+        """Maneja la reconexión con backoff exponential"""
+        self.reconnect_attempts += 1
+        
+        if self.reconnect_attempts > self.max_reconnect_attempts:
+            logger.error("🚨 Máximos intentos de reconexión alcanzados")
+            health_monitor.record_connection_issue('telegram_bot', 
+                                                 f"Máximos intentos de reconexión: {self.max_reconnect_attempts}")
+            return False
+        
+        # Backoff exponential
+        delay = min(60, 5 * (2 ** (self.reconnect_attempts - 1)))
+        logger.info(f"🔄 Reintentando conexión en {delay} segundos (intento {self.reconnect_attempts})")
+        
+        await asyncio.sleep(delay)
+        return await self.connect()
+    
+    async def get_available_channels(self) -> List[Dict]:
+        """Obtiene lista de canales disponibles - ✅ MÉTODO NUEVO"""
+        try:
+            if not self.is_connected:
+                await self.connect()
+            
+            # Actualizar cache si está vacía
+            if not self.available_channels:
+                await self._update_available_channels()
+            
+            # Filtrar solo los canales (excluir entradas de nombre)
+            channels = []
+            for key, channel_info in self.available_channels.items():
+                if isinstance(key, int) and isinstance(channel_info, dict):
+                    channels.append(channel_info)
+            
+            # Ordenar por nombre
+            channels.sort(key=lambda x: x.get('name', '').lower())
+            
+            logger.info(f"📊 {len(channels)} canales disponibles en cache")
+            return channels
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo canales disponibles: {e}")
+            return []
+    
+    async def get_channel_messages(self, channel_identifier: str, limit: int = 50) -> List[Message]:
+        """
+        Obtiene mensajes de un canal/grupo - CON MÚLTIPLES MÉTODOS DE ACCESO
+        """
+        try:
+            if not self.is_connected or not self.client:
+                logger.warning("🔌 Cliente no conectado, intentando reconectar...")
+                if not await self.connect():
+                    logger.error("❌ No se pudo reconectar el cliente")
+                    return []
+            
+            # ✅ MÉTODO 1: Buscar en cache de canales disponibles
+            channel_info = await self._find_channel_in_cache(channel_identifier)
+            
+            if channel_info:
+                logger.info(f"🎯 Canal encontrado en cache: {channel_info['name']} (ID: {channel_info['id']})")
+                return await self._get_messages_from_entity(channel_info['entity'], limit)
+            
+            # ✅ MÉTODO 2: Intentar acceso directo por ID/username
+            try:
+                entity = await self.client.get_entity(channel_identifier)
+                return await self._get_messages_from_entity(entity, limit)
+            except (ValueError, ChannelPrivateError) as e:
+                logger.warning(f"⚠️ No se puede acceder directamente a {channel_identifier}: {e}")
+            
+            # ✅ MÉTODO 3: Usar InputPeerChannel si tenemos access_hash
+            if channel_identifier.lstrip('-').isdigit():
+                try:
+                    channel_id = int(channel_identifier)
+                    # Buscar en cache para obtener access_hash
+                    for channel in self.available_channels.values():
+                        if isinstance(channel, dict) and channel['id'] == channel_id:
+                            if channel.get('access_hash'):
+                                entity = InputPeerChannel(
+                                    channel_id=channel_id,
+                                    access_hash=channel['access_hash']
+                                )
+                                return await self._get_messages_from_entity(entity, limit)
+                except Exception as e:
+                    logger.debug(f"⚠️ Método InputPeerChannel falló: {e}")
+            
+            logger.error(f"❌ No se pudo acceder al canal: {channel_identifier}")
+            logger.info(f"💡 Canales disponibles: {[c.get('name', 'N/A') for c in self.available_channels.values() if isinstance(c, dict)]}")
+            
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo mensajes: {e}")
+            return []
+    
+    async def _find_channel_in_cache(self, identifier: str) -> Optional[Dict]:
+        """Busca un canal en la cache por ID o nombre"""
+        # Buscar por ID exacto
+        if identifier.lstrip('-').isdigit():
+            channel_id = int(identifier)
+            if channel_id in self.available_channels:
+                return self.available_channels[channel_id]
+        
+        # Buscar por nombre (case insensitive)
+        identifier_lower = identifier.lower()
+        for channel in self.available_channels.values():
+            if isinstance(channel, dict) and channel.get('name'):
+                if identifier_lower in channel['name'].lower():
+                    return channel
+        
+        # Buscar por nombre parcial
+        for channel in self.available_channels.values():
+            if isinstance(channel, dict) and channel.get('name'):
+                if any(word in channel['name'].lower() for word in identifier_lower.split()):
+                    return channel
+        
+        return None
+    
+    async def _get_messages_from_entity(self, entity, limit: int) -> List[Message]:
+        """Obtiene mensajes desde una entidad"""
+        try:
+            messages = await self.client.get_messages(entity, limit=limit)
+            
+            # ✅ REGISTRAR ACTIVIDAD
+            health_monitor.record_telegram_bot_activity()
+            
+            logger.info(f"✅ Obtenidos {len(messages)} mensajes")
+            return messages
+            
+        except ChannelPrivateError:
+            logger.error("🔒 Canal privado - sin permisos de acceso")
+            return []
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo mensajes desde entidad: {e}")
+            return []
+    
+    async def get_recent_signals(self, channel_identifier: str, hours: int = 24) -> List[dict]:
+        """
+        Obtiene señales recientes del canal - CON ACCESO MEJORADO
+        """
+        try:
+            messages = await self.get_channel_messages(channel_identifier, limit=100)
+            recent_signals = []
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            
+            for message in messages:
+                if message.date.replace(tzinfo=None) > cutoff_time and message.text:
+                    signal_data = {
+                        'id': message.id,
+                        'date': message.date,
+                        'text': message.text,
+                        'raw': message
+                    }
+                    recent_signals.append(signal_data)
+            
+            logger.info(f"📡 {len(recent_signals)} señales recientes encontradas en {channel_identifier}")
+            return recent_signals
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo señales recientes: {e}")
+            return []
+    
+    async def test_channel_access(self, channel_identifier: str) -> Dict:
+        """Testea el acceso a un canal específico - ✅ MÉTODO NUEVO"""
+        result = {
+            'accessible': False,
+            'channel_info': None,
+            'message_count': 0,
+            'error': None
+        }
+        
+        try:
+            # Buscar en cache
+            channel_info = await self._find_channel_in_cache(channel_identifier)
+            if channel_info:
+                result['channel_info'] = channel_info
+            
+            # Intentar obtener mensajes
+            messages = await self.get_channel_messages(channel_identifier, limit=5)
+            
+            if messages:
+                result['accessible'] = True
+                result['message_count'] = len(messages)
+                result['channel_info'] = channel_info or {
+                    'id': getattr(messages[0].chat, 'id', None),
+                    'name': getattr(messages[0].chat, 'title', 'Unknown')
+                }
+            else:
+                result['error'] = "No se pudieron obtener mensajes"
+                
+        except Exception as e:
+            result['error'] = str(e)
+        
+        return result
+
+    async def disconnect(self):
+        """Desconecta el cliente"""
         try:
             if self.client:
                 await self.client.disconnect()
-            self.is_connected = False
-            self.message_handler = None
-            logger.debug("🔒 Cliente de Telegram desconectado de forma segura")
+                self.is_connected = False
+                logger.info("✅ Cliente de usuario desconectado")
         except Exception as e:
-            logger.error(f"Error en desconexión segura: {e}")
+            logger.error(f"❌ Error desconectando cliente: {e}")
     
-    async def _handle_channel_message(self, event):
-        """Maneja mensajes recibidos del canal"""
+    async def test_connection(self) -> bool:
+        """Testea la conexión del cliente"""
         try:
-            message_text = self._extract_message_text(event.message)
-            if not message_text:
-                return
+            if not await self.connect():
+                return False
             
-            logger.info(f"📨 Mensaje recibido del canal: {message_text[:100]}...")
+            # Intentar una operación simple
+            await self.client.get_me()
             
-            # Registrar actividad para health monitor
-            health_monitor.record_telegram_activity()
+            logger.info("✅ Conexión de usuario Telegram verificada")
+            return True
             
-            if self._is_trading_signal(message_text) and self.signal_callback:
-                await self.signal_callback({'message_text': message_text})
-            else:
-                logger.debug("Mensaje no reconocido como señal de trading")
-                
         except Exception as e:
-            logger.error(f"❌ Error procesando mensaje: {e}")
-    
-    def _extract_message_text(self, message):
-        """Extrae texto de diferentes tipos de mensajes"""
-        try:
-            if message.text:
-                return message.text
-            
-            if message.media:
-                caption = message.text or ""
-                return f"[MEDIA] {caption}"
-            
-            return ""
-        except Exception as e:
-            logger.error(f"Error extrayendo texto: {e}")
-            return ""
-    
-    def _is_trading_signal(self, text: str) -> bool:
-        """Verifica si el texto parece una señal de trading"""
-        signal_keywords = [
-            'BUY', 'SELL', 'LONG', 'SHORT', 'ENTRY', 'TP', 'SL',
-            '🔥', '🎯', '⭐', '✨', 'TAKE-PROFIT', 'STOP-LOSS'
-        ]
-        text_lower = text.lower()
-        return any(keyword.lower() in text_lower for keyword in signal_keywords)
-    
-    async def start_listening(self):
-        """Inicia la escucha del canal de señales (método principal)"""
-        if self.is_listening:
-            logger.warning("⚠️ El sistema de escucha ya está activo")
-            return
-            
-        logger.info("🚀 Iniciando sistema de escucha con reconexión automática")
-        await self.start_listening_with_reconnection()
-    
-    async def stop_listening(self):
-        """Detiene la escucha de manera controlada"""
-        self.is_listening = False
-        await self._safe_disconnect()
-        logger.info("🛑 Sistema de escucha detenido")
-    
-    def get_connection_status(self) -> Dict[str, Any]:
-        """Obtiene el estado de conexión actual"""
-        status = reconnection_manager.get_component_status("telegram_user")
-        status.update({
-            'is_connected': self.is_connected,
-            'is_listening': self.is_listening,
-            'has_callback': self.signal_callback is not None
-        })
-        return status
+            logger.error(f"❌ Error testeando conexión: {e}")
+            health_monitor.record_connection_issue('telegram_bot', f"Test fallido: {e}")
+            return False
 
 # Instancia global
 telegram_user_client = TelegramUserClient()
