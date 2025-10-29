@@ -4,7 +4,7 @@ Cliente de Telegram usando Telethon para leer canales como usuario - MEJORADO
 import logging
 import re
 from telethon import TelegramClient
-from telethon import events  # ✅ AGREGAR ESTE IMPORT
+from telethon import events
 from telethon.errors import SessionPasswordNeededError
 from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
 from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE, SIGNALS_CHANNEL_ID
@@ -16,11 +16,16 @@ class TelegramUserClient:
     
     def __init__(self):
         self.client = None
-        self.is_connected = False
-        self.signal_callback = None  # ✅ AGREGAR ESTA LÍNEA
+        self._is_connected = False  # ✅ CORREGIDO: usar nombre diferente
+        self.signal_callback = None
         
+    @property
+    def is_connected(self):
+        """Propiedad para verificar conexión"""
+        return self.client and self.client.is_connected()
+    
     def set_signal_callback(self, callback):
-        """Establece el callback para procesar señales recibidas - ✅ NUEVO MÉTODO"""
+        """Establece el callback para procesar señales recibidas"""
         self.signal_callback = callback
     
     async def connect(self):
@@ -41,7 +46,7 @@ class TelegramUserClient:
             if not await self.client.is_user_authorized():
                 raise SessionPasswordNeededError("Se requiere verificación en dos pasos")
             
-            self.is_connected = True
+            self._is_connected = True
             logger.info("✅ Cliente de Telegram (Usuario) conectado correctamente")
             return True
             
@@ -52,10 +57,6 @@ class TelegramUserClient:
             logger.error(f"❌ Error conectando cliente de Telegram: {e}")
             return False
         
-    def is_connected(self):
-        """Verifica si el cliente está conectado"""
-        return self.client and self.client.is_connected()
-
     async def get_messages(self, channel_id, limit=10):
         """Obtiene mensajes de un canal"""
         try:
@@ -71,7 +72,7 @@ class TelegramUserClient:
         """Desconecta el cliente"""
         if self.client and self.is_connected:
             await self.client.disconnect()
-            self.is_connected = False
+            self._is_connected = False
             logger.info("✅ Cliente de Telegram desconectado")
     
     def _extract_message_text(self, message):
@@ -106,7 +107,7 @@ class TelegramUserClient:
             # Verificar si es una señal de trading
             if self._is_trading_signal(message_text):
                 logger.info(f"🔍 Señal potencial detectada")
-                if self.signal_callback:  # ✅ AHORA USA EL CALLBACK
+                if self.signal_callback:
                     await self.signal_callback({'message_text': message_text})
             else:
                 logger.debug("Mensaje no reconocido como señal de trading")

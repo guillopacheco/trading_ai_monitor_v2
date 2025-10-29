@@ -9,15 +9,11 @@ import hashlib
 import time
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
-
 import aiohttp
 
 logger = logging.getLogger(__name__)
 
-
 class BybitClient:
-    """Cliente para API de Bybit"""
-
     def __init__(self):
         self.base_url = "https://api.bybit.com"
         self.api_key = None
@@ -41,12 +37,13 @@ class BybitClient:
             return False
 
     async def initialize(self):
-        """Inicializa el cliente de Bybit"""
+        """Inicializa el cliente de Bybit para Linear"""
         try:
-            from config import BYBIT_API_KEY, BYBIT_API_SECRET
-
+            from config import BYBIT_API_KEY, BYBIT_API_SECRET, BYBIT_CATEGORY
+            
             self.api_key = BYBIT_API_KEY
             self.api_secret = BYBIT_API_SECRET
+            self.category = BYBIT_CATEGORY or "linear"  # ← USAR LINEAR
 
             if not self.api_key or not self.api_secret:
                 logger.warning("⚠️ Credenciales de Bybit no configuradas")
@@ -55,37 +52,30 @@ class BybitClient:
             self.session = aiohttp.ClientSession()
             self.is_initialized = True
 
-            # Test de conexión
+            # Test de conexión con Linear
             test_result = await self.get_ticker("BTCUSDT")
             if test_result:
-                logger.info("✅ Cliente Bybit inicializado correctamente")
+                logger.info(f"✅ Cliente Bybit inicializado correctamente (Category: {self.category})")
                 return True
             else:
-                logger.error("❌ Error conectando con Bybit")
+                logger.error("❌ Error conectando con Bybit Linear")
                 return False
 
         except Exception as e:
             logger.error(f"❌ Error inicializando Bybit: {e}")
             return False
 
-    def _generate_signature(self, params: Dict) -> str:
-        """Genera firma HMAC para autenticación"""
-        query_string = urlencode(params)
-        signature = hmac.new(
-            bytes(self.api_secret, "utf-8"),
-            bytes(query_string, "utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        return signature
-
     async def get_ticker(self, symbol: str) -> Optional[Dict]:
-        """Obtiene ticker de un símbolo"""
+        """Obtiene ticker de un símbolo en Linear"""
         try:
             if not self.is_initialized:
                 await self.initialize()
 
             url = f"{self.base_url}/v5/market/tickers"
-            params = {"category": "spot", "symbol": symbol}
+            params = {
+                "category": "linear",  # ← USAR LA CATEGORÍA CONFIGURADA
+                "symbol": symbol
+            }
 
             async with self.session.get(url, params=params) as response:
                 if response.status == 200:
@@ -93,9 +83,7 @@ class BybitClient:
                     if data["retCode"] == 0 and data["result"]["list"]:
                         return data["result"]["list"][0]
                     else:
-                        logger.warning(
-                            f"⚠️ No data for {symbol}: {data.get('retMsg', 'Unknown error')}"
-                        )
+                        logger.warning(f"⚠️ No data for {symbol} in {self.category}: {data.get('retMsg', 'Unknown error')}")
                         return None
                 else:
                     logger.error(f"❌ HTTP error {response.status} for {symbol}")
@@ -115,7 +103,7 @@ class BybitClient:
 
             url = f"{self.base_url}/v5/market/kline"
             params = {
-                "category": "spot",
+                "category": "linear",
                 "symbol": symbol,
                 "interval": interval,
                 "limit": limit,
@@ -185,7 +173,7 @@ class BybitClient:
                 await self.initialize()
 
             timestamp = str(int(time.time() * 1000))
-            params = {"category": "spot", "timestamp": timestamp}
+            params = {"category": "linear", "timestamp": timestamp}
 
             signature = self._generate_signature(params)
             headers = {
@@ -228,7 +216,7 @@ class BybitClient:
 
             timestamp = str(int(time.time() * 1000))
             params = {
-                "category": "spot",
+                "category": "linear",
                 "symbol": order_data.get("symbol"),
                 "side": order_data.get("side"),
                 "orderType": order_data.get("orderType", "Market"),

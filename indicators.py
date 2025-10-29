@@ -24,7 +24,7 @@ class TechnicalIndicators:
         try:
             url = f"{self.base_url}/v5/market/kline"
             params = {
-                'category': 'spot',
+                'category': 'linear',
                 'symbol': symbol,
                 'interval': interval,
                 'limit': limit
@@ -142,7 +142,7 @@ class TechnicalIndicators:
         """
         try:
             df = self.get_ohlcv_data(symbol, timeframe, 100)
-            if df is None or len(df) < 50:
+            if df is None or len(df) < 20:
                 logger.warning(f"Datos insuficientes para {symbol} en {timeframe}m")
                 return None
             

@@ -17,9 +17,6 @@ from helpers import parse_signal_message
 from typing import Dict
 from datetime import timedelta
 
-# ✅ NUEVOS IMPORTS PARA COMANDOS
-from telegram.ext import Application
-
 logger = get_logger(__name__)
 
 # Variable global para acceder a la instancia del monitor desde comandos
@@ -33,7 +30,6 @@ class TradingAIMonitor:
         self.is_running = False
         self.startup_time = None
         self.last_health_check = None
-        self.telegram_application = None  # ✅ PARA MANEJAR COMANDOS
 
     async def startup(self):
         """Inicializa el sistema - CORREGIDO"""
@@ -47,7 +43,9 @@ class TradingAIMonitor:
             # 2. Testear conexión con Telegram BOT
             logger.info("🤖 Probando conexión con Telegram Bot...")
             if not await telegram_notifier.test_connection():
-                raise Exception("No se pudo conectar con Telegram Bot")
+                logger.warning("⚠️ No se pudo conectar con Telegram Bot - Comandos desactivados")
+            else:
+                logger.info("✅ Conexión con Telegram Bot establecida")
 
             # ✅ 3. CONFIGURAR SISTEMA DE COMANDOS CORRECTAMENTE
             await self._setup_telegram_commands()
@@ -72,55 +70,20 @@ class TradingAIMonitor:
             raise
 
     async def _setup_telegram_commands(self):
-        """Configura el sistema de comandos de Telegram - ✅ MÉTODO CORREGIDO"""
+        """Configura el sistema de comandos de Telegram - ✅ CORREGIDO"""
         try:
-            logger.info("🔄 Configurando sistema de comandos de Telegram...")
-
-            # Crear aplicación de Telegram para comandos
-            self.telegram_application = (
-                Application.builder().token(telegram_notifier.bot.token).build()
-            )
-
-            # ✅ DIAGNÓSTICO: Verificar que el token es correcto
-            logger.info(f"🔍 Token del bot: {telegram_notifier.bot.token[:10]}...")
-
-            # Configurar comandos
-            await telegram_notifier.setup_commands(self.telegram_application)
-
-            # ✅ DIAGNÓSTICO DETALLADO: Verificar comandos registrados
-            logger.info("🔍 Verificando handlers registrados...")
-            if hasattr(self.telegram_application, "handlers"):
-                for group_num, handlers in self.telegram_application.handlers.items():
-                    logger.info(f"🔍 Grupo {group_num}: {len(handlers)} handlers")
-                    for handler in handlers:
-                        logger.info(f"🔍   Handler: {type(handler).__name__}")
-
-            # Iniciar el polling de comandos
-            await self.telegram_application.initialize()
-            await self.telegram_application.start()
-            await self.telegram_application.updater.start_polling()
-
-            logger.info("✅ Sistema de comandos de Telegram inicializado y en polling")
-
-            # ✅ DIAGNÓSTICO: Verificar que el bot está recibiendo updates
-            logger.info("🔍 Verificando configuración del bot...")
-            bot_info = await self.telegram_application.bot.get_me()
-            logger.info(f"🔍 Bot info: {bot_info.username} (ID: {bot_info.id})")
-
-            # ✅ VERIFICAR QUE EL BOT PUEDE ENVIAR MENSAJES
-            try:
-                await self.telegram_application.bot.send_message(
-                    chat_id=telegram_notifier.output_channel_id,
-                    text="🤖 **Bot de comandos activado correctamente**\n\nEnvía /estado para verificar el sistema",
-                    parse_mode="Markdown",
-                )
-                logger.info("✅ Mensaje de prueba enviado correctamente")
-            except Exception as e:
-                logger.error(f"❌ Error enviando mensaje de prueba: {e}")
-
+            logger.info("🔄 Iniciando bot de comandos...")
+            
+            # Usar el bot de comandos separado
+            from command_bot import command_bot
+            await command_bot.start()
+            
+            logger.info("✅ Sistema de comandos configurado correctamente")
+            
         except Exception as e:
             logger.error(f"❌ Error configurando comandos de Telegram: {e}")
-            raise
+            # No lanzar excepción para que el sistema pueda continuar sin comandos
+            logger.warning("⚠️ El sistema continuará sin funcionalidad de comandos")
 
     async def shutdown(self):
         """Apaga el sistema de manera controlada - CORREGIDO"""
@@ -128,12 +91,13 @@ class TradingAIMonitor:
             logger.info("🛑 Apagando Trading AI Monitor v2...")
             self.is_running = False
 
-            # ✅ DETENER SISTEMA DE COMANDOS
-            if self.telegram_application:
-                logger.info("🛑 Deteniendo sistema de comandos...")
-                await self.telegram_application.updater.stop()
-                await self.telegram_application.stop()
-                await self.telegram_application.shutdown()
+            # ✅ DETENER BOT DE COMANDOS
+            try:
+                from command_bot import command_bot
+                if command_bot.is_running:
+                    await command_bot.stop()
+            except Exception as e:
+                logger.error(f"❌ Error deteniendo bot de comandos: {e}")
 
             # Detener componentes existentes
             await telegram_user_client.disconnect()
@@ -186,7 +150,8 @@ class TradingAIMonitor:
 
     async def send_startup_notification(self):
         """Envía notificación de inicio del sistema"""
-        message = f"""
+        try:
+            message = f"""
 🤖 **Trading AI Monitor v2 INICIADO** 🤖
 
 **Sistema activo y monitoreando señales**
@@ -200,19 +165,22 @@ class TradingAIMonitor:
 **Configuración:**
 ✅ User Account: Conectado para leer señales
 ✅ Bot: Conectado para enviar resultados  
-✅ Parser: Configurado para formato NeuroTrader
+✅ Parser: Configurado para formato Andy Insider
 ✅ Análisis: Multi-temporalidad activa
 ✅ Comandos: Sistema de comandos activado
 
 **Esperando señales del canal...**
 """
-        await telegram_notifier.send_alert("Sistema Iniciado", message, "success")
+            await telegram_notifier.send_alert("Sistema Iniciado", message, "success")
+        except Exception as e:
+            logger.error(f"❌ Error enviando notificación de inicio: {e}")
 
     async def send_shutdown_notification(self, uptime: timedelta = None):
         """Envía notificación de apagado del sistema"""
-        uptime_str = str(uptime).split(".")[0] if uptime else "Desconocido"
+        try:
+            uptime_str = str(uptime).split(".")[0] if uptime else "Desconocido"
 
-        message = f"""
+            message = f"""
 🛑 **Trading AI Monitor v2 APAGADO** 🛑
 
 **Sistema detenido correctamente**
@@ -222,7 +190,9 @@ class TradingAIMonitor:
 
 **Hasta pronto!** 👋
 """
-        await telegram_notifier.send_alert("Sistema Apagado", message, "info")
+            await telegram_notifier.send_alert("Sistema Apagado", message, "info")
+        except Exception as e:
+            logger.error(f"❌ Error enviando notificación de apagado: {e}")
 
     def setup_signal_handlers(self):
         """Configura manejadores de señales del sistema"""
@@ -298,7 +268,7 @@ async def main():
         logger.error(f"Error fatal: {e}")
         sys.exit(1)
     finally:
-        if monitor_instance.is_running:
+        if monitor_instance and monitor_instance.is_running:
             await monitor_instance.shutdown()
 
 
