@@ -8,8 +8,6 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# ✅ ELIMINADO: from helpers import validate_signal_data  # Esta línea causa circular import
-
 def parse_signal_message(message_text: str) -> Optional[Dict]:
     """
     Parsea mensajes de señal de trading - OPTIMIZADO PARA ANDY INSIDER
@@ -167,15 +165,16 @@ def parse_signal_message(message_text: str) -> Optional[Dict]:
             # Podríamos obtener el precio actual desde Bybit aquí
             entry_price = 1.0  # Fallback
         
+        # ✅ CORREGIDO: Nombres de campos actualizados
         signal_data = {
             'pair': pair,
             'direction': direction,
-            'entry_price': entry_price,
+            'entry': entry_price,  # ✅ Cambiado de 'entry_price' a 'entry'
             'stop_loss': stop_loss,
-            'take_profit': take_profits,
+            'take_profits': take_profits,  # ✅ Cambiado de 'take_profit' a 'take_profits'
             'leverage': leverage,
             'timestamp': datetime.now(),
-            'raw_message': message_text[:500],
+            'message_text': message_text[:500],  # ✅ Cambiado de 'raw_message' a 'message_text'
             'source': 'andy_insider'
         }
         
@@ -191,13 +190,14 @@ def parse_signal_message(message_text: str) -> Optional[Dict]:
 
 def validate_signal_data(signal_data: Dict) -> Tuple[bool, str]:
     """
-    Valida los datos de una señal de trading
+    Valida los datos de una señal de trading - CORREGIDO
     """
     try:
         if not signal_data:
             return False, "Datos de señal vacíos"
         
-        required_fields = ['pair', 'direction', 'entry_price', 'stop_loss', 'take_profit']
+        # ✅ CORREGIDO: Usar los nombres correctos de campos
+        required_fields = ['pair', 'direction', 'entry', 'stop_loss', 'take_profits']
         for field in required_fields:
             if field not in signal_data:
                 return False, f"Campo requerido faltante: {field}"
@@ -212,10 +212,10 @@ def validate_signal_data(signal_data: Dict) -> Tuple[bool, str]:
         if direction not in ['LONG', 'SHORT']:
             return False, f"Dirección inválida: {direction}"
         
-        # Validar precios
-        entry = signal_data['entry_price']
+        # ✅ CORREGIDO: Usar nombres actualizados
+        entry = signal_data['entry']
         stop_loss = signal_data['stop_loss']
-        take_profits = signal_data['take_profit']
+        take_profits = signal_data['take_profits']
         
         if not isinstance(entry, (int, float)) or entry <= 0:
             return False, f"Precio de entrada inválido: {entry}"
@@ -260,16 +260,16 @@ def format_telegram_message(signal_data: Dict, analysis_summary: Dict) -> str:
         pair = signal_data.get('pair', 'N/A')
         direction = signal_data.get('direction', 'N/A')
         leverage = signal_data.get('leverage', 20)
-        entry = signal_data.get('entry_price', 'N/A')
+        entry = signal_data.get('entry', 'N/A')  # ✅ Usar 'entry' en lugar de 'entry_price'
         stop_loss = signal_data.get('stop_loss', 'N/A')
-        take_profits = signal_data.get('take_profit', [])
+        take_profits = signal_data.get('take_profits', [])  # ✅ Usar 'take_profits' en lugar de 'take_profit'
         
         # Emojis según dirección
         direction_emoji = "📈" if direction == "LONG" else "📉"
         leverage_emoji = "⚡" if leverage > 30 else "🔸"
         
         # Formatear take profits
-        tp_text = " / ".join([f"{tp:.2f}" for tp in take_profits]) if take_profits else "N/A"
+        tp_text = " / ".join([f"{tp:.4f}" for tp in take_profits]) if take_profits else "N/A"
         
         message = f"""
 {direction_emoji} **SEÑAL DE TRADING DETECTADA** {direction_emoji}

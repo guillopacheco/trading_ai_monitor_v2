@@ -279,7 +279,7 @@ class TradingDatabase:
             return None
     
     def update_signal_status(self, signal_id: int, status: str, 
-                           confirmation_status: str = None) -> bool:
+                       confirmation_status: str = None) -> bool:
         """Actualiza el estado de una señal - MEJORADO"""
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -307,19 +307,29 @@ class TradingDatabase:
         except Exception as e:
             logger.error(f"❌ Error actualizando señal {signal_id}: {e}")
             return False
-        def get_connection(self):
-            """Retorna la conexión a la base de datos"""
+
+    def get_connection(self):
+        """Retorna la conexión a la base de datos"""
         return self.conn
 
     def is_connected(self):
-        """Verifica si la base de datos está conectada"""
+        """Verifica si la base de datos está conectada - CORREGIDO"""
         try:
-            if self.conn:
-                cursor = self.conn.cursor()
-                cursor.execute("SELECT 1")
+            # Para SQLite, la conexión es siempre "activa"
+            # Verificamos que el archivo exista y sea accesible
+            import os
+            if os.path.exists(self.db_path):
+                # Test simple de escritura/lectura
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT 1')
                 return True
-            return False
-        except:
+            else:
+                # El archivo no existe, pero podemos crearlo
+                self._init_database()
+                return True
+        except Exception as e:
+            logger.error(f"❌ Error en verificación de BD: {e}")
             return False
     
     def get_pending_signals(self) -> List[Dict]:

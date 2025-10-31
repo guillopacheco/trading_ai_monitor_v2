@@ -1,64 +1,56 @@
-"""
-Verifica y corrige la configuración de Bybit
-"""
+# check_bybit_config.py
+import asyncio
 import os
+from dotenv import load_dotenv
 
-def check_file_configuration():
-    """Verifica la configuración actual de cada archivo"""
-    print("🔍 Verificando configuración actual de Bybit...")
-    
-    files_to_check = ['bybit_api.py', 'indicators.py', 'config.py']
-    
-    for filepath in files_to_check:
-        if os.path.exists(filepath):
-            print(f"\n📁 {filepath}:")
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    
-                # Buscar patrones de category
-                import re
-                category_patterns = [
-                    r"category.*=.*['\"](spot|linear|inverse)['\"]",
-                    r"['\"](spot|linear|inverse)['\"].*category"
-                ]
-                
-                for pattern in category_patterns:
-                    matches = re.findall(pattern, content, re.IGNORECASE)
-                    if matches:
-                        for match in matches:
-                            status = "✅ LINEAR" if match.lower() == "linear" else "❌ NEEDS FIX" if match.lower() == "spot" else "⚠️  CHECK"
-                            print(f"   {status}: Encontrado '{match}'")
-                
-                # Si no se encontraron patrones, mostrar líneas con "category"
-                if not any(matches for pattern in category_patterns for matches in [re.findall(pattern, content)]):
-                    lines_with_category = [line.strip() for line in content.split('\n') if 'category' in line.lower()]
-                    if lines_with_category:
-                        print("   📝 Líneas con 'category':")
-                        for line in lines_with_category[:3]:  # Mostrar máximo 3 líneas
-                            print(f"      {line}")
-                    
-            except Exception as e:
-                print(f"   ❌ Error leyendo archivo: {e}")
+load_dotenv()
+
+
+async def check_bybit_config():
+    """Verifica la configuración de Bybit"""
+    print("🔍 Verificando configuración de Bybit...")
+
+    api_key = os.getenv("BYBIT_API_KEY")
+    api_secret = os.getenv("BYBIT_API_SECRET")
+
+    print(
+        f"📋 BYBIT_API_KEY: {'✅ Configurada' if api_key and api_key != 'TU_API_KEY_AQUI' else '❌ NO CONFIGURADA'}"
+    )
+    print(
+        f"📋 BYBIT_API_SECRET: {'✅ Configurada' if api_secret and api_secret != 'TU_API_SECRET_AQUI' else '❌ NO CONFIGURADA'}"
+    )
+
+    if (
+        api_key
+        and api_secret
+        and api_key != "TU_API_KEY_AQUI"
+        and api_secret != "TU_API_SECRET_AQUI"
+    ):
+        print("🚀 Probando conexión con Bybit...")
+        from bybit_api import bybit_client
+
+        # Inicializar cliente
+        success = await bybit_client.initialize()
+        if success:
+            print("✅ Bybit conectado correctamente")
+
+            # Probar endpoints
+            ticker = await bybit_client.get_ticker("BTCUSDT")
+            if ticker:
+                print("✅ Ticker funcionando")
+            else:
+                print("❌ Error obteniendo ticker")
+
+            balance = await bybit_client.get_account_balance()
+            if balance:
+                print("✅ Balance funcionando")
+            else:
+                print("❌ Error obteniendo balance")
         else:
-            print(f"❌ Archivo no encontrado: {filepath}")
+            print("❌ Error inicializando Bybit")
+    else:
+        print("⚠️  Configura las credenciales de Bybit en el archivo .env")
 
-def show_correction_instructions():
-    """Muestra instrucciones específicas para corregir"""
-    print("\n🎯 INSTRUCCIONES DE CORRECCIÓN:")
-    print("1. En bybit_api.py:")
-    print("   - Buscar todas las instancias de \"category\": \"spot\"")
-    print("   - Cambiar por \"category\": \"linear\"")
-    print("")
-    print("2. En indicators.py:")
-    print("   - Buscar 'category': 'spot'") 
-    print("   - Cambiar por 'category': 'linear'")
-    print("")
-    print("3. Archivos corregidos:")
-    print("   - ✅ config.py (ya corregido)")
-    print("   - ❌ bybit_api.py (necesita corrección manual)")
-    print("   - ❌ indicators.py (necesita corrección manual)")
 
 if __name__ == "__main__":
-    check_file_configuration()
-    show_correction_instructions()
+    asyncio.run(check_bybit_config())
