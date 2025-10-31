@@ -1,14 +1,13 @@
 """
 Gestor inteligente de señales con sistema de confirmación y re-análisis - CON HEALTH MONITOR
 """
-
+# ...existing code...
 import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 from config import *
-from trend_analysis import trend_analyzer
 from divergence_detector import divergence_detector
 from database import trading_db
 from notifier import telegram_notifier
@@ -16,9 +15,9 @@ from helpers import calculate_position_size
 
 # ✅ NUEVO IMPORT
 from health_monitor import health_monitor
+from trend_analysis import trend_analyzer
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class PendingSignal:
@@ -34,7 +33,6 @@ class PendingSignal:
     last_reactivation_check: datetime = None
     leverage: int = LEVERAGE  # NUEVO: Apalancamiento
 
-
 class SignalManager:
     """
     Gestor inteligente ACTUALIZADO CON HEALTH MONITOR
@@ -46,6 +44,12 @@ class SignalManager:
         self.discarded_signals: Dict[str, PendingSignal] = {}
         self.signals_processed = 0
         self.successful_analyses = 0
+        # ✅ NUEVO: Inicializar dependencias
+        from trend_analysis import trend_analyzer as _trend_analyzer
+        from database import trading_db as _trading_db
+
+        self.trend_analyzer = _trend_analyzer
+        self.db = _trading_db
 
     async def process_new_signal(self, signal_data: Dict) -> bool:
         """Procesa una nueva señal - CON HEALTH MONITOR"""

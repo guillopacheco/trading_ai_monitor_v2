@@ -181,9 +181,10 @@ class TradingAIMonitor:
             if not success:
                 logger.error(f"❌ Error procesando señal: {signal_data['pair']}")
                 health_monitor.record_error(f"Error procesando señal {signal_data['pair']}", "Signal Manager")
-                await telegram_notifier.send_error_notification(
+                await telegram_notifier.send_alert(
                     f"Error procesando señal {signal_data['pair']}",
-                    "Procesamiento de señal",
+                    f"Error en procesamiento de señal:\n{str(e)}",
+                    "error"
                 )
             else:
                 # ✅ NUEVO: Registrar trade exitoso
