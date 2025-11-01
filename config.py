@@ -25,6 +25,7 @@ OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
 BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
 BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
 BYBIT_CATEGORY = "linear"  # ← AÑADE ESTA LÍNEA
+BYBIT_TESTNET = os.getenv('BYBIT_TESTNET', 'true').lower() == 'true'  # ← AÑADE ESTA LÍNEA
 
 # Trading Configuration
 APP_MODE = os.getenv('APP_MODE', 'ANALYSIS')  # ANALYSIS o TRADING

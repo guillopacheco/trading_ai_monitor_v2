@@ -718,9 +718,14 @@ class SignalManager:
             if hasattr(recommendation, 'action'):
                 action = recommendation.action
                 reason = recommendation.reason
+                match_percentage = getattr(recommendation, 'match_percentage', 0)
             else:
                 action = recommendation.get('action', 'ESPERAR')
                 reason = recommendation.get('reason', 'Sin razón')
+                match_percentage = recommendation.get('match_percentage', 0)
+
+            # ✅ NUEVO: ENVIAR NOTIFICACIÓN CONCISA
+            await self._send_concise_notification(signal_data, action, match_percentage, reason)
 
             if action == "ENTRAR":
                 logger.info(f"🎯 DECISIÓN: ENTRAR en {symbol} - {reason}")
@@ -759,6 +764,38 @@ class SignalManager:
         except Exception as e:
             logger.error(f"❌ Error en decisión de trading para {signal_id}: {e}")
             return False
+        
+    async def _send_concise_notification(self, signal_data: Dict, decision: str, match_percentage: float, reason: str):
+        """Envía notificación MUY concisa a Telegram del resultado del análisis"""
+        try:
+            symbol = signal_data['pair']
+            direction = signal_data['direction']
+            
+            # Determinar emoji y texto basado en la decisión
+            if decision == "ENTRAR":
+                emoji = "✅"
+                action_text = "CONFIRMADA"
+            elif decision == "ESPERAR":
+                emoji = "⚠️" 
+                action_text = "EN ESPERA"
+            else:  # RECHAZAR
+                emoji = "❌"
+                action_text = "RECHAZADA"
+            
+            # Mensaje super conciso
+            message = f"{emoji} {symbol} {direction} - {action_text} ({match_percentage:.1f}%)"
+            
+            # Enviar como alerta simple
+            await telegram_notifier.send_alert(
+                "Análisis Completado",
+                message,
+                "success" if decision == "ENTRAR" else "warning" if decision == "ESPERAR" else "error"
+            )
+            
+            logger.info(f"📱 Notificación concisa enviada: {message}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error enviando notificación concisa: {e}")
 
 
 # Instancia global

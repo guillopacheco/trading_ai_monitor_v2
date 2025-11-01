@@ -88,16 +88,16 @@ class BybitClient:
     def _generate_signature(self, params: Dict) -> str:
         """Genera firma para autenticación API - CORREGIDO"""
         try:
-            # ✅ CORRECCIÓN: Ordenar parámetros alfabéticamente
+            timestamp = str(int(time.time() * 1000))
+            recv_window = "5000"
+            
+            # ✅ CORRECCIÓN: Ordenar parámetros alfabéticamente y formatear correctamente
             param_str = ""
             if params:
                 sorted_params = sorted(params.items())
                 param_str = "&".join([f"{k}={v}" for k, v in sorted_params])
             
-            timestamp = str(int(time.time() * 1000))
-            recv_window = "5000"
-            
-            # ✅ CORRECCIÓN: Payload correcto para firma
+            # ✅ CORRECCIÓN: Payload correcto para firma V5
             signature_payload = timestamp + self.api_key + recv_window + param_str
             
             signature = hmac.new(
@@ -148,7 +148,7 @@ class BybitClient:
             self.failed_api_calls += 1
             health_monitor.record_error(str(e), f"get_ticker {symbol}")
             return None
-
+        
     async def get_account_balance(self) -> Optional[Dict]:
         """Obtiene balance de la cuenta - CORREGIDO"""
         try:
@@ -159,23 +159,30 @@ class BybitClient:
             health_monitor.record_bybit_api_call("get_account_balance")
 
             timestamp = str(int(time.time() * 1000))
+            recv_window = "5000"
             
             params = {
                 "accountType": "UNIFIED",
                 "coin": "USDT"
             }
 
+            # ✅ CORRECCIÓN: Generar firma con los parámetros correctos
             signature = self._generate_signature(params)
+            
             headers = {
                 "X-BAPI-API-KEY": self.api_key,
                 "X-BAPI-SIGN": signature,
                 "X-BAPI-TIMESTAMP": timestamp,
-                "X-BAPI-RECV-WINDOW": "5000",
+                "X-BAPI-RECV-WINDOW": recv_window,
             }
 
             url = f"{self.base_url}/v5/account/wallet-balance"
+            
+            # ✅ CORRECCIÓN: Pasar parámetros en la URL, no en el body
+            query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+            full_url = f"{url}?{query_string}" if query_string else url
 
-            async with self.session.get(url, params=params, headers=headers) as response:
+            async with self.session.get(full_url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
                     if data["retCode"] == 0:

@@ -47,7 +47,24 @@ class TradingAIMonitor:
             # 1. Validar configuración
             validate_config()
 
-            # 2. Testear conexión con Telegram BOT
+            # ✅ 2. NUEVO: INICIALIZAR BYBIT - ESTO ES LO QUE FALTABA
+            logger.info("🔧 Inicializando cliente Bybit...")
+            from bybit_api import bybit_client
+            bybit_success = await bybit_client.initialize()
+            
+            if bybit_success:
+                logger.info("✅ Bybit inicializado correctamente")
+                # Verificar conexión real
+                balance = await bybit_client.get_account_balance()
+                if balance:
+                    logger.info("💰 Conexión a Bybit confirmada - Balance disponible")
+                else:
+                    logger.warning("⚠️ Bybit conectado pero no se pudo obtener balance")
+            else:
+                logger.error("❌ Falló la inicialización de Bybit")
+                health_monitor.record_connection_issue('bybit_api', 'Inicialización fallida')
+
+            # 3. Testear conexión con Telegram BOT
             logger.info("🤖 Probando conexión con Telegram Bot...")
             if not await telegram_notifier.test_connection():
                 logger.warning(
@@ -58,16 +75,16 @@ class TradingAIMonitor:
                 logger.info("✅ Conexión con Telegram Bot establecida")
                 health_monitor.record_reconnect_attempt('telegram', True)
 
-            # ✅ 3. CONFIGURAR SISTEMA DE COMANDOS CORRECTAMENTE
+            # ✅ 4. CONFIGURAR SISTEMA DE COMANDOS CORRECTAMENTE
             await self._setup_telegram_commands()
 
-            # 4. Configurar callback para señales recibidas
+            # 5. Configurar callback para señales recibidas
             telegram_user_client.set_signal_callback(self.handle_raw_signal_received)
 
-            # 5. Limpieza inicial de BD
+            # 6. Limpieza inicial de BD
             trading_db.cleanup_old_signals(7)
 
-            # ✅ 6. NUEVO: Iniciar detección automática de operaciones
+            # ✅ 7. NUEVO: Iniciar detección automática de operaciones
             logger.info("📊 Iniciando detección automática de operaciones...")
             operations_detected = await operation_tracker.auto_detect_operations()
             if operations_detected:
@@ -75,10 +92,10 @@ class TradingAIMonitor:
             else:
                 logger.info("📭 No hay operaciones abiertas para seguir")
 
-            # 7. Notificar inicio del sistema
+            # 8. Notificar inicio del sistema
             await self.send_startup_notification()
 
-            # ✅ 8. NUEVO: Iniciar verificación periódica de salud
+            # ✅ 9. NUEVO: Iniciar verificación periódica de salud
             asyncio.create_task(self._periodic_health_check())
 
             self.is_running = True
