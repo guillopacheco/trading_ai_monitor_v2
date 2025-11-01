@@ -1,3 +1,4 @@
+# indicators.py - MODIFICACIONES
 """
 Módulo para cálculo de indicadores técnicos usando datos de Bybit - ACTUALIZADO CON PANDAS-TA
 """
@@ -9,6 +10,9 @@ from typing import Dict, List, Optional, Tuple
 from config import *
 import pandas_ta as ta  # CAMBIADO: usar pandas_ta en lugar de ta
 
+# ✅ NUEVO IMPORT
+from symbol_utils import normalize_symbol, check_symbol_availability
+
 logger = logging.getLogger(__name__)
 
 class TechnicalIndicators:
@@ -19,16 +23,23 @@ class TechnicalIndicators:
         
     def get_ohlcv_data(self, symbol: str, interval: str = "5", limit: int = 100) -> Optional[pd.DataFrame]:
         """
-        Obtiene datos OHLCV de Bybit - MEJORADO con manejo de errores
+        Obtiene datos OHLCV de Bybit - CORREGIDO CON NORMALIZACIÓN
         """
         try:
+            # ✅ CORRECCIÓN: Normalizar símbolo y determinar categoría
+            symbol_info = check_symbol_availability(symbol)
+            normalized_symbol = symbol_info['linear_symbol']
+            category = symbol_info['recommended_category']
+            
             url = f"{self.base_url}/v5/market/kline"
             params = {
-                'category': 'linear',
-                'symbol': symbol,
+                'category': category,  # ✅ Usar categoría dinámica
+                'symbol': normalized_symbol,
                 'interval': interval,
                 'limit': limit
             }
+            
+            logger.info(f"🔍 Obteniendo datos para {symbol} -> {normalized_symbol} ({category})")
             
             response = requests.get(url, params=params, timeout=15)
             response.raise_for_status()
@@ -41,7 +52,7 @@ class TechnicalIndicators:
             # Procesar los datos
             candles = data['result']['list']
             if not candles:
-                logger.warning(f"No hay datos disponibles para {symbol} en {interval}m")
+                logger.warning(f"No hay datos disponibles para {symbol} ({normalized_symbol}) en {interval}m")
                 return None
                 
             df = pd.DataFrame(candles, columns=[
@@ -64,7 +75,7 @@ class TechnicalIndicators:
             # Limpiar NaN values
             df = df.dropna()
             
-            logger.info(f"✅ Datos OHLCV obtenidos: {symbol} {interval}m - {len(df)} velas")
+            logger.info(f"✅ Datos OHLCV obtenidos: {symbol} -> {normalized_symbol} {interval}m - {len(df)} velas")
             return df
             
         except requests.exceptions.Timeout:

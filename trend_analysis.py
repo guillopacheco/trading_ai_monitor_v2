@@ -1,5 +1,6 @@
+# trend_analysis.py - VERSIÓN MEJORADA
 """
-Análisis de tendencias y recomendaciones basadas en múltiples temporalidades - ACTUALIZADO CON APALANCAMIENTO
+Análisis de tendencias y recomendaciones basadas en múltiples temporalidades - ACTUALIZADO CON APALANCAMIENTO Y LÓGICA MEJORADA
 """
 
 import logging
@@ -9,6 +10,7 @@ from config import *
 from indicators import indicators_calculator
 from divergence_detector import divergence_detector
 from helpers import calculate_position_size
+from datetime import datetime
 
 # ✅ AGREGAR IMPORTACIONES ESPECÍFICAS
 from config import (
@@ -49,7 +51,7 @@ class TradingRecommendation:
 
 
 class TrendAnalyzer:
-    """Analizador de tendencias y generador de recomendaciones - ACTUALIZADO CON APALANCAMIENTO"""
+    """Analizador de tendencias y generador de recomendaciones - ACTUALIZADO CON APALANCAMIENTO Y LÓGICA MEJORADA"""
 
     def __init__(self):
         self.indicators = indicators_calculator
@@ -72,7 +74,7 @@ class TrendAnalyzer:
                 symbol, technical_analysis
             )
 
-            # 3. Análisis de confirmación de señal
+            # 3. Análisis de confirmación de señal - MEJORADO
             confirmation_result = self._analyze_signal_confirmation(
                 signal_data, technical_analysis
             )
@@ -91,7 +93,7 @@ class TrendAnalyzer:
                 "recommendation": recommendation,
                 "signal_original": signal_data,
                 "analysis_timestamp": self._get_current_timestamp(),
-                "leverage": signal_data.get("leverage", LEVERAGE),  # NUEVO
+                "leverage": signal_data.get("leverage", LEVERAGE),
             }
 
             logger.info(
@@ -103,96 +105,184 @@ class TrendAnalyzer:
             logger.error(f"❌ Error en análisis de {symbol}: {e}")
             return self._create_error_analysis(str(e))
 
+    # trend_analysis.py - AJUSTAR LA LÓGICA EN _analyze_signal_confirmation
     def _analyze_signal_confirmation(
         self, signal_data: Dict, technical_analysis: Dict
     ) -> Dict[str, any]:
         """
-        Analiza si la señal recibida está confirmada por los indicadores
+        Analiza si la señal recibida está confirmada por los indicadores - MÁS FLEXIBLE
         """
-        signal_direction = signal_data["direction"]
-        consolidated = technical_analysis.get("consolidated", {})
-        predominant_trend = consolidated.get("predominant_trend", "NEUTRO")
-        predominant_macd = consolidated.get("predominant_macd", "NEUTRO")
-        avg_rsi = consolidated.get("avg_rsi", 50)
+        try:
+            signal_direction = signal_data["direction"]
+            consolidated = technical_analysis.get("consolidated", {})
+            predominant_trend = consolidated.get("predominant_trend", "NEUTRO")
+            predominant_macd = consolidated.get("predominant_macd", "NEUTRO")
+            avg_rsi = consolidated.get("avg_rsi", 50)
+            
+            # ✅ MEJORADO: Contadores de coincidencia por timeframe con puntuación granular
+            total_score = 0
+            max_possible_score = 0
+            timeframe_details = []
 
-        # Contadores de coincidencia por timeframe
-        trend_matches = 0
-        total_timeframes = 0
+            for tf_key, analysis in technical_analysis.items():
+                if tf_key.startswith("tf_"):
+                    timeframe = analysis.get("timeframe", "1")
+                    tf_score = 0
+                    tf_max_score = 0
+                    reasons = []
+                    
+                    # 1. Tendencia EMA (40 puntos máximo)
+                    tf_max_score += 40
+                    ema_trend = analysis["ema_trend"]
+                    if ema_trend == signal_direction:
+                        tf_score += 40
+                        reasons.append("✅ Tendencia EMA favorable")
+                    elif ema_trend == "NEUTRO":
+                        tf_score += 25  # ✅ INCREMENTADO: Más puntos para tendencia neutra
+                        reasons.append("⚠️ Tendencia EMA neutra")
+                    else:
+                        tf_score += 5   # ✅ NUEVO: Puntos mínimos incluso para tendencia contraria
+                        reasons.append("❌ Tendencia EMA contraria")
+                    
+                    # 2. RSI (30 puntos máximo)
+                    tf_max_score += 30
+                    rsi_value = analysis["rsi"]
+                    if signal_direction == "LONG":
+                        if rsi_value < 40:  # ✅ AJUSTADO: Más flexible
+                            tf_score += 30
+                            reasons.append("✅ RSI en zona favorable para LONG")
+                        elif rsi_value < 55:
+                            tf_score += 25  # ✅ INCREMENTADO: Más puntos para zona neutral
+                            reasons.append("✅ RSI en zona neutral-baja")
+                        elif rsi_value < 70:
+                            tf_score += 15  # ✅ INCREMENTADO: Más puntos para zona alta
+                            reasons.append("⚠️ RSI en zona neutral-alta")
+                        else:
+                            tf_score += 5   # ✅ NUEVO: Puntos mínimos
+                            reasons.append("❌ RSI sobrecomprado")
+                    else:  # SHORT
+                        if rsi_value > 60:  # ✅ AJUSTADO: Más flexible
+                            tf_score += 30
+                            reasons.append("✅ RSI en zona favorable para SHORT")
+                        elif rsi_value > 45:
+                            tf_score += 25  # ✅ INCREMENTADO: Más puntos para zona neutral
+                            reasons.append("✅ RSI en zona neutral-alta")
+                        elif rsi_value > 30:
+                            tf_score += 15  # ✅ INCREMENTADO: Más puntos para zona baja
+                            reasons.append("⚠️ RSI en zona neutral-baja")
+                        else:
+                            tf_score += 5   # ✅ NUEVO: Puntos mínimos
+                            reasons.append("❌ RSI sobrevendido")
+                    
+                    # 3. MACD (30 puntos máximo)
+                    tf_max_score += 30
+                    macd_signal = analysis["macd_signal"]
+                    if macd_signal == signal_direction:
+                        tf_score += 30
+                        reasons.append("✅ Señal MACD favorable")
+                    elif macd_signal == "NEUTRO":
+                        tf_score += 20  # ✅ INCREMENTADO: Más puntos para MACD neutro
+                        reasons.append("⚠️ Señal MACD neutra")
+                    else:
+                        tf_score += 5   # ✅ NUEVO: Puntos mínimos
+                        reasons.append("❌ Señal MACD contraria")
+                    
+                    # Calcular porcentaje para este timeframe
+                    tf_percentage = (tf_score / tf_max_score * 100) if tf_max_score > 0 else 0
+                    
+                    timeframe_details.append({
+                        'timeframe': timeframe,
+                        'score': tf_score,
+                        'max_score': tf_max_score,
+                        'percentage': tf_percentage,
+                        'reasons': reasons
+                    })
+                    
+                    total_score += tf_score
+                    max_possible_score += tf_max_score
 
-        for tf_key, analysis in technical_analysis.items():
-            if tf_key.startswith("tf_"):
-                total_timeframes += 1
-                if analysis["ema_trend"] == signal_direction:
-                    trend_matches += 1
+            # Calcular porcentaje total de coincidencia
+            match_percentage = (total_score / max_possible_score * 100) if max_possible_score > 0 else 0
+            
+            # ✅ MEJORADO: Análisis de consistencia entre timeframes más flexible
+            consistent_timeframes = 0
+            total_timeframes = len(timeframe_details)
+            
+            for tf_detail in timeframe_details:
+                if tf_detail['percentage'] >= 40:  # ✅ REDUCIDO: 40% en lugar de 50%
+                    consistent_timeframes += 1
+            
+            consistency_ratio = consistent_timeframes / total_timeframes if total_timeframes > 0 else 0
+            
+            # ✅ MEJORADO: Lógica de confirmación MÁS FLEXIBLE
+            if match_percentage >= 55 and consistency_ratio >= 0.5:  # ✅ REDUCIDO: 55% y 50%
+                status = "CONFIRMADA"
+                confidence = "ALTA"
+            elif match_percentage >= 45 and consistency_ratio >= 0.33:  # ✅ REDUCIDO: 45% y 33%
+                status = "PARCIALMENTE CONFIRMADA" 
+                confidence = "MEDIA"
+            elif match_percentage >= 35:  # ✅ REDUCIDO: 35%
+                status = "DÉBILMENTE CONFIRMADA"
+                confidence = "BAJA"
+            else:
+                status = "NO CONFIRMADA"
+                confidence = "MUY BAJA"
 
-        # Porcentaje de coincidencia
-        match_percentage = (
-            (trend_matches / total_timeframes * 100) if total_timeframes > 0 else 0
-        )
+            # ✅ MEJORADO: Boost de confianza para tokens nuevos
+            # Si es un token nuevo (como ICNT, ZORA, etc.), ser más flexible
+            symbol = signal_data.get('pair', '').upper()
+            is_new_token = any(token in symbol for token in ['ICNT', 'ZORA', 'LAB', 'PIPPIN'])
+            
+            if is_new_token:
+                # Boost para tokens nuevos
+                if status == "DÉBILMENTE CONFIRMADA" and match_percentage >= 40:
+                    status = "PARCIALMENTE CONFIRMADA"
+                    confidence = "MEDIA"
+                    logger.info(f"🎯 Boost aplicado para token nuevo: {symbol}")
 
-        # Análisis RSI según dirección
-        rsi_confirms = False
-        if signal_direction == "SHORT":
-            rsi_confirms = avg_rsi > 60  # RSI alto para short
-        else:  # LONG
-            rsi_confirms = avg_rsi < 40  # RSI bajo para long
+            # Boost de confianza si hay factores adicionales favorables
+            volume_analysis = self._analyze_volume_confirmation(technical_analysis, signal_direction)
+            if volume_analysis["volume_confirms"] and confidence in ["ALTA", "MEDIA"]:
+                confidence = "ALTA"
+                volume_analysis["confidence_boost"] = True
 
-        # Análisis MACD
-        macd_confirms = predominant_macd == signal_direction
+            # Análisis de tendencia predominante
+            trend_aligned = predominant_trend == signal_direction
+            macd_aligned = predominant_macd == signal_direction
 
-        # Análisis de volumen (cuando esté disponible)
-        volume_analysis = self._analyze_volume_confirmation(
-            technical_analysis, signal_direction
-        )
+            result = {
+                "status": status,
+                "confidence": confidence,
+                "match_percentage": round(match_percentage, 1),
+                "consistency_ratio": round(consistency_ratio, 2),
+                "consistent_timeframes": f"{consistent_timeframes}/{total_timeframes}",
+                "trend_aligned": trend_aligned,
+                "macd_aligned": macd_aligned,
+                "predominant_trend": predominant_trend,
+                "avg_rsi": avg_rsi,
+                "volume_analysis": volume_analysis,
+                "timeframe_details": timeframe_details,
+                "scoring_summary": f"{total_score}/{max_possible_score}",
+                "is_new_token": is_new_token,  # ✅ NUEVO: Para debugging
+            }
 
-        # Determinar estado de confirmación
-        confirmation_factors = 0
-        total_factors = 3  # Tendencia, RSI, MACD
+            logger.info(
+                f"📊 Confirmación: {status} ({confidence}) - "
+                f"Match: {match_percentage:.1f}% - "
+                f"Consistencia: {consistent_timeframes}/{total_timeframes} - "
+                f"Token Nuevo: {'Sí' if is_new_token else 'No'}"
+            )
+            
+            return result
 
-        if match_percentage >= 60:
-            confirmation_factors += 1
-        if rsi_confirms:
-            confirmation_factors += 1
-        if macd_confirms:
-            confirmation_factors += 1
-
-        # Aplicar lógica de confirmación mejorada
-        if confirmation_factors == 3 and match_percentage >= 80:
-            status = "CONFIRMADA"
-            confidence = "ALTA"
-        elif confirmation_factors >= 2 and match_percentage >= 60:
-            status = "PARCIALMENTE CONFIRMADA"
-            confidence = "MEDIA"
-        elif confirmation_factors >= 1 and match_percentage >= 40:
-            status = "DÉBILMENTE CONFIRMADA"
-            confidence = "BAJA"
-        else:
-            status = "NO CONFIRMADA"
-            confidence = "MUY BAJA"
-
-        # Boost de confianza si el volumen confirma
-        if volume_analysis["volume_confirms"] and confidence in ["ALTA", "MEDIA"]:
-            confidence = "ALTA"  # Boost a ALTA si ya era MEDIA o ALTA
-            volume_analysis["confidence_boost"] = True
-
-        result = {
-            "status": status,
-            "confidence": confidence,
-            "match_percentage": round(match_percentage, 1),
-            "trend_matches": trend_matches,
-            "total_timeframes": total_timeframes,
-            "rsi_confirms": rsi_confirms,
-            "macd_confirms": macd_confirms,
-            "predominant_trend": predominant_trend,
-            "avg_rsi": avg_rsi,
-            "volume_analysis": volume_analysis,
-            "confirmation_factors": f"{confirmation_factors}/{total_factors}",
-        }
-
-        logger.debug(
-            f"📊 Confirmación: {status} ({confidence}) - Factores: {confirmation_factors}/{total_factors}"
-        )
-        return result
+        except Exception as e:
+            logger.error(f"❌ Error en análisis de confirmación: {e}")
+            return {
+                "status": "ERROR",
+                "confidence": "MUY BAJA",
+                "match_percentage": 0.0,
+                "reason": f"Error en análisis: {str(e)}"
+            }
 
     def analyze_trend_confirmation(
         self, symbol: str, signal_data: Dict, analysis_data: Dict
@@ -205,10 +295,10 @@ class TrendAnalyzer:
 
             # Tu análisis existente...
             analysis_result = {
-                "status": "CONFIRMADA",  # o 'RECHAZADA' según tu lógica
-                "match_percentage": 0.0,  # ✅ Asegurar que existe
-                "confidence": "ALTA",  # ✅ Asegurar que existe
-                "entry_price": entry_price,  # ✅ Agregar entry
+                "status": "CONFIRMADA",
+                "match_percentage": 0.0,
+                "confidence": "ALTA",
+                "entry_price": entry_price,
                 "summary": "Análisis completado",
             }
 
@@ -216,7 +306,6 @@ class TrendAnalyzer:
 
         except Exception as e:
                 logger.error(f"❌ Error en análisis de {symbol}: {e}")
-                # ✅ Retornar estructura mínima en caso de error
                 return {
                     "status": "ERROR",
                     "match_percentage": 0.0,
@@ -282,13 +371,14 @@ class TrendAnalyzer:
         confirmation_result: Dict,
     ) -> TradingRecommendation:
         """
-        Genera recomendación de trading basada en todos los factores - ACTUALIZADO CON APALANCAMIENTO
+        Genera recomendación de trading basada en todos los factores - MEJORADO
         """
         symbol = signal_data["pair"]
         signal_direction = signal_data["direction"]
         signal_entry = signal_data["entry"]
         leverage = signal_data.get("leverage", LEVERAGE)
         confirmation_status = confirmation_result["status"]
+        match_percentage = confirmation_result["match_percentage"]
 
         # Obtener precio actual del primer timeframe
         current_price = None
@@ -305,89 +395,72 @@ class TrendAnalyzer:
                 leverage=leverage,
             )
 
-        # 1. Verificar divergencias fuertes (prioridad alta)
-        strong_divergences = [
-            d for d in divergences if d.strength == "strong"
-        ]  # ✅ CORREGIDO: usar atributo directamente
-
+        # ✅ MEJORADO: Lógica de divergencias más flexible
+        strong_divergences = [d for d in divergences if d.strength == "strong"]
         if strong_divergences:
             strongest_div = strong_divergences[0]
-            divergence_type = (
-                strongest_div.type
-            )  # ✅ CORREGIDO: usar atributo directamente
-            if (
-                divergence_type == "bullish"
-                and signal_direction == "SHORT"
-                or divergence_type == "bearish"
-                and signal_direction == "LONG"
-            ):
+            divergence_type = strongest_div.type
+            
+            # Solo rechazar si la divergencia es muy fuerte Y la confirmación es débil
+            if (divergence_type == "bullish" and signal_direction == "SHORT" and match_percentage < 40) or \
+               (divergence_type == "bearish" and signal_direction == "LONG" and match_percentage < 40):
                 return TradingRecommendation(
                     action="ESPERAR",
                     confidence="ALTA",
-                    reason=f"Divergencia {divergence_type} fuerte detectada - Posible reversión",
+                    reason=f"Divergencia {divergence_type} fuerte detectada con confirmación débil",
                     leverage=leverage,
                 )
 
-        # 2. Analizar confirmación de señal
-        if confirmation_status == "NO CONFIRMADA":
+        # ✅ MEJORADO: Lógica de confirmación más granular
+        if confirmation_status == "NO CONFIRMADA" and match_percentage < 30:
             return TradingRecommendation(
                 action="ESPERAR",
                 confidence=confirmation_result["confidence"],
-                reason=f"Señal no confirmada por análisis técnico ({confirmation_result['match_percentage']}% coincidencia)",
+                reason=f"Señal no confirmada por análisis técnico ({match_percentage}% coincidencia)",
                 leverage=leverage,
             )
 
-        elif confirmation_status == "DÉBILMENTE CONFIRMADA":
-            # Para confirmación débil, considerar entrada anticipada con cuidado
-            price_diff_pct = abs(current_price - signal_entry) / signal_entry * 100
+        # ✅ MEJORADO: Para confirmaciones débiles o parciales, considerar condiciones adicionales
+        price_diff_pct = abs(current_price - signal_entry) / signal_entry * 100
+        
+        # Si el precio está favorable (cerca del entry) y hay al menos confirmación débil
+        if price_diff_pct <= 2.0 and confirmation_status != "NO CONFIRMADA":
+            stop_loss = self._calculate_stop_loss(
+                current_price, signal_direction, technical_analysis, leverage
+            )
+            position_info = calculate_position_size(
+                ACCOUNT_BALANCE, RISK_PER_TRADE, current_price, stop_loss, leverage
+            )
 
-            if price_diff_pct <= 2:  # Si está cerca del entry original
-                stop_loss = self._calculate_stop_loss(
-                    current_price, signal_direction, technical_analysis, leverage
-                )
-                position_info = calculate_position_size(
-                    current_price, stop_loss, leverage=leverage
-                )
-
-                return TradingRecommendation(
-                    action="ENTRAR",
-                    confidence="MEDIA",
-                    reason=f"Señal débilmente confirmada pero precio favorable ({price_diff_pct:.1f}% del entry)",
-                    suggested_entry=current_price,
-                    stop_loss=stop_loss,
-                    take_profits=self._extract_take_profits(signal_data),
-                    position_size=position_info["position_size"],
-                    dollar_risk=position_info["dollar_risk"],
-                    leverage=leverage,
-                    real_risk_percent=position_info["real_risk_percent"],
-                )
-            else:
-                return TradingRecommendation(
-                    action="ESPERAR",
-                    confidence="MEDIA",
-                    reason=f"Señal débilmente confirmada pero precio lejano ({price_diff_pct:.1f}% del entry)",
-                    leverage=leverage,
-                )
-
-        else:  # CONFIRMADA o PARCIALMENTE CONFIRMADA
-            # Calcular entry optimizado
+            action = "ENTRAR" if confirmation_status in ["CONFIRMADA", "PARCIALMENTE CONFIRMADA"] else "ESPERAR MEJOR ENTRADA"
+            
+            return TradingRecommendation(
+                action=action,
+                confidence=confirmation_result["confidence"],
+                reason=f"Señal {confirmation_status.lower()} con precio favorable ({price_diff_pct:.1f}% del entry)",
+                suggested_entry=current_price,
+                stop_loss=stop_loss,
+                take_profits=self._extract_take_profits(signal_data),
+                position_size=position_info["position_size"],
+                dollar_risk=position_info["dollar_risk"],
+                leverage=leverage,
+                real_risk_percent=position_info["real_risk_percent"],
+            )
+        else:
+            # Para señales confirmadas pero con precio lejano, buscar entry optimizado
             optimized_entry = self._calculate_optimized_entry(
                 current_price, signal_entry, signal_direction, technical_analysis
             )
-
-            # Calcular stop loss y posición con apalancamiento
+            
             stop_loss = self._calculate_stop_loss(
                 optimized_entry, signal_direction, technical_analysis, leverage
             )
             position_info = calculate_position_size(
-                optimized_entry, stop_loss, leverage=leverage
+                ACCOUNT_BALANCE, RISK_PER_TRADE, optimized_entry, stop_loss, leverage
             )
 
-            # Verificar si es mejor entrada anticipada
-            entry_type = "ORIGINAL"
-            if optimized_entry != signal_entry:
-                entry_type = "OPTIMIZADA"
-
+            entry_type = "ORIGINAL" if optimized_entry == signal_entry else "OPTIMIZADA"
+            
             return TradingRecommendation(
                 action="ENTRAR",
                 confidence=confirmation_result["confidence"],

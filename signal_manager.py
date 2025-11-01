@@ -1,3 +1,4 @@
+# signal_manager.py - VERSIÓN CORREGIDA
 """
 Gestor inteligente de señales con sistema de confirmación y re-análisis - CON HEALTH MONITOR
 """
@@ -64,36 +65,36 @@ class SignalManager:
             health_monitor.record_signal_processed(signal_data)
             self.signals_processed += 1
 
-            # 1. Análisis técnico
+            # 1. Análisis técnico COMPLETO
             analysis_result = await self.perform_technical_analysis(symbol, signal_data)
             if not analysis_result:
                 logger.error(f"❌ Error en análisis técnico para {symbol}")
-                # ✅ NUEVO: Registrar error en health monitor
                 health_monitor.record_error(f"Error en análisis técnico para {symbol}", "Signal Manager")
                 return False
 
-            # 2. Confirmación de tendencia
-            confirmation_result = self.trend_analyzer.analyze_trend_confirmation(
-                symbol, signal_data, analysis_result
-            )
-
+            # ✅ CORRECCIÓN: Extraer confirmation_result del análisis completo
+            confirmation_result = analysis_result.get('confirmation_result', {})
+            
             # ✅ VERIFICAR que confirmation_result tenga los campos requeridos
             if not confirmation_result or "match_percentage" not in confirmation_result:
                 logger.error(f"❌ Resultado de confirmación inválido para {symbol}")
-                # ✅ NUEVO: Registrar error en health monitor
                 health_monitor.record_error(f"Resultado de confirmación inválido para {symbol}", "Signal Manager")
-                # ✅ Crear estructura por defecto
+                # Crear estructura por defecto
                 confirmation_result = {
                     "status": "ERROR",
                     "match_percentage": 0.0,
                     "confidence": "BAJA",
                 }
 
+            # ✅ DEBUG: Loggear el match_percentage antes de guardar
+            match_percentage = confirmation_result.get('match_percentage', 0.0)
+            logger.info(f"📊 ANTES DE GUARDAR BD - Match: {match_percentage}%")
+
             # 3. Guardar en base de datos
             signal_id = self.db.save_signal(
                 signal_data,
                 {
-                    "technical_analysis": analysis_result,
+                    "technical_analysis": analysis_result.get('technical_analysis', {}),
                     "confirmation_result": confirmation_result,
                     "analysis_summary": self._create_analysis_summary(
                         analysis_result, confirmation_result
@@ -103,7 +104,6 @@ class SignalManager:
 
             if not signal_id:
                 logger.error(f"❌ Error guardando señal {symbol} en BD")
-                # ✅ NUEVO: Registrar error en health monitor
                 health_monitor.record_error(f"Error guardando señal {symbol} en BD", "Signal Manager")
                 return False
 
@@ -124,7 +124,6 @@ class SignalManager:
 
         except Exception as e:
             logger.error(f"❌ Error procesando señal {symbol}: {e}")
-            # ✅ NUEVO: Registrar error en health monitor
             health_monitor.record_error(str(e), f"Procesamiento señal {symbol}")
             return False
 
@@ -133,11 +132,16 @@ class SignalManager:
         try:
             logger.info(f"🔍 Iniciando análisis técnico para {symbol}")
 
-            # ✅ USAR EL TREND ANALYZER REAL en lugar del placeholder
+            # ✅ CORRECCIÓN: Usar analyze_signal que incluye confirmación completa
             analysis_result = self.trend_analyzer.analyze_signal(signal_data, symbol)
 
-            if analysis_result and analysis_result.get("recommendation"):
+            if analysis_result and analysis_result.get("confirmation_result"):
                 logger.info(f"✅ Análisis técnico completado para {symbol}")
+                
+                # ✅ DEBUG: Loggear el match_percentage del análisis
+                match_percentage = analysis_result.get('confirmation_result', {}).get('match_percentage', 0)
+                logger.info(f"📊 ANÁLISIS COMPLETO - Match: {match_percentage}%")
+                
                 return analysis_result
             else:
                 logger.warning(f"⚠️ Análisis técnico retornó vacío para {symbol}")
@@ -272,7 +276,6 @@ class SignalManager:
                 logger.info(
                     f"⏰ Señal {signal_id} descartada por timeout inteligente (x{leverage})"
                 )
-                # ✅ NUEVO: Registrar descarte de señal
                 health_monitor.record_error(f"Señal {signal_id} descartada por timeout", "Signal Manager")
                 return True
 
@@ -680,7 +683,7 @@ class SignalManager:
                 "leverage": leverage,
                 "predominant_trend": consolidated.get("predominant_trend", "NEUTRO"),
                 "avg_rsi": consolidated.get("avg_rsi", 50),
-                "match_percentage": confirmation_result.get("match_percentage", 0),
+                "match_percentage": confirmation_result.get("match_percentage", 0),  # ✅ CORREGIDO
                 "confirmation_status": confirmation_result.get("status", "NO CONFIRMADA"),
                 "analysis_timestamp": datetime.now().isoformat()
             }

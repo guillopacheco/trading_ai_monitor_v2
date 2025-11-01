@@ -22,6 +22,7 @@ class BybitClient:
         self.api_key = None
         self.api_secret = None
         self.session = None
+        self.category = "linear"
         self.is_initialized = False
         self.total_api_calls = 0
         self.failed_api_calls = 0

@@ -168,7 +168,7 @@ class TradingDatabase:
             raise
     
     def save_signal(self, signal_data: Dict, analysis_result: Dict) -> Optional[int]:
-        """Guarda una señal y su análisis en la base de datos - MEJORADO"""
+        """Guarda una señal y su análisis en la base de datos - CORREGIDO"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -177,7 +177,10 @@ class TradingDatabase:
                 confirmation_result = analysis_result.get('confirmation_result', {})
                 analysis_summary = analysis_result.get('analysis_summary', {})
                 
-                # Insertar señal principal (AGREGAR LEVERAGE)
+                # ✅ CORRECCIÓN: Asegurar que match_percentage se guarde correctamente
+                match_percentage = confirmation_result.get('match_percentage', 0.0)
+                
+                # Insertar señal principal
                 cursor.execute('''
                     INSERT INTO signals (
                         pair, direction, entry_price, tp1, tp2, tp3, tp4, leverage,
@@ -195,7 +198,7 @@ class TradingDatabase:
                     signal_data.get('leverage', 20),
                     'received',
                     confirmation_result.get('status', 'UNKNOWN'),
-                    confirmation_result.get('match_percentage', 0.0),
+                    match_percentage,  # ✅ Usar la variable directamente
                     confirmation_result.get('confidence', 'BAJA'),
                     signal_data.get('message_text', ''),
                     json.dumps(analysis_summary) if analysis_summary else None
@@ -278,36 +281,32 @@ class TradingDatabase:
             logger.error(f"❌ Error guardando señal en base de datos: {e}")
             return None
     
+    # database.py - CORREGIR EL MÉTODO update_signal_status
     def update_signal_status(self, signal_id: int, status: str, metadata: Dict = None) -> bool:
-        """Actualiza el estado de una señal - CORREGIDO CON LIMPIEZA DE DATOS"""
+        """Actualiza el estado de una señal - CORREGIDO"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
                 update_time = datetime.now().isoformat()
                 
-                # ✅ CORRECCIÓN: Limpiar datos no serializables antes de convertir a JSON
-                def clean_metadata(obj):
-                    """Convierte objetos no serializables a formatos compatibles"""
-                    if hasattr(obj, 'to_dict'):
-                        return obj.to_dict()
-                    elif hasattr(obj, 'tolist'):
-                        return obj.tolist()
-                    elif hasattr(obj, 'item'):
-                        return obj.item()
-                    else:
-                        return str(obj)
+                # ✅ CORRECCIÓN: Función para limpiar objetos no serializables
+                def clean_for_json(obj):
+                    if obj is None:
+                        return None
+                    if isinstance(obj, (str, int, float, bool)):
+                        return obj
+                    if isinstance(obj, datetime):
+                        return obj.isoformat()
+                    if hasattr(obj, 'isoformat'):  # Para pandas Timestamp
+                        return obj.isoformat()
+                    if isinstance(obj, dict):
+                        return {k: clean_for_json(v) for k, v in obj.items()}
+                    if isinstance(obj, (list, tuple)):
+                        return [clean_for_json(item) for item in obj]
+                    return str(obj)  # Como último recurso, convertir a string
                 
-                # Limpiar metadata recursivamente
-                def clean_dict(d):
-                    if isinstance(d, dict):
-                        return {k: clean_dict(v) for k, v in d.items()}
-                    elif isinstance(d, (list, tuple)):
-                        return [clean_dict(v) for v in d]
-                    else:
-                        return clean_metadata(d)
-                
-                cleaned_metadata = clean_dict(metadata) if metadata else None
+                cleaned_metadata = clean_for_json(metadata) if metadata else None
                 metadata_json = json.dumps(cleaned_metadata) if cleaned_metadata else None
                 
                 cursor.execute('''

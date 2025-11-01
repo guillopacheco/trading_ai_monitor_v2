@@ -1,3 +1,4 @@
+# helpers.py - MODIFICACIONES
 """
 Helpers y utilities para el Trading Bot - CORREGIDO SIN CIRCULAR IMPORTS
 """
@@ -5,6 +6,9 @@ import re
 import logging
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
+
+# ✅ NUEVO IMPORT
+from symbol_utils import normalize_symbol, check_symbol_availability
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +87,13 @@ def parse_signal_message(message_text: str) -> Optional[Dict]:
         if not pair or not direction:
             logger.warning("❌ No se pudo extraer par o dirección")
             return None
+        
+        # ✅ CORRECCIÓN: Normalizar automáticamente el símbolo
+        original_pair = pair
+        normalized_pair = normalize_symbol(original_pair, "linear")
+        symbol_info = check_symbol_availability(original_pair)
+        
+        logger.info(f"🔧 Normalizando símbolo: {original_pair} -> {normalized_pair}")
         
         # EXTRACCIÓN DE PRECIOS - MÁS ROBUSTA
         price_patterns = [
@@ -165,20 +176,22 @@ def parse_signal_message(message_text: str) -> Optional[Dict]:
             # Podríamos obtener el precio actual desde Bybit aquí
             entry_price = 1.0  # Fallback
         
-        # ✅ CORREGIDO: Nombres de campos actualizados
+        # ✅ CORREGIDO: Nombres de campos actualizados y símbolo normalizado
         signal_data = {
-            'pair': pair,
+            'pair': normalized_pair,  # ✅ Usar símbolo normalizado
+            'original_pair': original_pair,  # ✅ Guardar original para referencia
             'direction': direction,
-            'entry': entry_price,  # ✅ Cambiado de 'entry_price' a 'entry'
+            'entry': entry_price,
             'stop_loss': stop_loss,
-            'take_profits': take_profits,  # ✅ Cambiado de 'take_profit' a 'take_profits'
+            'take_profits': take_profits,
             'leverage': leverage,
             'timestamp': datetime.now(),
-            'message_text': message_text[:500],  # ✅ Cambiado de 'raw_message' a 'message_text'
-            'source': 'andy_insider'
+            'message_text': message_text[:500],
+            'source': 'andy_insider',
+            'symbol_info': symbol_info  # ✅ Información del símbolo
         }
         
-        logger.info(f"✅ Señal parseada: {pair} {direction} @ {entry_price} "
+        logger.info(f"✅ Señal parseada: {original_pair} -> {normalized_pair} {direction} @ {entry_price} "
                    f"SL: {stop_loss} TP: {take_profits} Leverage: {leverage}x")
         
         return signal_data
@@ -300,24 +313,48 @@ def format_telegram_message(signal_data: Dict, analysis_summary: Dict) -> str:
         logger.error(f"❌ Error formateando mensaje Telegram: {e}")
         return f"❌ Error generando análisis para {signal_data.get('pair', 'N/A')}"
 
+# helpers.py - ACTUALIZAR LA FUNCIÓN calculate_position_size
 def calculate_position_size(account_balance: float, risk_percent: float, 
-                          entry_price: float, stop_loss: float) -> float:
+                          entry_price: float, stop_loss: float, leverage: int = 1) -> Dict[str, float]:
     """
-    Calcula el tamaño de posición basado en riesgo
+    Calcula el tamaño de posición basado en riesgo - ACTUALIZADO CON LEVERAGE
     """
     try:
+        # Calcular riesgo en dólares
         risk_amount = account_balance * (risk_percent / 100)
+        
+        # Calcular diferencia de precio
         price_diff = abs(entry_price - stop_loss)
         
         if price_diff == 0:
-            return 0
+            return {
+                'position_size': 0,
+                'dollar_risk': 0,
+                'real_risk_percent': 0
+            }
         
-        position_size = risk_amount / (price_diff / entry_price)
-        return round(position_size, 2)
+        # Calcular tamaño de posición base
+        base_position_size = risk_amount / (price_diff / entry_price)
+        
+        # ✅ CORRECCIÓN: Aplicar leverage
+        leveraged_position_size = base_position_size * leverage
+        
+        # ✅ CORRECCIÓN: Calcular riesgo real con leverage
+        real_risk_percent = (price_diff / entry_price * 100) * leverage
+        
+        return {
+            'position_size': round(leveraged_position_size, 2),
+            'dollar_risk': round(risk_amount, 2),
+            'real_risk_percent': round(real_risk_percent, 2)
+        }
         
     except Exception as e:
         logger.error(f"❌ Error calculando tamaño de posición: {e}")
-        return 0
+        return {
+            'position_size': 0,
+            'dollar_risk': 0,
+            'real_risk_percent': 0
+        }
 
 def extract_hashtags(text: str) -> List[str]:
     """
