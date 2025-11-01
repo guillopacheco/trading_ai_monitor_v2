@@ -1,7 +1,6 @@
 """
 Gestor inteligente de señales con sistema de confirmación y re-análisis - CON HEALTH MONITOR
 """
-# ...existing code...
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -19,6 +18,7 @@ from trend_analysis import trend_analyzer
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class PendingSignal:
     """Señal en estado de espera para re-análisis - ACTUALIZADO CON APALANCAMIENTO"""
@@ -32,6 +32,7 @@ class PendingSignal:
     reactivation_attempts: int = 0
     last_reactivation_check: datetime = None
     leverage: int = LEVERAGE  # NUEVO: Apalancamiento
+
 
 class SignalManager:
     """
@@ -128,21 +129,20 @@ class SignalManager:
             return False
 
     async def perform_technical_analysis(self, symbol: str, signal_data: Dict) -> Optional[Dict]:
-        """Realiza análisis técnico - CON HEALTH MONITOR"""
+        """Realiza análisis técnico COMPLETO - CORREGIDO"""
         try:
-            # ✅ NUEVO: Registrar llamada a análisis técnico
-            health_monitor.record_bybit_api_call(f"technical_analysis_{symbol}")
-            
-            # Tu lógica existente de análisis técnico aquí
-            analysis_result = await self._execute_technical_analysis(symbol, signal_data)
-            
-            if analysis_result:
-                logger.debug(f"✅ Análisis técnico completado para {symbol}")
+            logger.info(f"🔍 Iniciando análisis técnico para {symbol}")
+
+            # ✅ USAR EL TREND ANALYZER REAL en lugar del placeholder
+            analysis_result = self.trend_analyzer.analyze_signal(signal_data, symbol)
+
+            if analysis_result and analysis_result.get("recommendation"):
+                logger.info(f"✅ Análisis técnico completado para {symbol}")
+                return analysis_result
             else:
                 logger.warning(f"⚠️ Análisis técnico retornó vacío para {symbol}")
-                
-            return analysis_result
-            
+                return None
+
         except Exception as e:
             logger.error(f"❌ Error en análisis técnico para {symbol}: {e}")
             health_monitor.record_error(str(e), f"Análisis técnico {symbol}")
@@ -295,7 +295,7 @@ class SignalManager:
 
             # ✅ NUEVO: Registrar re-análisis
             health_monitor.record_bybit_api_call(f"reanalysis_{pair}")
-            
+
             fresh_analysis = trend_analyzer.analyze_signal(signal_data, pair)
             return fresh_analysis
 
@@ -356,7 +356,7 @@ class SignalManager:
             current_match = confirmation.get("match_percentage", 0)
             previous_match = pending_signal.last_analysis.get(
                 "confirmation_result", {}
-            ).get("match_percentage", 0)
+            ).get("match_percentage", 0) if pending_signal.last_analysis else 0
             conditions.append(current_match >= 30 or current_match > previous_match)
 
             # Para alto leverage, requerir más condiciones
@@ -615,7 +615,7 @@ class SignalManager:
             self.discarded_signals.pop(signal_id)
 
             logger.info(f"🔄 Señal {discarded_signal.signal_data['pair']} re-activada")
-            
+
             # ✅ NUEVO: Registrar re-activación
             health_monitor.record_telegram_bot_activity()
 
@@ -634,8 +634,128 @@ class SignalManager:
             'discarded_signals': len(self.discarded_signals),
             'signals_processed': self.signals_processed,
             'successful_analyses': self.successful_analyses,
-            'success_rate': (self.successful_analyses / self.signals_processed * 100) if self.signals_processed > 0 else 0
+            'success_rate': (self.successful_analyses / self.signals_processed * 100) if self.signals_processed > 0 else 0,
         }
+
+    def _create_analysis_summary(self, analysis_result: Dict, confirmation_result: Dict) -> Dict:
+        """Crea resumen del análisis - MÉTODO FALTANTE"""
+        try:
+            if not analysis_result:
+                return {"error": "No analysis result"}
+
+            # Obtener recomendación si existe
+            recommendation = analysis_result.get("recommendation", {})
+
+            # Manejar tanto si es objeto como dict
+            if hasattr(recommendation, 'action'):
+                # Es un objeto TradingRecommendation
+                action = recommendation.action
+                confidence = recommendation.confidence
+                reason = recommendation.reason
+                suggested_entry = recommendation.suggested_entry
+                stop_loss = recommendation.stop_loss
+                position_size = recommendation.position_size
+                leverage = recommendation.leverage
+            else:
+                # Es un dict
+                action = recommendation.get('action', 'ESPERAR')
+                confidence = recommendation.get('confidence', 'BAJA')
+                reason = recommendation.get('reason', 'Sin análisis')
+                suggested_entry = recommendation.get('suggested_entry', 0)
+                stop_loss = recommendation.get('stop_loss', 0)
+                position_size = recommendation.get('position_size', 0)
+                leverage = recommendation.get('leverage', 20)
+
+            # Obtener análisis técnico
+            tech_analysis = analysis_result.get("technical_analysis", {})
+            consolidated = tech_analysis.get("consolidated", {})
+
+            return {
+                "action": action,
+                "confidence": confidence,
+                "reason": reason,
+                "suggested_entry": suggested_entry,
+                "stop_loss": stop_loss,
+                "position_size": position_size,
+                "leverage": leverage,
+                "predominant_trend": consolidated.get("predominant_trend", "NEUTRO"),
+                "avg_rsi": consolidated.get("avg_rsi", 50),
+                "match_percentage": confirmation_result.get("match_percentage", 0),
+                "confirmation_status": confirmation_result.get("status", "NO CONFIRMADA"),
+                "analysis_timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"❌ Error creando resumen de análisis: {e}")
+            return {
+                "error": str(e),
+                "action": "ESPERAR",
+                "confidence": "BAJA",
+                "reason": "Error en análisis"
+            }
+
+    async def make_trading_decision(self, signal_id: str, signal_data: Dict, confirmation_result: Dict) -> bool:
+        """Toma decisión de trading - MÉTODO FALTANTE"""
+        try:
+            symbol = signal_data["pair"]
+            logger.info(f"🤔 Tomando decisión para {symbol}...")
+
+            # Obtener análisis completo
+            analysis_result = await self.perform_technical_analysis(symbol, signal_data)
+            if not analysis_result:
+                logger.error(f"❌ No se pudo obtener análisis para {symbol}")
+                return False
+
+            # Obtener recomendación
+            recommendation = analysis_result.get("recommendation")
+            if not recommendation:
+                logger.warning(f"⚠️ No hay recomendación para {symbol}")
+                return False
+
+            # Determinar acción basada en recomendación
+            if hasattr(recommendation, 'action'):
+                action = recommendation.action
+                reason = recommendation.reason
+            else:
+                action = recommendation.get('action', 'ESPERAR')
+                reason = recommendation.get('reason', 'Sin razón')
+
+            if action == "ENTRAR":
+                logger.info(f"🎯 DECISIÓN: ENTRAR en {symbol} - {reason}")
+
+                # Enviar notificación
+                await telegram_notifier.send_signal_analysis(analysis_result)
+
+                # Actualizar BD
+                self.db.update_signal_status(signal_id, "confirmed", {
+                    "analysis_result": analysis_result,
+                    "confirmed_at": datetime.now().isoformat(),
+                    "decision": "ENTRAR"
+                })
+
+                return True
+
+            elif action == "ESPERAR":
+                logger.info(f"⏸️ DECISIÓN: ESPERAR para {symbol} - {reason}")
+
+                # Guardar como pendiente
+                self.db.update_signal_status(signal_id, "pending", {
+                    "analysis_result": analysis_result,
+                    "pending_reason": reason
+                })
+
+                return False
+
+            else:
+                logger.info(f"❌ DECISIÓN: RECHAZAR {symbol} - {reason}")
+                self.db.update_signal_status(signal_id, "rejected", {
+                    "analysis_result": analysis_result,
+                    "rejection_reason": reason
+                })
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error en decisión de trading para {signal_id}: {e}")
+            return False
 
 
 # Instancia global

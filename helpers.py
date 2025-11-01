@@ -59,22 +59,22 @@ def parse_signal_message(message_text: str) -> Optional[Dict]:
                 
                 # Extraer información básica según el patrón
                 if i == 0:  # Patrón 1: **#PAR**/USDT (Direction📈, x20)
-                    pair = match.group(1).upper() + 'USDT'
+                    pair = match.group(1).upper()
                     direction = match.group(2).upper()
                     leverage = int(match.group(3))
                 elif i == 1:  # Patrón 2: #PAR/USDT Direction📈 x20
-                    pair = match.group(1).upper() + 'USDT'
+                    pair = match.group(1).upper() 
                     direction = match.group(2).upper()
                     leverage = int(match.group(3))
                 elif i == 2:  # Patrón 3: Con entry explícito
-                    pair = match.group(1).upper() + 'USDT'
+                    pair = match.group(1).upper()
                     direction = match.group(2).upper()
                     entry_price = float(match.group(3))
                 elif i == 3:  # Patrón 4: Solo par y dirección
-                    pair = match.group(1).upper() + 'USDT'
+                    pair = match.group(1).upper()
                     direction = match.group(2).upper()
                 elif i == 4:  # Patrón 5: Formato simple
-                    pair = match.group(1).upper() + 'USDT'
+                    pair = match.group(1).upper()
                     direction = match.group(2).upper()
                     entry_price = float(match.group(3))
                 

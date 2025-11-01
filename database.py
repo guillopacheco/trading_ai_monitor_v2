@@ -80,7 +80,7 @@ class TradingDatabase:
                         tp2 REAL,
                         tp3 REAL,
                         tp4 REAL,
-                        leverage INTEGER DEFAULT 20,  -- ✅ NUEVO CAMPO
+                        leverage INTEGER DEFAULT 20,
                         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                         status TEXT DEFAULT 'received',
                         confirmation_status TEXT,
@@ -192,7 +192,7 @@ class TradingDatabase:
                     signal_data.get('tp2'),
                     signal_data.get('tp3'),
                     signal_data.get('tp4'),
-                    signal_data.get('leverage', 20),  # ✅ NUEVO
+                    signal_data.get('leverage', 20),
                     'received',
                     confirmation_result.get('status', 'UNKNOWN'),
                     confirmation_result.get('match_percentage', 0.0),
@@ -278,27 +278,43 @@ class TradingDatabase:
             logger.error(f"❌ Error guardando señal en base de datos: {e}")
             return None
     
-    def update_signal_status(self, signal_id: int, status: str, 
-                       confirmation_status: str = None) -> bool:
-        """Actualiza el estado de una señal - MEJORADO"""
+    def update_signal_status(self, signal_id: int, status: str, metadata: Dict = None) -> bool:
+        """Actualiza el estado de una señal - CORREGIDO CON LIMPIEZA DE DATOS"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
                 update_time = datetime.now().isoformat()
                 
-                if confirmation_status:
-                    cursor.execute('''
-                        UPDATE signals 
-                        SET status = ?, confirmation_status = ?, updated_at = ?
-                        WHERE id = ?
-                    ''', (status, confirmation_status, update_time, signal_id))
-                else:
-                    cursor.execute('''
-                        UPDATE signals 
-                        SET status = ?, updated_at = ?
-                        WHERE id = ?
-                    ''', (status, update_time, signal_id))
+                # ✅ CORRECCIÓN: Limpiar datos no serializables antes de convertir a JSON
+                def clean_metadata(obj):
+                    """Convierte objetos no serializables a formatos compatibles"""
+                    if hasattr(obj, 'to_dict'):
+                        return obj.to_dict()
+                    elif hasattr(obj, 'tolist'):
+                        return obj.tolist()
+                    elif hasattr(obj, 'item'):
+                        return obj.item()
+                    else:
+                        return str(obj)
+                
+                # Limpiar metadata recursivamente
+                def clean_dict(d):
+                    if isinstance(d, dict):
+                        return {k: clean_dict(v) for k, v in d.items()}
+                    elif isinstance(d, (list, tuple)):
+                        return [clean_dict(v) for v in d]
+                    else:
+                        return clean_metadata(d)
+                
+                cleaned_metadata = clean_dict(metadata) if metadata else None
+                metadata_json = json.dumps(cleaned_metadata) if cleaned_metadata else None
+                
+                cursor.execute('''
+                    UPDATE signals 
+                    SET status = ?, metadata = ?, updated_at = ?
+                    WHERE id = ?
+                ''', (status, metadata_json, update_time, signal_id))
                 
                 conn.commit()
                 logger.info(f"✅ Señal {signal_id} actualizada a estado: {status}")
@@ -308,30 +324,6 @@ class TradingDatabase:
             logger.error(f"❌ Error actualizando señal {signal_id}: {e}")
             return False
 
-    def get_connection(self):
-        """Retorna la conexión a la base de datos"""
-        return self.conn
-
-    def is_connected(self):
-        """Verifica si la base de datos está conectada - CORREGIDO"""
-        try:
-            # Para SQLite, la conexión es siempre "activa"
-            # Verificamos que el archivo exista y sea accesible
-            import os
-            if os.path.exists(self.db_path):
-                # Test simple de escritura/lectura
-                with sqlite3.connect(self.db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('SELECT 1')
-                return True
-            else:
-                # El archivo no existe, pero podemos crearlo
-                self._init_database()
-                return True
-        except Exception as e:
-            logger.error(f"❌ Error en verificación de BD: {e}")
-            return False
-    
     def get_pending_signals(self) -> List[Dict]:
         """Obtiene señales en estado 'waiting' o 'received' - MEJORADO"""
         try:

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Trading AI Monitor v2 - Sistema Principal - CON HEALTH MONITOR Y OPERATION TRACKER
 """
@@ -94,13 +93,16 @@ class TradingAIMonitor:
             raise
 
     async def _setup_telegram_commands(self):
-        """Configura el sistema de comandos de Telegram"""
+        """Configura el sistema de comandos de Telegram - CORREGIDO"""
         try:
             logger.info("🔄 Iniciando bot de comandos...")
 
-            # Usar el bot de comandos separado
-            from command_bot import command_bot
+            # ✅ CORRECCIÓN: Importación diferida para evitar circularidad
+            def get_command_bot():
+                from command_bot import command_bot
+                return command_bot
 
+            command_bot = get_command_bot()
             await command_bot.start()
 
             logger.info("✅ Sistema de comandos configurado correctamente")
@@ -120,20 +122,30 @@ class TradingAIMonitor:
             # ✅ NUEVO: Registrar apagado en health monitor
             health_monitor.record_telegram_bot_activity()  # Última actividad
 
-            # ✅ DETENER BOT DE COMANDOS
+            # ✅ DETENER BOT DE COMANDOS - CORREGIDO
             try:
-                from command_bot import command_bot
+                # ✅ CORRECCIÓN: Importación diferida
+                def get_command_bot():
+                    from command_bot import command_bot
+                    return command_bot
 
-                if command_bot.is_running:
+                command_bot = get_command_bot()
+                if getattr(command_bot, "is_running", False):
                     await command_bot.stop()
             except Exception as e:
                 logger.error(f"❌ Error deteniendo bot de comandos: {e}")
 
             # Detener componentes existentes
-            await telegram_user_client.disconnect()
+            try:
+                await telegram_user_client.disconnect()
+            except Exception as e:
+                logger.error(f"❌ Error desconectando telegram_user_client: {e}")
 
             # ✅ NUEVO: Detener tracking de operaciones
-            operation_tracker.is_tracking = False
+            try:
+                operation_tracker.is_tracking = False
+            except Exception:
+                pass
 
             # Enviar notificación de apagado
             uptime = datetime.now() - self.startup_time if self.startup_time else None
@@ -179,11 +191,11 @@ class TradingAIMonitor:
             success = await signal_manager.process_new_signal(signal_data)
 
             if not success:
-                logger.error(f"❌ Error procesando señal: {signal_data['pair']}")
-                health_monitor.record_error(f"Error procesando señal {signal_data['pair']}", "Signal Manager")
+                logger.error(f"❌ Error procesando señal: {signal_data.get('pair', 'UNKNOWN')}")
+                health_monitor.record_error(f"Error procesando señal {signal_data.get('pair', 'UNKNOWN')}", "Signal Manager")
                 await telegram_notifier.send_alert(
-                    f"Error procesando señal {signal_data['pair']}",
-                    f"Error en procesamiento de señal:\n{str(e)}",
+                    f"Error procesando señal {signal_data.get('pair', 'UNKNOWN')}",
+                    f"Error en procesamiento de señal.",
                     "error"
                 )
             else:
@@ -226,20 +238,20 @@ Sistema listo para recibir señales.
             operation_stats = operation_tracker.get_operation_stats()
 
             message = f"""
-🛑 **Trading AI Monitor v2 APAGADO** 🛑
+🛑 Trading AI Monitor v2 APAGADO 🛑
 
-**Sistema detenido correctamente**
-- 🕒 Tiempo de actividad: {uptime_str}
-- 📊 Señales procesadas: {health_report['performance_metrics']['signals_processed']}
-- ✅ Trades exitosos: {health_monitor.health_data['successful_trades']}
-- 📈 Operaciones activas: {operation_stats['total_open']}
-- 💾 Base de datos: Respaldada
+Sistema detenido correctamente
+- Tiempo de actividad: {uptime_str}
+- Señales procesadas: {health_report['performance_metrics']['signals_processed']}
+- Trades exitosos: {health_monitor.health_data.get('successful_trades', 0)}
+- Operaciones activas: {operation_stats.get('total_open', 0)}
+- Base de datos: Respaldada
 
-**Resumen de Rendimiento:**
+Resumen de Rendimiento:
 - Tasa de éxito: {health_report['performance_metrics']['success_rate']:.1f}%
 - Reconexiones exitosas: {health_report['performance_metrics']['reconnect_success_rate']:.1f}%
 
-**Hasta pronto!** 👋
+Hasta pronto!
 """
             await telegram_notifier.send_alert("Sistema Apagado", message, "info")
         except Exception as e:
@@ -321,12 +333,12 @@ Sistema listo para recibir señales.
 
                 # Verificar operaciones en seguimiento
                 operation_stats = operation_tracker.get_operation_stats()
-                if operation_stats['total_open'] > 0:
+                if operation_stats.get('total_open', 0) > 0:
                     logger.debug(f"📊 Seguimiento activo de {operation_stats['total_open']} operaciones")
 
                 # Alertar si el sistema está degradado
-                if health_status['overall_status'] == 'DEGRADED' and len(health_status['alerts']) > 0:
-                    logger.warning(f"⚠️ Sistema degradado: {health_status['alerts']}")
+                if health_status.get('overall_status') == 'DEGRADED' and len(health_status.get('alerts', [])) > 0:
+                    logger.warning(f"⚠️ Sistema degradado: {health_status.get('alerts')}")
 
             except Exception as e:
                 logger.error(f"❌ Error en verificación periódica de salud: {e}")
