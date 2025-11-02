@@ -36,9 +36,16 @@ class TradingAIMonitor:
         self.health_check_interval = 300  # 5 minutos entre verificaciones de salud
 
     async def startup(self):
-        """Inicializa el sistema - CON MONITOREO"""
+        """Inicializa el sistema - MEJORADO CON MENSAJE SIMULACIÓN"""
         try:
             logger.info("🚀 Iniciando Trading AI Monitor v2...")
+            
+            # ✅ NUEVO: Enviar estado de simulación
+            from notifier import telegram_notifier
+            from config import APP_MODE
+            
+            is_simulation = APP_MODE.upper() != 'TRADING'
+            await telegram_notifier.send_simulation_status(is_simulation)
             self.startup_time = datetime.now()
 
             # ✅ NUEVO: Registrar inicio en health monitor
@@ -84,9 +91,16 @@ class TradingAIMonitor:
             # 6. Limpieza inicial de BD
             trading_db.cleanup_old_signals(7)
 
-            # ✅ 7. NUEVO: Iniciar detección automática de operaciones
+             # ✅ 7. NUEVO: Iniciar detección automática de operaciones
             logger.info("📊 Iniciando detección automática de operaciones...")
             operations_detected = await operation_tracker.auto_detect_operations()
+
+             # ✅ FORZAR SEGUNDA DETECCIÓN SI NO HAY OPERACIONES
+            if not operations_detected:
+                logger.info("🔄 Intentando segunda detección de operaciones...")
+                await asyncio.sleep(5)  # Esperar 5 segundos
+                operations_detected = await operation_tracker.auto_detect_operations()
+            
             if operations_detected:
                 logger.info("✅ Operaciones detectadas y en seguimiento")
             else:

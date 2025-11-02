@@ -31,7 +31,7 @@ class OperationTracker:
         self.is_tracking = False
     
     async def auto_detect_operations(self) -> bool:
-        """Detecta automáticamente operaciones abiertas en Bybit"""
+        """Detecta automáticamente operaciones abiertas en Bybit - MEJORADO"""
         try:
             logger.info("🔍 Buscando operaciones abiertas en Bybit...")
             
@@ -48,6 +48,11 @@ class OperationTracker:
                     operations_added += 1
             
             logger.info(f"✅ {operations_added} operaciones agregadas al seguimiento")
+            
+            # ✅ INICIAR TRACKING SI HAY OPERACIONES
+            if operations_added > 0 and not self.is_tracking:
+                asyncio.create_task(self._start_tracking())
+                
             return operations_added > 0
             
         except Exception as e:
@@ -257,23 +262,32 @@ class OperationTracker:
         return [op for op in self.open_operations.values() if op['status'] == 'open']
     
     def get_operation_stats(self) -> Dict:
-        """Obtiene estadísticas de operaciones"""
-        open_ops = self.get_open_operations()
-        if not open_ops:
+        """Obtiene estadísticas de operaciones - CORREGIDO"""
+        try:
+            open_ops = self.get_open_operations()
+            
+            if not open_ops:
+                return {
+                    'total_open': 0,
+                    'average_roi': 0,
+                    'operations': []
+                }
+            
+            current_rois = [op.get('current_roi', 0) for op in open_ops]
+            avg_roi = sum(current_rois) / len(current_rois) if current_rois else 0
+            
+            return {
+                'total_open': len(open_ops),
+                'average_roi': round(avg_roi, 1),
+                'operations': open_ops  # ✅ CORREGIDO: incluir las operaciones
+            }
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo estadísticas de operaciones: {e}")
             return {
                 'total_open': 0,
                 'average_roi': 0,
                 'operations': []
             }
-        
-        current_rois = [op.get('current_roi', 0) for op in open_ops]
-        avg_roi = sum(current_rois) / len(current_rois) if current_rois else 0
-        
-        return {
-            'total_open': len(open_ops),
-            'average_roi': round(avg_roi, 1),
-            'operations': open_ops
-        }
     
     def close_operation(self, operation_id: str, reason: str = "Manual"):
         """Cierra una operación"""

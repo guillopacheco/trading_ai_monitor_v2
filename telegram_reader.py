@@ -135,21 +135,21 @@ class TelegramSignalReader:
             logger.error(f"❌ Error deteniendo cliente de Telegram: {e}")
 
         async def handle_message(message):
-        """Maneja mensajes entrantes"""
-        try:
-            # Si es comando
-            if message.text and message.text.startswith('/'):
-                response = await command_handler.handle_command(message)
-                if response:
-                    await telegram_notifier.send_direct_message(message.chat_id, response)
-                    return True
-            
-            # Si es señal normal
-            return await process_signal_message(message)
-            
-        except Exception as e:
-            logger.error(f"Error manejando mensaje: {e}")
-            return False
+            """Maneja mensajes entrantes"""
+            try:
+                # Si es comando
+                if message.text and message.text.startswith('/'):
+                    response = await command_handler.handle_command(message)
+                    if response:
+                        await telegram_notifier.send_direct_message(message.chat_id, response)
+                        return True
+                
+                # Si es señal normal
+                return await process_signal_message(message)
+                
+            except Exception as e:
+                logger.error(f"Error manejando mensaje: {e}")
+                return False
 
 # Instancia global
 telegram_reader = TelegramSignalReader()

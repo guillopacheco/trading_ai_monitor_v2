@@ -128,12 +128,12 @@ class SignalManager:
             return False
 
     async def perform_technical_analysis(self, symbol: str, signal_data: Dict) -> Optional[Dict]:
-        """Realiza análisis técnico COMPLETO - CORREGIDO"""
+        """Realiza análisis técnico COMPLETO - CORREGIDO CON ASYNC"""
         try:
             logger.info(f"🔍 Iniciando análisis técnico para {symbol}")
 
-            # ✅ CORRECCIÓN: Usar analyze_signal que incluye confirmación completa
-            analysis_result = self.trend_analyzer.analyze_signal(signal_data, symbol)
+            # ✅ CORRECCIÓN: Usar analyze_signal que ahora es async
+            analysis_result = await self.trend_analyzer.analyze_signal(signal_data, symbol)  # ✅ AGREGAR await
 
             if analysis_result and analysis_result.get("confirmation_result"):
                 logger.info(f"✅ Análisis técnico completado para {symbol}")

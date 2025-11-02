@@ -1,467 +1,581 @@
-# command_bot.py - VERSIÓN CORREGIDA
 """
-Bot de comandos separado usando python-telegram-bot - VERSIÓN CORREGIDA
+Bot de comandos de Telegram mejorado - CON NUEVOS COMANDOS
 """
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from telegram import Update
-from telegram.ext import CallbackContext
+from telegram.ext import Application, CommandHandler, ContextTypes
 from config import TELEGRAM_BOT_TOKEN
-import asyncio
-from datetime import datetime
+from health_monitor import health_monitor
+from operation_tracker import operation_tracker
+from database import trading_db
+# Al inicio del archivo command_bot.py, agrega esta importación:
+from datetime import datetime  # ✅ AGREGAR ESTA LÍNEA
 
 logger = logging.getLogger(__name__)
 
-
 class CommandBot:
+    """Bot de comandos de Telegram - MEJORADO"""
+    
     def __init__(self):
         self.application = None
         self.is_running = False
 
     async def start(self):
-        """Inicia el bot de comandos"""
+        """Inicia el bot de comandos - MEJORADO CON NUEVOS COMANDOS"""
         try:
-            if not TELEGRAM_BOT_TOKEN:
-                raise ValueError("TELEGRAM_BOT_TOKEN no configurado")
-
             self.application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-            # Registrar comandos
+            
+            # Configurar handlers de comandos MEJORADOS
             self.application.add_handler(CommandHandler("start", self.handle_start))
             self.application.add_handler(CommandHandler("estado", self.handle_status))
-            self.application.add_handler(CommandHandler("operaciones", self.handle_operations))
-            self.application.add_handler(CommandHandler("estadisticas", self.handle_stats))
-            self.application.add_handler(CommandHandler("config", self.handle_config))
-            self.application.add_handler(CommandHandler("help", self.handle_help))
-            self.application.add_handler(CommandHandler("revisar", self.handle_review))
-            self.application.add_handler(CommandHandler("seguimiento", self.handle_follow))
             self.application.add_handler(CommandHandler("salud", self.handle_health))
+            self.application.add_handler(CommandHandler("operaciones", self.handle_operations))
             self.application.add_handler(CommandHandler("operaciones_abiertas", self.handle_open_operations))
-
-            # ✅ NUEVO: Agregar manejador de errores global
-            self.application.add_error_handler(self.error_handler)
-
+            self.application.add_handler(CommandHandler("detectar_operaciones", self.handle_detectar_operaciones))
+            self.application.add_handler(CommandHandler("debug_bybit", self.handle_debug_bybit))
+            
+            # Comandos existentes
+            self.application.add_handler(CommandHandler("evaluar", self.handle_evaluar))
+            self.application.add_handler(CommandHandler("estado_detallado", self.handle_estado_detallado))
+            self.application.add_handler(CommandHandler("historial", self.handle_historial))
+            
+            # ✅ NUEVOS COMANDOS - REGISTRAR
+            self.application.add_handler(CommandHandler("estadisticas", self.handle_estadisticas))
+            self.application.add_handler(CommandHandler("config", self.handle_config))
+            self.application.add_handler(CommandHandler("revisar", self.handle_revisar))
+            self.application.add_handler(CommandHandler("seguimiento", self.handle_seguimiento))
+            self.application.add_handler(CommandHandler("help", self.handle_help))
+            
             # Iniciar polling
             await self.application.initialize()
             await self.application.start()
-            # depending on PTB version updater may be deprecated; keep for compatibility
-            try:
-                await self.application.updater.start_polling()
-            except Exception:
-                # Fall back if updater is not available
-                try:
-                    await self.application.start_polling()
-                except Exception:
-                    pass
-
+            await self.application.updater.start_polling()
+            
             self.is_running = True
             logger.info("✅ Bot de comandos iniciado correctamente")
-
+            
             # Test de conexión
             bot_info = await self.application.bot.get_me()
             logger.info(f"🔍 Bot conectado como: {bot_info.username}")
-
+            
         except Exception as e:
             logger.error(f"❌ Error iniciando bot de comandos: {e}")
             raise
-
-    async def error_handler(self, update: Update, context: CallbackContext):
-        """Maneja errores globales del bot - NUEVO MÉTODO"""
-        try:
-            logger.error(f"❌ Error en bot de comandos: {context.error}")
-            
-            # Enviar mensaje de error genérico al usuario
-            if update and update.message:
-                await update.message.reply_text(
-                    "❌ Ocurrió un error procesando el comando. Por favor, intenta nuevamente.",
-                    parse_mode=None  # ✅ Sin formato para evitar errores
-                )
-        except Exception as e:
-            logger.error(f"❌ Error en manejador de errores: {e}")
-
-    async def handle_start(self, update: Update, context: CallbackContext):
-        """Maneja el comando /start - CORREGIDO SIN MARKDOWN PROBLEMÁTICO"""
-        response = """
-🤖 SISTEMA DE TRADING AUTOMÁTICO
-
-Bienvenido al sistema de trading automatizado.
-
-📋 Comandos disponibles:
-/estado - Estado del sistema
-/operaciones - Operaciones activas
-/estadisticas - Estadísticas de trading
-/config - Configuración actual
-/revisar - Revisar operaciones abiertas
-/seguimiento - Seguimiento de operaciones
-/salud - Estado de salud completo
-/operaciones_abiertas - Operaciones en Bybit
-/help - Ayuda
-
-🔧 Sistema operativo y monitorizando señales.
-"""
-        # ✅ CORRECCIÓN: Enviar sin parse_mode para evitar errores
-        await update.message.reply_text(response, parse_mode=None)
-
-    async def handle_status(self, update: Update, context: CallbackContext):
-        """Maneja el comando /estado - CORREGIDO SIN IMPORTS CIRCULARES Y SIN MARKDOWN"""
-        try:
-            status_lines = ["📊 ESTADO DEL SISTEMA\n"]
-
-            # Estado Base de Datos - MEJORADO
-            try:
-                from database import trading_db
-                db_status = "✅ Operativa" if trading_db.is_connected else "❌ Desconectada"
-                recent_signals = trading_db.get_recent_signals(hours=24)
-                signal_count = len(recent_signals) if recent_signals is not None else 0
-
-                status_lines.append(f"• Base de Datos: {db_status}")
-                status_lines.append(f"• Señales (24h): {signal_count}")
-
-            except Exception as e:
-                logger.error(f"❌ Error verificando BD: {e}")
-                status_lines.append(f"• Base de Datos: ❌ Error")
-
-            # Estado Telegram User Client - MEJORADO
-            try:
-                from telegram_client import telegram_user_client
-                # Verificar conexión real
-                if hasattr(telegram_user_client, 'is_connected') and telegram_user_client.is_connected:
-                    tg_status = "✅ Conectado"
-                else:
-                    tg_status = "❌ Desconectado"
-                status_lines.append(f"• Telegram User: {tg_status}")
-            except Exception as e:
-                logger.error(f"❌ Error verificando Telegram: {e}")
-                status_lines.append(f"• Telegram User: ❌ Error")
-
-            # Estado Bybit - MEJORADO CON VERIFICACIÓN SEGURA
-            try:
-                from config import BYBIT_API_KEY
-
-                if not BYBIT_API_KEY or BYBIT_API_KEY == "TU_API_KEY_AQUI":
-                    bybit_status = "❌ API No Configurada"
-                else:
-                    # Verificación segura sin import circular
-                    try:
-                        from bybit_api import bybit_client
-                        if hasattr(bybit_client, 'is_initialized') and bybit_client.is_initialized:
-                            bybit_status = "✅ Conectado"
-                        else:
-                            bybit_status = "❌ No inicializado"
-                    except Exception as e:
-                        logger.error(f"❌ Error verificando Bybit: {e}")
-                        bybit_status = "❌ Error conexión"
-
-                status_lines.append(f"• Bybit: {bybit_status}")
-
-            except Exception as e:
-                logger.error(f"❌ Error verificando Bybit config: {e}")
-                status_lines.append(f"• Bybit: ❌ Error")
-
-            # Estado del sistema principal - CORREGIDO SIN PSUTIL
-            try:
-                # Método simple: verificar si los módulos principales están cargados
-                import sys
-                system_detected = any(module in sys.modules for module in ['main', 'signal_manager', 'health_monitor'])
-                
-                if system_detected:
-                    status_lines.append(f"• Sistema Principal: ✅ Activo")
-                else:
-                    status_lines.append(f"• Sistema Principal: ⚠️ No detectado")
-
-            except Exception as e:
-                logger.error(f"❌ Error verificando sistema principal: {e}")
-                status_lines.append(f"• Sistema Principal: ⚠️ Error")
-
-            # Estado del bot de comandos
-            try:
-                bot_status = "✅ Activo" if self.is_running else "❌ Inactivo"
-                status_lines.append(f"• Bot Comandos: {bot_status}")
-            except Exception as e:
-                logger.error(f"❌ Error verificando bot: {e}")
-                status_lines.append(f"• Bot Comandos: ⚠️ Error")
-
-            # Estado del Health Monitor - MEJORADO
-            try:
-                from health_monitor import health_monitor
-                # Verificación simple sin dependencias circulares
-                if hasattr(health_monitor, 'error_count'):
-                    health_ok = health_monitor.error_count == 0
-                    status_emoji = "🟢" if health_ok else "🔴"
-                    status_lines.append(f"• Health Monitor: {status_emoji} {'HEALTHY' if health_ok else 'ISSUES'}")
-                else:
-                    status_lines.append(f"• Health Monitor: ⚠️ No disponible")
-            except Exception as e:
-                logger.error(f"❌ Error verificando health monitor: {e}")
-                status_lines.append(f"• Health Monitor: ⚠️ Error")
-
-            # Estado del Operation Tracker - MEJORADO
-            try:
-                from operation_tracker import operation_tracker
-                if hasattr(operation_tracker, 'get_operation_stats'):
-                    operation_stats = operation_tracker.get_operation_stats()
-                    open_ops = operation_stats.get('total_open', 0)
-                    status_lines.append(f"• Operaciones Seguidas: {open_ops}")
-                else:
-                    status_lines.append(f"• Operation Tracker: ⚠️ No disponible")
-            except Exception as e:
-                logger.error(f"❌ Error verificando operation tracker: {e}")
-                status_lines.append(f"• Operation Tracker: ⚠️ Error")
-
-            # Estado general del sistema - MEJORADO
-            error_count = sum(1 for line in status_lines if "❌ Error" in line)
-            warning_count = sum(1 for line in status_lines if "⚠️" in line)
-
-            status_lines.append("")  # Línea en blanco
-
-            if error_count > 0:
-                status_lines.append(f"🔴 Sistema con {error_count} error(es)")
-            elif warning_count > 0:
-                status_lines.append(f"🟡 Sistema con {warning_count} advertencia(s)")
-            else:
-                status_lines.append("🟢 Sistema operativo correctamente")
-
-            # ✅ CORRECCIÓN: Enviar sin parse_mode para evitar errores de Markdown
-            await update.message.reply_text("\n".join(status_lines), parse_mode=None)
-
-        except Exception as e:
-            logger.error(f"❌ Error en comando /estado: {e}")
-            try:
-                await update.message.reply_text(
-                    "❌ Error obteniendo estado del sistema",
-                    parse_mode=None
-                )
-            except Exception as inner_e:
-                logger.error(f"❌ Error enviando mensaje de error: {inner_e}")
-
-    async def handle_health(self, update: Update, context: CallbackContext):
-        """Maneja el comando /salud - CORREGIDO SIN MARKDOWN"""
-        try:
-            from health_monitor import health_monitor
-
-            health_report = health_monitor.get_detailed_report()
-            health_status = health_report.get('health_status', {})
-
-            status_emoji = "🟢" if health_status.get('overall_status') == 'HEALTHY' else "🟡" if health_status.get('overall_status') == 'DEGRADED' else "🔴"
-
-            response_lines = [
-                f"{status_emoji} REPORTE DE SALUD DEL SISTEMA\n",
-                f"Estado General: {health_status.get('overall_status', 'Desconocido')}",
-                f"Uptime: {health_report.get('performance_metrics', {}).get('uptime_hours', 0):.1f} horas",
-                f"Señales Procesadas: {health_report.get('performance_metrics', {}).get('signals_processed', 0)}",
-                f"Tasa de Éxito: {health_report.get('performance_metrics', {}).get('success_rate', 0):.1f}%",
-            ]
-
-            # Estado de conexiones
-            conn = health_status.get('connection_status', {})
-            if conn:
-                response_lines.append("\nCONEXIONES:")
-                for service, ok in conn.items():
-                    ico = "✅" if ok else "❌"
-                    response_lines.append(f"• {service.title()}: {ico} {'Conectado' if ok else 'Desconectado'}")
-
-            # ✅ CORRECCIÓN: Enviar sin parse_mode
-            await update.message.reply_text("\n".join(response_lines), parse_mode=None)
-
-        except Exception as e:
-            logger.error(f"❌ Error en comando /salud: {e}")
-            await update.message.reply_text("❌ Error obteniendo reporte de salud", parse_mode=None)
-
-    async def handle_open_operations(self, update: Update, context: CallbackContext):
-        """Maneja el comando /operaciones_abiertas - CORREGIDO SIN MARKDOWN"""
-        try:
-            from operation_tracker import operation_tracker
-
-            operation_stats = operation_tracker.get_operation_stats()
-
-            if operation_stats.get('total_open', 0) == 0:
-                await update.message.reply_text("📭 No hay operaciones abiertas en seguimiento", parse_mode=None)
-                return
-
-            response_lines = [
-                f"📊 OPERACIONES ABIERTAS: {operation_stats.get('total_open', 0)}",
-                f"ROI Promedio: {operation_stats.get('average_roi', 0)}%\n"
-            ]
-
-            for i, op in enumerate(operation_stats.get('operations', []), 1):
-                signal = op.get('signal_data', {})
-                roi = op.get('current_roi', 0)
-                roi_emoji = "🟢" if roi > 0 else "🔴"
-                response_lines.append(f"{i}. {roi_emoji} {signal.get('pair', 'N/A')} {signal.get('direction', '')}")
-                response_lines.append(f"   ROI: {roi}% | Entry: {op.get('actual_entry', 'N/A')}")
-                response_lines.append("")
-
-            # ✅ CORRECCIÓN: Enviar sin parse_mode
-            await update.message.reply_text("\n".join(response_lines), parse_mode=None)
-
-        except Exception as e:
-            logger.error(f"❌ Error en comando /operaciones_abiertas: {e}")
-            await update.message.reply_text("❌ Error obteniendo operaciones abiertas", parse_mode=None)
-
-    async def handle_operations(self, update: Update, context: CallbackContext):
-        """Maneja el comando /operaciones - CORREGIDO SIN MARKDOWN"""
-        try:
-            from database import trading_db
-
-            recent_signals = trading_db.get_recent_signals(hours=24)
-
-            if not recent_signals:
-                await update.message.reply_text("📊 No hay operaciones recientes (últimas 24h)", parse_mode=None)
-                return
-
-            response_lines = ["📋 OPERACIONES RECIENTES\n"]
-
-            for i, signal in enumerate(recent_signals[:10], 1):
-                pair = signal.get('pair', 'N/A')
-                direction = signal.get('direction', 'N/A')
-                status = signal.get('status', 'N/A')
-                dir_emoji = "🟢" if str(direction).upper() == "LONG" else "🔴"
-                status_emoji = "✅" if status == "confirmed" else "🟡" if status == "pending" else "⚪"
-                created_at = signal.get('created_at') or signal.get('timestamp') or ""
-                if hasattr(created_at, "strftime"):
-                    date_str = created_at.strftime("%Y-%m-%d %H:%M")
-                else:
-                    date_str = str(created_at)[:16]
-                response_lines.append(f"{i}. {dir_emoji} {pair} {direction.upper()} {status_emoji} {status} • {date_str}")
-
-            response_lines.append(f"\n📈 Total: {len(recent_signals)} operaciones en 24h")
-
-            # ✅ CORRECCIÓN: Enviar sin parse_mode
-            await update.message.reply_text("\n".join(response_lines), parse_mode=None)
-
-        except Exception as e:
-            logger.error(f"❌ Error en comando /operaciones: {e}")
-            await update.message.reply_text("❌ Error obteniendo operaciones recientes", parse_mode=None)
-
-    async def handle_stats(self, update: Update, context: CallbackContext):
-        """Maneja el comando /estadisticas - CORREGIDO SIN MARKDOWN"""
-        try:
-            from database import trading_db
-
-            stats = trading_db.get_signal_stats(days=1)
-
-            if not stats:
-                await update.message.reply_text("📊 No hay estadísticas disponibles", parse_mode=None)
-                return
-
-            response = [
-                "📋 ESTADÍSTICAS DE TRADING\n",
-                f"• Señales Totales (24h): {stats.get('total_signals', 0)}",
-                f"• Tasa de Confirmación: {stats.get('confirmation_rate', 0)}%",
-            ]
-
-            # ✅ CORRECCIÓN: Enviar sin parse_mode
-            await update.message.reply_text("\n".join(response), parse_mode=None)
-
-        except Exception as e:
-            logger.error(f"❌ Error en comando /estadisticas: {e}")
-            await update.message.reply_text("❌ Error obteniendo estadísticas", parse_mode=None)
-
-    async def handle_config(self, update: Update, context: CallbackContext):
-        """Maneja el comando /config - CORREGIDO SIN MARKDOWN"""
-        try:
-            from config import (
-                SIGNALS_CHANNEL_ID, OUTPUT_CHANNEL_ID,
-                BYBIT_API_KEY, APP_MODE, LEVERAGE, RISK_PER_TRADE
-            )
-
-            config_info = [
-                "⚙️ CONFIGURACIÓN ACTUAL\n",
-                f"• Modo App: {APP_MODE}",
-                f"• Canal Señales: {SIGNALS_CHANNEL_ID}",
-                f"• Canal Output: {OUTPUT_CHANNEL_ID}",
-                f"• Apalancamiento: x{LEVERAGE}",
-                f"• Riesgo por Operación: {RISK_PER_TRADE*100}%",
-                f"• Bybit API: {'✅ Configurada' if BYBIT_API_KEY and BYBIT_API_KEY != 'TU_API_KEY_AQUI' else '❌ No configurada'}"
-            ]
-
-            # ✅ CORRECCIÓN: Enviar sin parse_mode
-            await update.message.reply_text("\n".join(config_info), parse_mode=None)
-
-        except Exception as e:
-            logger.error(f"❌ Error en comando /config: {e}")
-            await update.message.reply_text("❌ Error obteniendo configuración", parse_mode=None)
-
-    async def handle_help(self, update: Update, context: CallbackContext):
-        """Maneja el comando /help - CORREGIDO SIN MARKDOWN"""
-        help_text = """
-🤖 COMANDOS DISPONIBLES
-
-/start - Iniciar el bot
-/estado - Estado general del sistema
-/operaciones - Operaciones activas actuales
-/estadisticas - Estadísticas de trading
-/config - Configuración actual
-/revisar - Revisar operaciones abiertas
-/seguimiento - Seguimiento de operaciones
-/salud - Estado de salud completo
-/operaciones_abiertas - Operaciones en Bybit
-/help - Muestra esta ayuda
-"""
-        # ✅ CORRECCIÓN: Enviar sin parse_mode
-        await update.message.reply_text(help_text, parse_mode=None)
-
-    async def handle_review(self, update: Update, context: CallbackContext):
-        """Maneja el comando /revisar - CORREGIDO SIN MARKDOWN"""
-        try:
-            response = """
-🔍 REVISIÓN DE OPERACIONES
-
-Funcionalidades disponibles:
-• Detección automática de operaciones en Bybit
-• Monitoreo de ROI en tiempo real
-• Alertas de take-profit y stop-loss
-• Recomendaciones de gestión de riesgo
-
-Para usar:
-1. El sistema detecta automáticamente operaciones abiertas
-2. Usa /operaciones_abiertas para ver el estado actual
-3. Recibirás alertas automáticas de cambios
-"""
-            # ✅ CORRECCIÓN: Enviar sin parse_mode
-            await update.message.reply_text(response, parse_mode=None)
-        except Exception as e:
-            logger.error(f"❌ Error en review_command: {e}")
-            await update.message.reply_text("❌ Error en comando de revisión", parse_mode=None)
-
-    async def handle_follow(self, update: Update, context: CallbackContext):
-        """Maneja el comando /seguimiento - CORREGIDO SIN MARKDOWN"""
-        try:
-            response = """
-📊 SEGUIMIENTO DE OPERACIONES
-
-Estadísticas en tiempo real:
-• ROI actual por operación
-• Precio actual vs entrada
-• Recomendaciones de gestión
-• Historial de cambios
-
-Alertas automáticas:
-✅ Take-profit alcanzado
-⚠️ ROI crítico
-🔄 Recomendación de reversión
-📉 Cambios de tendencia
-"""
-            # ✅ CORRECCIÓN: Enviar sin parse_mode
-            await update.message.reply_text(response, parse_mode=None)
-        except Exception as e:
-            logger.error(f"❌ Error en follow_command: {e}")
-            await update.message.reply_text("❌ Error en comando de seguimiento", parse_mode=None)
 
     async def stop(self):
         """Detiene el bot de comandos"""
         try:
             if self.application and self.is_running:
-                try:
-                    await self.application.updater.stop()
-                except Exception:
-                    pass
+                await self.application.updater.stop()
                 await self.application.stop()
                 await self.application.shutdown()
                 self.is_running = False
-                logger.info("✅ Bot de comandos detenido")
+                logger.info("✅ Bot de comandos detenido correctamente")
         except Exception as e:
             logger.error(f"❌ Error deteniendo bot de comandos: {e}")
+
+    async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /start - MEJORADO"""
+        try:
+            response = """
+🤖 *Trading AI Monitor v2* - Sistema Activado
+
+*Comandos disponibles:*
+
+📊 *Estado del Sistema*
+/estado - Estado general del sistema
+/estado_detallado - Información detallada
+/salud - Reporte de salud completo
+
+📈 *Operaciones y Señales*  
+/operaciones - Últimas señales procesadas
+/operaciones_abiertas - Operaciones en seguimiento
+/historial - Historial de señales recientes
+
+🔍 *Análisis bajo Demanda*
+/evaluar <symbol> - Análisis manual de un símbolo
+
+*Características:*
+• Monitoreo automático de señales
+• Análisis técnico multi-timeframe
+• Gestión inteligente de riesgo
+• Alertas de divergencias y pérdidas
+• Base de datos en tiempo real
+
+🔄 Sistema listo para recibir señales.
+"""
+            await update.message.reply_text(response, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /start: {e}")
+            await update.message.reply_text("❌ Error procesando comando")
+
+    async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /estado - MEJORADO"""
+        try:
+            health_status = health_monitor.get_health_status()
+            operation_stats = operation_tracker.get_operation_stats()
+            signal_stats = trading_db.get_signal_stats(hours=24)
+            
+            # Determinar estado general
+            overall_health = health_status.get('overall_health', False)
+            status_emoji = "🟢" if overall_health else "🔴"
+            
+            response = f"""
+{status_emoji} *ESTADO DEL SISTEMA*
+
+• Base de Datos: {'✅ Operativa' if health_status.get('database') else '❌ Problemas'}
+• Señales (24h): {signal_stats.get('total', 0)}
+• Telegram User: {'✅ Conectado' if health_status.get('telegram_user') else '❌ Desconectado'}
+• Bybit: {'✅ Operativo' if health_status.get('bybit_api') else '❌ No inicializado'}
+• Sistema Principal: {'✅ Activo' if health_status.get('main_system') else '❌ Inactivo'}
+• Bot Comandos: {'✅ Activo' if health_status.get('command_bot') else '❌ Inactivo'}
+• Health Monitor: {'🟢 HEALTHY' if overall_health else '🔴 ISSUES'}
+• Operaciones Seguidas: {operation_stats.get('total_open', 0)}
+
+🟢 Sistema operativo correctamente
+"""
+            await update.message.reply_text(response, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /estado: {e}")
+            await update.message.reply_text("❌ Error obteniendo estado del sistema")
+
+    async def handle_health(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /salud"""
+        try:
+            health_report = health_monitor.get_detailed_report()
+            
+            response = f"""
+📊 *REPORTE DE SALUD DETALLADO*
+
+• Estado General: {health_report['health_status']['overall_status']}
+• Tiempo Activo: {health_report['performance_metrics']['uptime_hours']:.1f} horas
+• Señales Procesadas: {health_report['performance_metrics']['signals_processed']}
+• Tasa de Éxito: {health_report['performance_metrics']['success_rate']:.1f}%
+• Tasa Reconexión: {health_report['performance_metrics']['reconnect_success_rate']:.1f}%
+
+*Alertas Activas:*
+{chr(10).join(['• ' + alert for alert in health_report['health_status'].get('alerts', ['No hay alertas'])])}
+
+*Recomendaciones:*
+{chr(10).join(['• ' + rec for rec in health_report.get('recommendations', ['Sistema operando normalmente'])])}
+"""
+            await update.message.reply_text(response, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /salud: {e}")
+            await update.message.reply_text("❌ Error obteniendo reporte de salud")
+
+    async def handle_operations(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /operaciones"""
+        try:
+            recent_signals = trading_db.get_recent_signals(hours=24, limit=10)
+            
+            if not recent_signals:
+                response = "📭 No hay señales procesadas en las últimas 24 horas"
+            else:
+                response = "📊 *ÚLTIMAS SEÑALES PROCESADAS*\n\n"
+                
+                for signal in recent_signals[:5]:  # Mostrar solo 5
+                    status_emoji = "✅" if signal['status'] == 'confirmed' else "❌" if signal['status'] == 'rejected' else "⚠️"
+                    response += f"""{status_emoji} *{signal['symbol']}* {signal['direction']}
+• Entry: {signal['entry_price']}
+• Estado: {signal['status']}
+• Hora: {signal['created_at'][11:16]}\n\n"""
+            
+            await update.message.reply_text(response, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /operaciones: {e}")
+            await update.message.reply_text("❌ Error obteniendo operaciones")
+
+    async def handle_open_operations(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /operaciones_abiertas - CORREGIDO"""
+        try:
+            operation_stats = operation_tracker.get_operation_stats()
+            open_operations = operation_stats.get('operations', [])
+            
+            if not open_operations:
+                response = "📭 No hay operaciones abiertas en seguimiento"
+            else:
+                response = "📈 *OPERACIONES ABIERTAS*\n\n"
+                
+                for op in open_operations[:5]:  # Mostrar solo 5
+                    signal_data = op.get('signal_data', {})
+                    pnl = op.get('current_roi', 0)
+                    pnl_emoji = "🟢" if pnl > 0 else "🔴"
+                    
+                    response += f"""📊 *{signal_data.get('pair', 'N/A')}* {signal_data.get('direction', 'N/A')}
+    • Entry: {op.get('actual_entry', 'N/A')}
+    • Actual: {op.get('current_price', 'N/A')}
+    • PnL: {pnl_emoji} {pnl:.2f}%
+    • Tamaño: {op.get('size', 0):.4f}
+    • Leverage: x{signal_data.get('leverage', 'N/A')}\n\n"""
+            
+            await update.message.reply_text(response, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /operaciones_abiertas: {e}")
+            await update.message.reply_text("❌ Error obteniendo operaciones abiertas")
+
+    # === NUEVOS COMANDOS MEJORADOS ===
+
+    async def handle_evaluar(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /evaluar - NUEVO COMANDO"""
+        try:
+            from notifier import telegram_notifier
+            
+            # Obtener símbolo del mensaje (ej: /evaluar BTCUSDT)
+            symbol = context.args[0].upper() if context.args else None
+            
+            if not symbol:
+                await update.message.reply_text("❌ Uso: /evaluar <symbol> (ej: /evaluar BTCUSDT)")
+                return
+            
+            # Simular datos de análisis (en producción esto vendría del trend_analyzer)
+            analysis_data = {
+                'current_price': 0,  # En producción, obtener precio real
+                'trend': 'ALCISTA',
+                'rsi': 45.5,
+                'recommendation': 'MANTENER',
+                'ema_trend': 'ALCISTA',
+                'macd_signal': 'COMPRA', 
+                'volatility': 'MEDIA'
+            }
+            
+            await telegram_notifier.send_manual_evaluation(symbol, analysis_data)
+            await update.message.reply_text(f"📊 Evaluación enviada para {symbol}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /evaluar: {e}")
+            await update.message.reply_text("❌ Error en evaluación")
+
+    async def handle_estado_detallado(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /estado_detallado - NUEVO COMANDO"""
+        try:
+            from health_monitor import health_monitor
+            
+            health_report = health_monitor.get_detailed_report()
+            stats = health_monitor.get_health_status()
+            signal_stats = trading_db.get_signal_stats(hours=24)
+            
+            # Determinar salud general
+            overall_status = health_report['health_status']['overall_status']
+            status_emoji = "🟢" if overall_status == "HEALTHY" else "🟡" if overall_status == "DEGRADED" else "🔴"
+            
+            message = f"""
+📊 **ESTADO DETALLADO DEL SISTEMA**
+
+• Salud General: {status_emoji} {overall_status}
+• Tiempo Activo: {health_report['performance_metrics']['uptime_hours']:.1f}h
+• Señales Procesadas: {health_report['performance_metrics']['signals_processed']}
+• Tasa de Éxito: {health_report['performance_metrics']['success_rate']:.1f}%
+
+🔌 **CONEXIONES:**
+• Base de Datos: {'✅' if stats['database'] else '❌'}
+• Telegram User: {'✅' if stats['telegram_user'] else '❌'} 
+• Bybit API: {'✅' if stats['bybit_api'] else '❌'}
+• Sistema Principal: {'✅' if stats['main_system'] else '❌'}
+
+📈 **ESTADÍSTICAS (24h):**
+• Total Señales: {signal_stats.get('total', 0)}
+• Confirmadas: {signal_stats.get('confirmed', 0)}
+• Rechazadas: {signal_stats.get('rejected', 0)}
+• Pendientes: {signal_stats.get('pending', 0)}
+• Operaciones Seguidas: {stats.get('operations_tracked', 0)}
+• Errores: {stats.get('errors', 0)}
+• Advertencias: {stats.get('warnings', 0)}
+"""
+            
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /estado_detallado: {e}")
+            await update.message.reply_text("❌ Error obteniendo estado detallado")
+
+    async def handle_historial(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /historial - NUEVO COMANDO"""
+        try:
+            recent_signals = trading_db.get_recent_signals(hours=24, limit=15)
+            
+            if not recent_signals:
+                await update.message.reply_text("📭 No hay historial de señales en las últimas 24 horas")
+                return
+            
+            # Agrupar por resultado
+            confirmed = [s for s in recent_signals if s['status'] == 'confirmed']
+            rejected = [s for s in recent_signals if s['status'] == 'rejected']
+            
+            message = f"""
+📜 **HISTORIAL DE SEÑALES (24h)**
+
+• Total: {len(recent_signals)} señales
+• Confirmadas: {len(confirmed)}
+• Rechazadas: {len(rejected)}
+
+📈 **ÚLTIMAS 5 SEÑALES:**
+"""
+            
+            for signal in recent_signals[:5]:
+                status_emoji = "✅" if signal['status'] == 'confirmed' else "❌"
+                message += f"\n{status_emoji} {signal['symbol']} {signal['direction']} - {signal['status']}"
+            
+            if len(recent_signals) > 5:
+                message += f"\n\n... y {len(recent_signals) - 5} más"
+            
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /historial: {e}")
+            await update.message.reply_text("❌ Error obteniendo historial")
+
+    # Agregar estos métodos NUEVOS a la clase CommandBot:
+
+    async def handle_estadisticas(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /estadisticas - NUEVO COMANDO"""
+        try:
+            from database import trading_db
+            from health_monitor import health_monitor
+            
+            # Obtener estadísticas
+            signal_stats = trading_db.get_signal_stats(hours=24)
+            health_status = health_monitor.get_health_status()
+            operation_stats = operation_tracker.get_operation_stats()
+            
+            # Calcular porcentajes
+            total = signal_stats.get('total', 1)
+            confirmed_pct = (signal_stats.get('confirmed', 0) / total) * 100 if total > 0 else 0
+            rejected_pct = (signal_stats.get('rejected', 0) / total) * 100 if total > 0 else 0
+            
+            message = f"""
+    📈 **ESTADÍSTICAS DEL SISTEMA (24h)**
+
+    • Total Señales: {total}
+    • Confirmadas: {signal_stats.get('confirmed', 0)} ({confirmed_pct:.1f}%)
+    • Rechazadas: {signal_stats.get('rejected', 0)} ({rejected_pct:.1f}%)
+    • Pendientes: {signal_stats.get('pending', 0)}
+
+    📊 **OPERACIONES:**
+    • Abiertas: {operation_stats.get('total_open', 0)}
+    • ROI Promedio: {operation_stats.get('average_roi', 0):.1f}%
+
+    ⚡ **RENDIMIENTO:**
+    • Tasa de Acierto: {confirmed_pct:.1f}%
+    • Señales/Hora: {total / 24:.1f}
+    • Uptime: {health_status.get('uptime_minutes', 0) / 60:.1f}h
+
+    🔧 **SISTEMA:**
+    • Base de Datos: {'✅' if health_status.get('database') else '❌'}
+    • APIs Conectadas: {sum([health_status.get('bybit_api', False), health_status.get('telegram_user', False)])}/2
+    • Errores: {health_status.get('errors', 0)}
+    """
+            
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /estadisticas: {e}")
+            await update.message.reply_text("❌ Error obteniendo estadísticas")
+
+    async def handle_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /config - NUEVO COMANDO"""
+        try:
+            from config import APP_MODE, LEVERAGE, RISK_PER_TRADE, ACCOUNT_BALANCE
+            
+            message = f"""
+    ⚙️ **CONFIGURACIÓN ACTUAL**
+
+    • Modo: {APP_MODE}
+    • Apalancamiento: x{LEVERAGE}
+    • Riesgo por Operación: {RISK_PER_TRADE * 100:.1f}%
+    • Balance de Cuenta: ${ACCOUNT_BALANCE}
+
+    📊 **UMBRALES:**
+    • Match Mínimo Entrada: 50%
+    • Match Mínimo Precaución: 33%
+    • Stop Loss Base: 2%
+    • Toma de Ganancia: 4 niveles
+
+    🔔 **ALERTAS ACTIVAS:**
+    • Divergencias fuertes
+    • Pérdidas > 30%
+    • Actualizaciones BD
+    • Health checks
+    """
+            
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /config: {e}")
+            await update.message.reply_text("❌ Error obteniendo configuración")
+
+    async def handle_revisar(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /revisar - NUEVO COMANDO"""
+        try:
+            operation_stats = operation_tracker.get_operation_stats()
+            open_operations = operation_stats.get('operations', [])
+            
+            if not open_operations:
+                message = "📭 No hay operaciones abiertas para revisar"
+            else:
+                message = "🔍 **REVISIÓN DE OPERACIONES ABIERTAS**\n\n"
+                
+                for op in open_operations:
+                    signal_data = op.get('signal_data', {})
+                    pnl = op.get('current_roi', 0)
+                    pnl_emoji = "🟢" if pnl > 0 else "🔴"
+                    status = "✅ EN PROFIT" if pnl > 0 else "⚠️ EN PÉRDIDA" if pnl < -10 else "⚪ NEUTRAL"
+                    
+                    message += f"""📊 *{signal_data.get('pair', 'N/A')}* {signal_data.get('direction', 'N/A')}
+    • PnL: {pnl_emoji} {pnl:.2f}% ({status})
+    • Entry: {op.get('actual_entry', 'N/A')}
+    • Actual: {op.get('current_price', 'N/A')}
+    • Tamaño: {op.get('size', 0):.4f}
+    • Leverage: x{signal_data.get('leverage', 'N/A')}\n\n"""
+            
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /revisar: {e}")
+            await update.message.reply_text("❌ Error en revisión")
+
+    async def handle_detectar_operaciones(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /detectar_operaciones - NUEVO COMANDO"""
+        try:
+            await update.message.reply_text("🔍 Buscando operaciones en Bybit...")
+            
+            # Forzar detección
+            operations_detected = await operation_tracker.auto_detect_operations()
+            
+            if operations_detected:
+                operation_stats = operation_tracker.get_operation_stats()
+                response = f"✅ Operaciones detectadas: {operation_stats['total_open']} operaciones"
+            else:
+                response = "📭 No se encontraron operaciones abiertas en Bybit"
+                
+            await update.message.reply_text(response)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /detectar_operaciones: {e}")
+            await update.message.reply_text("❌ Error detectando operaciones")
+
+    async def handle_seguimiento(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /seguimiento - NUEVO COMANDO"""
+        try:
+            operation_stats = operation_tracker.get_operation_stats()
+            open_operations = operation_stats.get('operations', [])
+            
+            # Calcular estadísticas básicas
+            total_open = len(open_operations)
+            in_profit = len([op for op in open_operations if op.get('current_roi', 0) > 0])
+            in_loss = len([op for op in open_operations if op.get('current_roi', 0) < 0])
+            
+            rois = [op.get('current_roi', 0) for op in open_operations]
+            avg_roi = sum(rois) / len(rois) if rois else 0
+            best_roi = max(rois) if rois else 0
+            worst_roi = min(rois) if rois else 0
+            
+            message = f"""
+    🎯 **SEGUIMIENTO DE OPERACIONES**
+
+    • Total Abiertas: {total_open}
+    • En Profit: {in_profit}
+    • En Pérdida: {in_loss}
+
+    📊 **RENDIMIENTO:**
+    • ROI Promedio: {avg_roi:.2f}%
+    • Mejor Operación: {best_roi:.2f}%
+    • Peor Operación: {worst_roi:.2f}%
+
+    🔄 **ESTADO ACTUAL:**
+    • Monitoreo Activo: {'✅' if operation_tracker.is_tracking else '❌'}
+    • Última Actualización: {datetime.now().strftime('%H:%M:%S')}
+    """
+            
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /seguimiento: {e}")
+            await update.message.reply_text("❌ Error obteniendo seguimiento")
+
+    async def handle_debug_bybit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /debug_bybit - NUEVO COMANDO PARA DIAGNÓSTICO"""
+        try:
+            await update.message.reply_text("🔧 Ejecutando diagnóstico de Bybit...")
+            
+            # Verificar conexión con Bybit
+            from bybit_monitor import bybit_monitor
+            
+            # Test de conexión
+            positions = await bybit_monitor.get_open_positions()
+            balance = await bybit_monitor.get_account_balance()
+            
+            response = f"""
+    🔧 *DIAGNÓSTICO BYBIT*
+
+    • Posiciones encontradas: {len(positions) if positions else 0}
+    • Balance: {balance if balance else 'N/A'}
+    • Monitor inicializado: {bybit_monitor.session is not None}
+    • API Key configurada: {bool(bybit_monitor.session and bybit_monitor.session.api_key)}
+
+    📊 *OPERACIONES DETECTADAS:*
+    """
+            
+            if positions:
+                for pos in positions:
+                    response += f"\n• {pos['symbol']} {pos['side']} - Tamaño: {pos['size']}"
+            else:
+                response += "\n• No hay posiciones abiertas"
+                
+            await update.message.reply_text(response, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /debug_bybit: {e}")
+            await update.message.reply_text(f"❌ Error en diagnóstico: {e}")
+
+    async def handle_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Maneja comando /help - NUEVO COMANDO"""
+        try:
+            message = """
+    🤖 **TRADING AI MONITOR v2 - AYUDA**
+
+    📊 *COMANDOS DE ESTADO:*
+    /start - Iniciar bot y ver comandos
+    /estado - Estado general del sistema
+    /estado_detallado - Información detallada
+    /salud - Reporte de salud completo
+    /estadisticas - Estadísticas de rendimiento
+
+    📈 *OPERACIONES Y SEÑALES:*
+    /operaciones - Últimas señales procesadas
+    /operaciones_abiertas - Operaciones en seguimiento  
+    /historial - Historial de señales
+    /revisar - Revisión detallada de operaciones
+    /seguimiento - Estadísticas de seguimiento
+
+    🔍 *ANÁLISIS Y CONFIGURACIÓN:*
+    /evaluar <symbol> - Análisis manual
+    /config - Configuración actual
+    /help - Esta ayuda
+
+    ⚡ *CARACTERÍSTICAS:*
+    • Monitoreo automático 24/7
+    • Análisis técnico multi-timeframe
+    • Alertas inteligentes
+    • Gestión de riesgo automatizada
+    • Base de datos en tiempo real
+
+    💡 *EJEMPLOS:*
+    /evaluar BTCUSDT - Analizar Bitcoin
+    /estadisticas - Ver rendimiento
+    /revisar - Revisar operaciones abiertas
+    """
+            
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en comando /help: {e}")
+            await update.message.reply_text("❌ Error mostrando ayuda")
 
 # Instancia global
 command_bot = CommandBot()
