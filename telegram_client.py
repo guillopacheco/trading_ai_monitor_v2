@@ -1,147 +1,120 @@
-"""
-Cliente de Telegram usando Telethon para leer canales como usuario - MEJORADO
-"""
+import asyncio
 import logging
 import re
-from telethon import TelegramClient
-from telethon import events
-from telethon.errors import SessionPasswordNeededError
-from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
-from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE, SIGNALS_CHANNEL_ID
+from telethon import TelegramClient, events
+from config import (
+    TELEGRAM_API_ID,
+    TELEGRAM_API_HASH,
+    TELEGRAM_SESSION,
+    TELEGRAM_SIGNAL_CHANNEL_ID,
+)
+from helpers import clean_text, normalize_symbol
+from signal_manager import process_signal
+from notifier import send_message
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("telegram_client")
 
-class TelegramUserClient:
-    """Cliente de Telegram para leer mensajes como usuario - MEJORADO"""
-    
-    def __init__(self):
-        self.client = None
-        self._is_connected = False  # ✅ CORREGIDO: usar nombre diferente
-        self.signal_callback = None
-        
-    @property
-    def is_connected(self):
-        """Propiedad para verificar conexión"""
-        return self.client and self.client.is_connected()
-    
-    def set_signal_callback(self, callback):
-        """Establece el callback para procesar señales recibidas"""
-        self.signal_callback = callback
-    
-    async def connect(self):
-        """Conecta el cliente de Telegram"""
-        try:
-            if not all([TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE]):
-                raise ValueError("Faltan credenciales de Telegram User API")
-            
-            self.client = TelegramClient(
-                session='user_session',
-                api_id=int(TELEGRAM_API_ID),
-                api_hash=TELEGRAM_API_HASH
-            )
-            
-            await self.client.start(phone=TELEGRAM_PHONE)
-            
-            # Verificar autenticación
-            if not await self.client.is_user_authorized():
-                raise SessionPasswordNeededError("Se requiere verificación en dos pasos")
-            
-            self._is_connected = True
-            logger.info("✅ Cliente de Telegram (Usuario) conectado correctamente")
-            return True
-            
-        except SessionPasswordNeededError:
-            logger.error("❌ Se requiere verificación en dos pasos. Configura la contraseña.")
-            return False
-        except Exception as e:
-            logger.error(f"❌ Error conectando cliente de Telegram: {e}")
-            return False
-        
-    async def get_messages(self, channel_id, limit=10):
-        """Obtiene mensajes de un canal"""
-        try:
-            messages = []
-            async for message in self.client.iter_messages(int(channel_id), limit=limit):
-                messages.append(message)
-            return messages
-        except Exception as e:
-            logger.error(f"Error obteniendo mensajes: {e}")
-            return []
-    
-    async def disconnect(self):
-        """Desconecta el cliente"""
-        if self.client and self.is_connected:
-            await self.client.disconnect()
-            self._is_connected = False
-            logger.info("✅ Cliente de Telegram desconectado")
-    
-    def _extract_message_text(self, message):
-        """Extrae texto de diferentes tipos de mensajes"""
-        try:
-            if message.text:
-                return message.text
-            
-            # Mensajes con media que pueden contener texto
-            if message.media:
-                if hasattr(message.media, 'document'):
-                    caption = message.text or ""
-                    return f"[MEDIA] {caption}"
-                elif isinstance(message.media, MessageMediaPhoto):
-                    caption = message.text or ""
-                    return f"[PHOTO] {caption}"
-            
-            return ""
-        except Exception as e:
-            logger.error(f"Error extrayendo texto del mensaje: {e}")
-            return ""
-    
-    async def _handle_channel_message(self, event):
-        """Maneja mensajes recibidos del canal"""
-        try:
-            message_text = self._extract_message_text(event.message)
-            if not message_text:
-                return
-            
-            logger.info(f"📨 Mensaje recibido del canal: {message_text[:100]}...")
-            
-            # Verificar si es una señal de trading
-            if self._is_trading_signal(message_text):
-                logger.info(f"🔍 Señal potencial detectada")
-                if self.signal_callback:
-                    await self.signal_callback({'message_text': message_text})
-            else:
-                logger.debug("Mensaje no reconocido como señal de trading")
-                
-        except Exception as e:
-            logger.error(f"❌ Error procesando mensaje del canal: {e}")
-    
-    def _is_trading_signal(self, text: str) -> bool:
-        """Verifica si el texto parece una señal de trading"""
-        signal_keywords = [
-            'BUY', 'SELL', 'LONG', 'SHORT', 'ENTRY', 'TP', 'SL',
-            '🔥', '🎯', '⭐', '✨', 'TAKE-PROFIT', 'STOP-LOSS'
-        ]
-        return any(keyword.lower() in text.lower() for keyword in signal_keywords)
-    
-    async def start_listening(self):
-        """Inicia la escucha del canal de señales"""
-        try:
-            if not await self.connect():
-                raise Exception("No se pudo conectar a Telegram")
-            
-            # ✅ CORREGIDO: Usar events.NewMessage en lugar de self.client.NewMessage
-            @self.client.on(events.NewMessage(chats=int(SIGNALS_CHANNEL_ID)))
-            async def handler(event):
-                await self._handle_channel_message(event)
-            
-            logger.info(f"🎧 Escuchando canal de señales: {SIGNALS_CHANNEL_ID}")
-            
-            # Mantener la conexión activa
-            await self.client.run_until_disconnected()
-            
-        except Exception as e:
-            logger.error(f"❌ Error iniciando listener de Telegram: {e}")
-            raise
+# ================================================================
+# ⚙️ Inicialización del cliente
+# ================================================================
+client = TelegramClient(TELEGRAM_SESSION, TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
-# Instancia global
-telegram_user_client = TelegramUserClient()
+
+# ================================================================
+# 🔍 Detección de señal de trading
+# ================================================================
+def parse_signal(message_text: str):
+    """
+    Analiza un mensaje y extrae datos de la señal si es válida.
+    Ejemplo:
+        🔥 #ICP/USDT (Long📈, x20) 🔥
+        Entry - 5.311
+        Take-Profit:
+        🥉 5.4172 ...
+    """
+    try:
+        text = clean_text(message_text)
+
+        # Filtrar mensajes irrelevantes
+        if "profit" in text.lower() or "✅" in text:
+            logger.debug("📭 Ignorando mensaje de profit.")
+            return None
+
+        # Buscar estructura principal
+        match = re.search(
+            r"#?([\w\-]+)/USDT.*?\((Long|Short).*?x(\d+)\).*?Entry\s*-\s*([\d\.]+)",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        if not match:
+            logger.debug("⚠️ No coincide con formato de señal.")
+            return None
+
+        pair, direction, leverage, entry = match.groups()
+        pair = normalize_symbol(pair)
+        direction = direction.lower()
+        leverage = int(leverage)
+        entry = float(entry)
+
+        # Buscar take profits
+        tps = re.findall(r"([\d\.]+)\s*\(", text)
+        take_profits = [float(tp) for tp in tps if float(tp) != entry]
+
+        return {
+            "pair": pair,
+            "direction": direction,
+            "leverage": leverage,
+            "entry": entry,
+            "take_profits": take_profits[:4],
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error parseando señal: {e}")
+        return None
+
+
+# ================================================================
+# 📨 Evento: Mensaje nuevo en el canal de señales
+# ================================================================
+@client.on(events.NewMessage(chats=TELEGRAM_SIGNAL_CHANNEL_ID))
+async def handler_new_signal(event):
+    try:
+        msg_text = event.raw_text.strip()
+        logger.info(f"📩 Mensaje recibido: {msg_text[:60]}...")
+
+        signal = parse_signal(msg_text)
+        if not signal:
+            return
+
+        logger.info(f"🔍 Señal potencial detectada: {signal['pair']} ({signal['direction']} x{signal['leverage']})")
+        await send_message(
+            f"📡 *Señal detectada*\n"
+            f"💱 {signal['pair']} ({signal['direction'].upper()} x{signal['leverage']})\n"
+            f"🎯 Entry: {signal['entry']}\n"
+            f"📊 Analizando condiciones..."
+        )
+
+        # Analizar la señal detectada
+        await process_signal(signal)
+
+    except Exception as e:
+        logger.error(f"❌ Error procesando mensaje de Telegram: {e}")
+        await send_message(f"⚠️ Error procesando señal: {e}")
+
+
+# ================================================================
+# 🚀 Inicio del cliente
+# ================================================================
+async def run_telegram_listener():
+    """
+    Inicia el listener de Telegram.
+    """
+    try:
+        await client.start()
+        logger.info("✅ Conexión con Telegram establecida (canal de señales activo).")
+        await send_message("✅ *Conectado al canal de señales Andy Insider*")
+        await client.run_until_disconnected()
+    except Exception as e:
+        logger.error(f"❌ Error iniciando Telegram listener: {e}")
+        await send_message(f"⚠️ Error al conectar con Telegram: {e}")

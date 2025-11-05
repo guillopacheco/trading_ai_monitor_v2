@@ -26,6 +26,7 @@ BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
 BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
 BYBIT_CATEGORY = "linear"  # ← AÑADE ESTA LÍNEA
 BYBIT_TESTNET = os.getenv('BYBIT_TESTNET', 'true').lower() == 'true'  # ← AÑADE ESTA LÍNEA
+SIMULATION_MODE = os.getenv("SIMULATION_MODE", "true").lower() == "true"
 
 # Trading Configuration
 APP_MODE = os.getenv('APP_MODE', 'ANALYSIS')  # ANALYSIS o TRADING
@@ -37,7 +38,7 @@ EXTENDED_MONITORING_TIMEOUT = 72 * SECONDS_IN_HOUR  # 72 horas
 
 # Configuración de Apalancamiento y Riesgo
 LEVERAGE = 20
-RISK_PER_TRADE = float(os.getenv('RISK_PER_TRADE', 0.02))  # 2% por operación
+RISK_PER_TRADE = float(os.getenv('RISK_PER_TRADE', 0.05))  # 5% por operación
 MAX_LEVERAGE = int(os.getenv('MAX_LEVERAGE', 20))  # CAMBIADO a 20
 MAX_POSITION_SIZE = 0.1  # 10% máximo del capital por operación
 ACCOUNT_BALANCE = 1000  # Balance de cuenta estimado en USDT
@@ -108,6 +109,9 @@ def validate_config():
     if errors:
         error_msg = "Errores de configuración:\n- " + "\n- ".join(errors)
         raise ValueError(error_msg)
+    
+    def is_testnet():
+        return BYBIT_TESTNET or SIMULATION_MODE
     
     print("✅ Configuración validada correctamente")
 

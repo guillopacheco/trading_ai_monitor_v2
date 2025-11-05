@@ -1,0 +1,28 @@
+[Unit]
+Description=Trading AI Monitor - Señales (Análisis de Telegram)
+After=network.target
+
+[Service]
+# Ruta del proyecto
+WorkingDirectory=/home/usuario/trading_ai_monitor_v2
+
+# Script principal para señales
+ExecStart=/home/usuario/trading_ai_monitor_v2/venv/bin/python3 /home/usuario/trading_ai_monitor_v2/main.py --mode signals
+
+# Configuración de entorno
+Environment="PYTHONUNBUFFERED=1"
+
+# Reinicio automático en caso de error
+Restart=always
+RestartSec=10
+
+# Logging a archivo local
+StandardOutput=append:/home/usuario/trading_ai_monitor_v2/logs/signals.log
+StandardError=append:/home/usuario/trading_ai_monitor_v2/logs/signals_error.log
+
+# Usuario y grupo del servicio
+User=usuario
+Group=usuario
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+sudo systemctl daemon-reload
+sudo systemctl enable trading_ai_signals.service
+sudo systemctl enable trading_ai_monitor.service
+sudo systemctl start trading_ai_signals.service
+sudo systemctl start trading_ai_monitor.service
+
+
+mkdir -p /home/usuario/trading_ai_monitor_v2/logs
+chmod 755 /home/usuario/trading_ai_monitor_v2/logs

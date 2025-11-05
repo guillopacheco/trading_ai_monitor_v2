@@ -8,6 +8,23 @@ from logging.handlers import RotatingFileHandler
 
 _logging_initialized = False
 
+# Telegram Configuration (Usuario)
+TELEGRAM_API_ID = os.getenv('TELEGRAM_API_ID')
+TELEGRAM_API_HASH = os.getenv('TELEGRAM_API_HASH')
+TELEGRAM_PHONE = os.getenv('TELEGRAM_PHONE')
+TELEGRAM_USER_ID = os.getenv('TELEGRAM_USER_ID')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
+# Channels Configuration
+SIGNALS_CHANNEL_ID = os.getenv('SIGNALS_CHANNEL_ID')
+OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
+
+# Bybit Configuration
+BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
+BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
+BYBIT_CATEGORY = "linear"  # ← AÑADE ESTA LÍNEA
+BYBIT_TESTNET = os.getenv('BYBIT_TESTNET', 'true').lower() == 'true'  # ← AÑADE ESTA LÍNEA
+
 def setup_logging():
     """Configura el sistema de logging con archivos rotativos"""
     global _logging_initialized
@@ -26,6 +43,9 @@ def setup_logging():
     # Configurar el logger principal
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
+
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     
     # Formato de los logs
     formatter = logging.Formatter(
@@ -36,8 +56,8 @@ def setup_logging():
     # Handler para archivo principal
     main_handler = RotatingFileHandler(
         filename=os.path.join(log_dir, "trading_bot.log"),
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5,
+        maxBytes=5*1024*1024,  # 5MB
+        backupCount=10,
         encoding='utf-8'
     )
     main_handler.setFormatter(formatter)
@@ -47,7 +67,7 @@ def setup_logging():
     error_handler = RotatingFileHandler(
         filename=os.path.join(log_dir, "error.log"),
         maxBytes=5*1024*1024,  # 5MB
-        backupCount=3,
+        backupCount=10,
         encoding='utf-8'
     )
     error_handler.setFormatter(formatter)
