@@ -139,7 +139,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================================================================
 # 🚀 Inicialización del bot de comandos
 # ================================================================
-def start_command_bot():
+async def start_command_bot():
     """
     Inicia el bot de Telegram con comandos interactivos.
     """
@@ -156,7 +156,7 @@ def start_command_bot():
         app.add_handler(CommandHandler("help", help_command))
 
         logger.info("🤖 Bot de comandos iniciado correctamente.")
-        app.run_polling()
+        await app.run_polling()
 
     except Exception as e:
         logger.error(f"❌ Error iniciando command_bot: {e}")

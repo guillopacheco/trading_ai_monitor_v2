@@ -41,7 +41,7 @@ async def main():
     if mode == "signals":
         # ⬇️ IMPORTANTE: lanzar la corutina .start()
         asyncio.create_task(TelegramSignalReader(callback=process_signal).start())
-        asyncio.create_task(asyncio.to_thread(start_command_bot))
+        asyncio.create_task(start_command_bot())
     elif mode == "monitor":
         positions = get_open_positions()
         if positions:
