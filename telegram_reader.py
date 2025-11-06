@@ -11,7 +11,7 @@ class TelegramSignalReader:
 
     def __init__(self, callback=None):
         self._processed_signals = set()
-        self.callback = callback  # nuevo: permite manejar señales procesadas externamente
+        self.callback = callback  # permite manejar señales procesadas externamente
 
     def parse_message(self, text: str):
         """Determina si el mensaje contiene una señal válida y la parsea."""
@@ -70,12 +70,13 @@ class TelegramSignalReader:
 
     async def start(self):
         """
-        Este método simula la escucha asincrónica del canal de Telegram.
-        (Luego se conectará al cliente real de Telethon o python-telegram-bot)
+        Simulación de escucha asincrónica del canal de Telegram.
+        (Integraremos cliente real más adelante.)
         """
         logger.info("📡 TelegramSignalReader iniciado en modo escucha...")
         while True:
-            await asyncio.sleep(10)  # simula espera de nuevos mensajes
+            await asyncio.sleep(10)
             # Aquí iría la lectura real de mensajes del canal
-            # Por ahora, solo dejamos un placeholder
+            # y el posterior:
+            # if self.callback and signal: await/llamar self.callback(signal)
             pass

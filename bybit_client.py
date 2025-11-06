@@ -3,15 +3,39 @@ import hmac
 import hashlib
 import requests
 import logging
+
 from config import BYBIT_API_KEY, BYBIT_API_SECRET, SIMULATION_MODE
+
+# Opcionales/seguro por defecto si no existen en config.py
+try:
+    from config import BYBIT_TESTNET, BYBIT_CATEGORY
+except Exception:
+    BYBIT_TESTNET = False
+    BYBIT_CATEGORY = "linear"  # "linear", "inverse" o "spot"
 
 logger = logging.getLogger("bybit_client")
 
-BASE_URL = "https://api.bybit.com"
+BASE_URL = "https://api.bybit.com" if not BYBIT_TESTNET else "https://api-testnet.bybit.com"
 
+# Mapa timeframe → intervalo v5
+INTERVAL_MAP = {
+    "1m": "1",
+    "3m": "3",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "1h": "60",
+    "2h": "120",
+    "4h": "240",
+    "6h": "360",
+    "12h": "720",
+    "1d": "D",
+    "1w": "W",
+    "1M": "M",
+}
 
 # ================================================================
-# 🔐 Generación de firma segura
+# 🔐 Generación de firma segura (para endpoints privados)
 # ================================================================
 def generate_signature(params: dict) -> str:
     """Genera una firma HMAC-SHA256 para la API privada."""
@@ -24,7 +48,58 @@ def generate_signature(params: dict) -> str:
 
 
 # ================================================================
-# 📊 Obtener posiciones abiertas
+# 📊 OHLCV (velas) — endpoint público v5
+# ================================================================
+def get_ohlcv(symbol: str, timeframe: str, limit: int = 200, category: str = None):
+    """
+    Devuelve lista de dicts OHLCV usando /v5/market/kline
+    Formato:
+    [
+      {'timestamp': int_ms, 'open': float, 'high': float, 'low': float, 'close': float, 'volume': float},
+      ...
+    ]
+    """
+    try:
+        interval = INTERVAL_MAP.get(timeframe)
+        if not interval:
+            raise ValueError(f"Timeframe no soportado: {timeframe}")
+
+        endpoint = "/v5/market/kline"
+        params = {
+            "category": category or BYBIT_CATEGORY or "linear",
+            "symbol": symbol,
+            "interval": interval,
+            "limit": min(max(int(limit), 1), 1000),
+        }
+        resp = requests.get(BASE_URL + endpoint, params=params, timeout=10)
+        data = resp.json()
+
+        if data.get("retCode") != 0 or "result" not in data or "list" not in data["result"]:
+            logger.warning(f"⚠️ Respuesta kline inesperada: {data}")
+            return []
+
+        rows = []
+        # Bybit v5 kline list: [startTime, open, high, low, close, volume, turnover]
+        for it in data["result"]["list"]:
+            ts = int(it[0])
+            o, h, l, c, vol = float(it[1]), float(it[2]), float(it[3]), float(it[4]), float(it[5])
+            rows.append({
+                "timestamp": ts,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": vol
+            })
+        return rows
+
+    except Exception as e:
+        logger.error(f"❌ Error get_ohlcv {symbol} {timeframe}: {e}")
+        return []
+
+
+# ================================================================
+# 📂 Posiciones abiertas (privado)
 # ================================================================
 def get_open_positions() -> list:
     """
@@ -40,7 +115,7 @@ def get_open_positions() -> list:
 
     try:
         endpoint = "/v5/position/list"
-        params = {"category": "linear", "settleCoin": "USDT", "limit": 20}
+        params = {"category": BYBIT_CATEGORY or "linear", "settleCoin": "USDT", "limit": 20}
         params["api_key"] = BYBIT_API_KEY
         params["timestamp"] = int(time.time() * 1000)
         params["sign"] = generate_signature(params)
@@ -51,13 +126,17 @@ def get_open_positions() -> list:
         positions = []
         if "result" in data and "list" in data["result"]:
             for pos in data["result"]["list"]:
-                if float(pos["size"]) > 0:
-                    positions.append({
-                        "symbol": pos["symbol"],
-                        "direction": "long" if pos["side"] == "Buy" else "short",
-                        "entry": float(pos["avgPrice"]),
-                        "leverage": int(pos["leverage"]),
-                    })
+                # Filtra solo posiciones con tamaño > 0
+                try:
+                    if float(pos.get("size", 0)) > 0:
+                        positions.append({
+                            "symbol": pos["symbol"],
+                            "direction": "long" if pos.get("side") == "Buy" else "short",
+                            "entry": float(pos.get("avgPrice", 0)),
+                            "leverage": int(float(pos.get("leverage", 20))),
+                        })
+                except Exception:
+                    continue
 
         logger.info(f"📊 {len(positions)} posiciones activas detectadas")
         return positions

@@ -6,7 +6,7 @@ from database import get_signals, clear_old_records
 from notifier import send_message
 from operation_tracker import monitor_open_positions
 from signal_manager import process_signal
-from config import TELEGRAM_BOT_TOKEN, SIMULATION_MODE
+from config import TELEGRAM_BOT_TOKEN, SIMULATION_MODE, TELEGRAM_USER_ID
 from datetime import datetime
 
 logger = logging.getLogger("command_bot")
