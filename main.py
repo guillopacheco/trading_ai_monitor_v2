@@ -39,9 +39,8 @@ async def main():
     init_database()
 
     if mode == "signals":
-        # ⬇️ IMPORTANTE: lanzar la corutina .start()
         asyncio.create_task(TelegramSignalReader(callback=process_signal).start())
-        asyncio.create_task(start_command_bot())
+        asyncio.create_task(start_command_bot())  # ✅ así está bien
     elif mode == "monitor":
         positions = get_open_positions()
         if positions:

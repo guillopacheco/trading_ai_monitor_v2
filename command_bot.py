@@ -1,18 +1,22 @@
 import logging
-import threading
+from datetime import datetime
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+)
 from database import get_signals, clear_old_records
 from notifier import send_message
 from operation_tracker import monitor_open_positions
 from signal_manager import process_signal
-from config import TELEGRAM_BOT_TOKEN, SIMULATION_MODE, TELEGRAM_USER_ID
-from datetime import datetime
+from bybit_client import get_open_positions
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
 
 logger = logging.getLogger("command_bot")
 
 # Estado global del monitoreo
-active_monitoring = {"running": False, "thread": None}
+active_monitoring = {"running": False}
 
 
 # ================================================================
@@ -59,20 +63,19 @@ async def reanudar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔁 Reiniciando monitoreo de operaciones...", parse_mode="Markdown")
     active_monitoring["running"] = True
 
-    def run_monitor():
-        try:
-            positions = []  # Aquí se obtendrían las posiciones abiertas desde Bybit o BD
-            monitor_open_positions(positions)
-        except Exception as e:
-            logger.error(f"❌ Error en el hilo de monitoreo: {e}")
-        finally:
+    try:
+        positions = get_open_positions()
+        if not positions:
+            await update.message.reply_text("ℹ️ No hay posiciones abiertas actualmente.", parse_mode="Markdown")
             active_monitoring["running"] = False
+            return
 
-    thread = threading.Thread(target=run_monitor, daemon=True)
-    active_monitoring["thread"] = thread
-    thread.start()
-
-    await update.message.reply_text("🟢 Monitoreo iniciado correctamente.", parse_mode="Markdown")
+        monitor_open_positions(positions)
+        await update.message.reply_text("🟢 Monitoreo iniciado correctamente.", parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"❌ Error en el monitoreo: {e}")
+        await update.message.reply_text(f"❌ Error iniciando monitoreo: {e}", parse_mode="Markdown")
+        active_monitoring["running"] = False
 
 
 # ================================================================
@@ -85,6 +88,7 @@ async def detener(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     active_monitoring["running"] = False
     await update.message.reply_text("🛑 Monitoreo detenido manualmente.", parse_mode="Markdown")
+    logger.info("🛑 Monitoreo detenido por el usuario.")
 
 
 # ================================================================
@@ -112,6 +116,7 @@ async def historial(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def limpiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_old_records(days=30)
     await update.message.reply_text("🧹 Registros antiguos eliminados correctamente.", parse_mode="Markdown")
+    logger.info("🧹 Limpieza de base de datos completada.")
 
 
 # ================================================================
@@ -137,15 +142,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ================================================================
-# 🚀 Inicialización del bot de comandos
+# 🚀 Inicialización asíncrona del bot (PTB 20+, sin cerrar loop)
 # ================================================================
 async def start_command_bot():
     """
-    Inicia el bot de Telegram con comandos interactivos.
+    Inicia el bot de Telegram dentro del loop principal (modo asíncrono).
+    Compatible con python-telegram-bot >= 20 y asyncio.run(main()).
     """
     try:
-        app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        app = (
+            ApplicationBuilder()
+            .token(TELEGRAM_BOT_TOKEN)
+            .build()
+        )
 
+        # Registrar comandos
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("estado", estado))
         app.add_handler(CommandHandler("reanudar", reanudar))
@@ -155,8 +166,8 @@ async def start_command_bot():
         app.add_handler(CommandHandler("config", config))
         app.add_handler(CommandHandler("help", help_command))
 
-        logger.info("🤖 Bot de comandos iniciado correctamente.")
-        await app.run_polling()
+        logger.info("🤖 Bot de comandos activo y escuchando mensajes.")
+        await app.run_polling(close_loop=False, allowed_updates=Update.ALL_TYPES)
 
     except Exception as e:
         logger.error(f"❌ Error iniciando command_bot: {e}")
