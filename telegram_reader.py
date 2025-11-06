@@ -1,82 +1,75 @@
-import re
 import logging
-import asyncio
+import re
+from telethon import TelegramClient, events
+from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION, TELEGRAM_SIGNAL_CHANNEL_ID
+from notifier import send_message
+from signal_manager import process_signal
 
 logger = logging.getLogger("telegram_reader")
 
-class TelegramSignalReader:
+# ==================== Cliente Telethon ===========================
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = TelegramClient(TELEGRAM_SESSION, int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+    return _client
+
+# ==================== Parser de señales ==========================
+signal_regex = re.compile(
+    r"#([A-Z0-9]+)/USDT\s*\((Long|Short)[^x]*x(\d+)\).*?Entry\s*-\s*([\d.]+).*?"
+    r"Take-Profit:\s*(?:🥉\s*([\d.]+).*?🥈\s*([\d.]+).*?🥇\s*([\d.]+).*?🚀\s*([\d.]+))?",
+    re.S
+)
+
+profit_update_regex = re.compile(r'✅\s*Price\s*-\s*\d', re.I)
+
+def parse_message(text: str):
+    if profit_update_regex.search(text):
+        logger.info("💰 Mensaje de profit — ignorado")
+        return None
+    m = signal_regex.search(text)
+    if not m:
+        return None
+    pair, direction, leverage, entry, tp1, tp2, tp3, tp4 = m.groups()
+    tps = [float(x) for x in (tp1, tp2, tp3, tp4) if x]
+    data = {
+        "pair": pair.strip(),
+        "direction": direction.lower(),
+        "leverage": int(leverage),
+        "entry": float(entry),
+        "take_profits": tps,
+        "message_text": text,
+    }
+    logger.info(f"✅ Señal parseada: {data['pair']} ({data['direction']}) x{data['leverage']}")
+    return data
+
+# ==================== Listener del canal =========================
+async def start_telegram_reader():
     """
-    Lector y parser para señales del canal Andy Insider.
+    Conecta con la cuenta personal y escucha el canal de señales.
+    Cuando llega una señal válida, llama a process_signal(data).
     """
+    client = _get_client()
+    await client.start()
+    logger.info("✅ Telethon conectado. Escuchando canal de señales...")
 
-    def __init__(self, callback=None):
-        self._processed_signals = set()
-        self.callback = callback  # permite manejar señales procesadas externamente
-
-    def parse_message(self, text: str):
-        """Determina si el mensaje contiene una señal válida y la parsea."""
-        if self._is_profit_update(text):
-            logger.info("💰 Mensaje de profit detectado — ignorado")
-            return None
-
-        if not self._is_trading_signal(text):
-            logger.debug("📭 Mensaje ignorado — no corresponde a una señal válida")
-            return None
-
-        return self._parse_signal_message(text)
-
-    def _is_trading_signal(self, text: str) -> bool:
-        """Verifica si el texto corresponde a una señal completa."""
-        if re.search(r'✅\s*Price\s*-\s*\d', text) or 'Profit' in text:
-            return False
-        pattern = re.compile(
-            r"🔥\s*#([A-Z0-9]+)/USDT\s*\((Long|Short)[^)]*\)\s*🔥.*Entry\s*-\s*([\d.]+).*Take-Profit:",
-            re.S
-        )
-        return bool(pattern.search(text))
-
-    def _is_profit_update(self, text: str) -> bool:
-        """Detecta mensajes de profit o TP alcanzado"""
-        return bool(re.search(r'✅\s*Price\s*-\s*\d', text)) or 'Profit' in text
-
-    def _parse_signal_message(self, text: str):
-        """Extrae los datos de la señal Andy Insider."""
+    @client.on(events.NewMessage(chats=[int(TELEGRAM_SIGNAL_CHANNEL_ID)]))
+    async def handler(event):
         try:
-            match = re.search(
-                r"#([A-Z0-9]+)/USDT\s*\((Long|Short)[^x]*x(\d+)\).*?Entry\s*-\s*([\d.]+).*?Take-Profit:\s*(?:🥉\s*([\d.]+).*🥈\s*([\d.]+).*🥇\s*([\d.]+).*🚀\s*([\d.]+))?",
-                text, re.S
-            )
-            if not match:
-                return None
-
-            pair, direction, leverage, entry, tp1, tp2, tp3, tp4 = match.groups()
-            take_profits = [float(tp) for tp in [tp1, tp2, tp3, tp4] if tp]
-
-            data = {
-                'pair': pair.strip(),
-                'direction': direction.lower(),
-                'leverage': int(leverage),
-                'entry': float(entry),
-                'take_profits': take_profits,
-                'message_text': text
-            }
-
-            logger.info(f"✅ Señal parseada correctamente: {pair} ({direction}) x{leverage}")
-            return data
-
+            text = event.message.message or ""
+            data = parse_message(text)
+            if data:
+                await send_message(f"🛰️ *Señal detectada*: #{data['pair']}/USDT ({data['direction']} x{data['leverage']})")
+                # process_signal puede ser sync o async; soportamos ambos
+                try:
+                    res = process_signal(data)
+                    if hasattr(res, "__await__"):
+                        await res
+                except Exception as e:
+                    logger.error(f"❌ Error en process_signal(): {e}")
         except Exception as e:
-            logger.error(f"❌ Error parseando señal: {e}")
-            return None
+            logger.error(f"❌ Error manejando mensaje de Telegram: {e}")
 
-    async def start(self):
-        """
-        Simulación de escucha asincrónica del canal de Telegram.
-        (Integraremos cliente real más adelante.)
-        """
-        logger.info("📡 TelegramSignalReader iniciado en modo escucha...")
-        while True:
-            await asyncio.sleep(10)
-            # Aquí iría la lectura real de mensajes del canal
-            # y el posterior:
-            # if self.callback and signal: await/llamar self.callback(signal)
-            pass
+    await client.run_until_disconnected()
