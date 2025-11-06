@@ -2,8 +2,22 @@ import logging
 import requests
 from config import SIMULATION_MODE
 
-logger = logging.getLogger("helpers")
+# ================================================================
+# ⚙️ Configuración de apalancamiento y riesgo
+# ================================================================
+LEVERAGE = 20                    # Apalancamiento por defecto
+RISK_PER_TRADE = 0.05            # 5% del capital por operación
+MAX_LEVERAGE = 20
+MAX_POSITION_SIZE = 0.1          # 10% del balance total
+ACCOUNT_BALANCE = 1000           # Balance estimado en USDT
 
+# Umbrales ROI (gestión de pérdidas y ganancias)
+ROI_REVERSION_THRESHOLD = -30    # Activar análisis de reversión
+ROI_DYNAMIC_STOP_THRESHOLD = 60  # Stop dinámico tras +60%
+ROI_TAKE_PROFIT_THRESHOLD = 100  # Take Profit parcial al +100%
+ROI_PARTIAL_CLOSE_PERCENT = 70   # Cerrar 70% de la posición
+
+logger = logging.getLogger("helpers")
 
 # ================================================================
 # 🔧 Normalización de símbolo

@@ -13,6 +13,18 @@ MIN_REQUIRED_CANDLES = 50   # mínimo de velas válidas por temporalidad
 ATR_PERIOD = 14             # período estándar para el ATR
 
 # ================================================================
+# 📊 Parámetros técnicos de indicadores
+# ================================================================
+RSI_OVERSOLD = 30
+RSI_OVERBOUGHT = 70
+ATR_PERIOD = 14
+EMA_SHORT_PERIOD = 10
+EMA_LONG_PERIOD = 30
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+
+# ================================================================
 # 📈 Temporalidades soportadas
 # ================================================================
 def get_available_timeframes():
