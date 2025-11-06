@@ -1,119 +1,76 @@
-"""
-Configuración centralizada de la aplicación
-"""
+# ================================================================
+# 📦 CONFIGURACIÓN GLOBAL DEL SISTEMA
+# ================================================================
 import os
 from dotenv import load_dotenv
 
+# Cargar variables de entorno desde .env
 load_dotenv()
 
-# Constantes para mejor legibilidad
-SECONDS_IN_HOUR = 3600
-SECONDS_IN_DAY = 86400
+# ================================================================
+# 🤖 TELEGRAM - CUENTA PERSONAL Y BOT
+# ================================================================
+TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID")
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
+TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE")
+TELEGRAM_SESSION = os.getenv("TELEGRAM_SESSION", "trading_ai_monitor")
+TELEGRAM_SIGNAL_CHANNEL_ID = os.getenv("TELEGRAM_SIGNAL_CHANNEL_ID")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_USER_ID = os.getenv("TELEGRAM_USER_ID")
 
-# Telegram Configuration (Usuario)
-TELEGRAM_API_ID = os.getenv('TELEGRAM_API_ID')
-TELEGRAM_API_HASH = os.getenv('TELEGRAM_API_HASH')
-TELEGRAM_PHONE = os.getenv('TELEGRAM_PHONE')
-TELEGRAM_USER_ID = os.getenv('TELEGRAM_USER_ID')
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+# ================================================================
+# 💹 BYBIT - API KEYS Y ENDPOINTS
+# ================================================================
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 
-# Channels Configuration
-SIGNALS_CHANNEL_ID = os.getenv('SIGNALS_CHANNEL_ID')
-OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
+# Usa testnet si la variable existe y es True
+BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "False").lower() == "true"
 
-# Bybit Configuration
-BYBIT_API_KEY = os.getenv('BYBIT_API_KEY')
-BYBIT_API_SECRET = os.getenv('BYBIT_API_SECRET')
-BYBIT_CATEGORY = "linear"  # ← AÑADE ESTA LÍNEA
-BYBIT_TESTNET = os.getenv('BYBIT_TESTNET', 'true').lower() == 'true'  # ← AÑADE ESTA LÍNEA
-SIMULATION_MODE = os.getenv("SIMULATION_MODE", "true").lower() == "true"
+# Selección del endpoint
+BYBIT_BASE_URL = (
+    "https://api-testnet.bybit.com" if BYBIT_TESTNET else "https://api.bybit.com"
+)
 
-# Trading Configuration
-APP_MODE = os.getenv('APP_MODE', 'ANALYSIS')  # ANALYSIS o TRADING
-DEFAULT_TIMEFRAMES = ["1", "5", "15"]
-REVIEW_INTERVAL_NORMAL = 900  # 15 minutos
-REVIEW_INTERVAL_HIGH_VOL = 300  # 5 minutos
-MAX_WAIT_TIME = 24 * SECONDS_IN_HOUR  # 24 horas
-EXTENDED_MONITORING_TIMEOUT = 72 * SECONDS_IN_HOUR  # 72 horas
+# ================================================================
+# ⚙️ MODO DE EJECUCIÓN Y SISTEMA
+# ================================================================
+# Si True, la app no enviará órdenes reales ni mensajes de Telegram reales
+SIMULATION_MODE = os.getenv("SIMULATION_MODE", "True").lower() == "true"
 
-# Configuración de Apalancamiento y Riesgo
-LEVERAGE = 20
-RISK_PER_TRADE = float(os.getenv('RISK_PER_TRADE', 0.05))  # 5% por operación
-MAX_LEVERAGE = int(os.getenv('MAX_LEVERAGE', 20))  # CAMBIADO a 20
-MAX_POSITION_SIZE = 0.1  # 10% máximo del capital por operación
-ACCOUNT_BALANCE = 1000  # Balance de cuenta estimado en USDT
-# App Settings
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+# ================================================================
+# 🗄️ BASE DE DATOS LOCAL
+# ================================================================
+DATABASE_FILE = os.getenv("DATABASE_FILE", "trading_ai_monitor.db")
 
-# Ajustar stops para apalancamiento
-BASE_STOP_PERCENTAGE = 0.03
-MIN_STOP_DISTANCE = 0.005
-MAX_STOP_DISTANCE = 0.08
+# ================================================================
+# 🧭 CONFIGURACIONES ADICIONALES (TIEMPOS Y RETRASOS)
+# ================================================================
+# Intervalo de revisión del sistema (heartbeat)
+HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "300"))  # segundos
 
-# Condiciones para vigilancia extendida
-EXTENDED_MONITORING_CONDITIONS = {
-    'min_atr_multiplier': 1.3,
-    'max_price_deviation': 0.15,
-    'rsi_extreme_threshold': 25,
-    'weekend_extension_hours': 48
-}
+# Tiempo de espera entre llamadas a Bybit API
+BYBIT_API_DELAY = float(os.getenv("BYBIT_API_DELAY", "1.5"))
 
-# Umbrales para re-activación de señales
-REACTIVATION_THRESHOLDS = {
-    'confirmation_min_match': 60,
-    'price_proximity': 0.08,
-    'volatility_increase': 1.2
-}
+# ================================================================
+# 🧠 VALIDACIÓN BÁSICA DE VARIABLES CLAVE
+# ================================================================
+def validate_env():
+    """Verifica que existan las variables esenciales antes de iniciar el sistema."""
+    missing = []
+    for var in [
+        "TELEGRAM_API_ID",
+        "TELEGRAM_API_HASH",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_USER_ID",
+        "BYBIT_API_KEY",
+        "BYBIT_API_SECRET",
+    ]:
+        if not globals().get(var):
+            missing.append(var)
+    if missing:
+        print(f"⚠️  Advertencia: faltan variables en .env: {', '.join(missing)}")
 
-# Indicadores Configuration
-RSI_OVERSOLD = 30
-RSI_OVERBOUGHT = 70
-ATR_PERIOD = 14
-EMA_SHORT_PERIOD = 10
-EMA_LONG_PERIOD = 30
-MACD_FAST = 12
-MACD_SLOW = 26
-MACD_SIGNAL = 9
 
-# Database
-DATABASE_PATH = "data/trading_signals.db"
-
-# ROI Management (NUEVO - para el prompt original)
-ROI_REVERSION_THRESHOLD = -30  # -30% para considerar reversión
-ROI_DYNAMIC_STOP_THRESHOLD = 60  # +60% para SL dinámico
-ROI_TAKE_PROFIT_THRESHOLD = 100  # +100% para TP parcial
-ROI_PARTIAL_CLOSE_PERCENT = 70  # 70% de la posición
-
-def validate_config():
-    """Valida que la configuración esencial esté presente"""
-    errors = []
-    
-    # Verificar configuración de User Bot
-    if not TELEGRAM_API_ID:
-        errors.append("TELEGRAM_API_ID no configurado")
-    if not TELEGRAM_API_HASH:
-        errors.append("TELEGRAM_API_HASH no configurado")
-    if not TELEGRAM_PHONE:
-        errors.append("TELEGRAM_PHONE no configurado")
-    
-    # Verificar Bot Token
-    if not TELEGRAM_BOT_TOKEN:
-        errors.append("TELEGRAM_BOT_TOKEN no configurado")
-    
-    # Verificar canales
-    if not SIGNALS_CHANNEL_ID:
-        errors.append("SIGNALS_CHANNEL_ID no configurado")
-    if not OUTPUT_CHANNEL_ID:
-        errors.append("OUTPUT_CHANNEL_ID no configurado")
-    
-    if errors:
-        error_msg = "Errores de configuración:\n- " + "\n- ".join(errors)
-        raise ValueError(error_msg)
-    
-    def is_testnet():
-        return BYBIT_TESTNET or SIMULATION_MODE
-    
-    print("✅ Configuración validada correctamente")
-
-if __name__ == "__main__":
-    validate_config()
+# Llamar validación al importar
+validate_env()
