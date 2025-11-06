@@ -1,99 +1,47 @@
+"""
+Funciones auxiliares para cálculos de riesgo, ROI y operaciones
+"""
 import logging
-import requests
-from config import SIMULATION_MODE
-
-# ================================================================
-# ⚙️ Configuración de apalancamiento y riesgo
-# ================================================================
-LEVERAGE = 20                    # Apalancamiento por defecto
-RISK_PER_TRADE = 0.05            # 5% del capital por operación
-MAX_LEVERAGE = 20
-MAX_POSITION_SIZE = 0.1          # 10% del balance total
-ACCOUNT_BALANCE = 1000           # Balance estimado en USDT
-
-# Umbrales ROI (gestión de pérdidas y ganancias)
-ROI_REVERSION_THRESHOLD = -30    # Activar análisis de reversión
-ROI_DYNAMIC_STOP_THRESHOLD = 60  # Stop dinámico tras +60%
-ROI_TAKE_PROFIT_THRESHOLD = 100  # Take Profit parcial al +100%
-ROI_PARTIAL_CLOSE_PERCENT = 70   # Cerrar 70% de la posición
+import random
 
 logger = logging.getLogger("helpers")
 
 # ================================================================
-# 🔧 Normalización de símbolo
+# ⚙️ Configuración de apalancamiento y riesgo
 # ================================================================
-def normalize_symbol(raw_symbol: str) -> str:
-    """Convierte un símbolo del formato '#BTC/USDT' a 'BTCUSDT'."""
-    try:
-        normalized = raw_symbol.replace("#", "").replace("/", "").upper()
-        logger.debug(f"🔧 Normalizando símbolo: {raw_symbol} -> {normalized}")
-        return normalized
-    except Exception as e:
-        logger.error(f"❌ Error normalizando símbolo {raw_symbol}: {e}")
-        return raw_symbol
-
+LEVERAGE = 20
+RISK_PER_TRADE = 0.05
+MAX_LEVERAGE = 20
+MAX_POSITION_SIZE = 0.1
+ACCOUNT_BALANCE = 1000
 
 # ================================================================
-# 💰 Cálculo ROI con apalancamiento
+# 💹 Umbrales ROI (gestión de pérdidas y ganancias)
 # ================================================================
-def calculate_roi(entry_price: float, current_price: float, direction: str, leverage: int = 20) -> float:
-    """
-    Calcula el ROI (%) de una operación teniendo en cuenta el apalancamiento y la dirección.
-    """
+ROI_REVERSION_THRESHOLD = -30
+ROI_DYNAMIC_STOP_THRESHOLD = 60
+ROI_TAKE_PROFIT_THRESHOLD = 100
+ROI_PARTIAL_CLOSE_PERCENT = 70
+
+# ================================================================
+# 💰 Cálculos de ROI y precio actual
+# ================================================================
+def calculate_roi(entry_price: float, current_price: float, direction: str, leverage: int) -> float:
     try:
-        if direction.lower() == "long":
-            roi = ((current_price - entry_price) / entry_price) * leverage * 100
-        else:
-            roi = ((entry_price - current_price) / entry_price) * leverage * 100
+        pnl = ((current_price - entry_price) / entry_price) * 100
+        if direction.lower() == "short":
+            pnl *= -1
+        roi = pnl * leverage
         return round(roi, 2)
     except Exception as e:
-        logger.error(f"❌ Error calculando ROI: {e}")
+        logger.error(f"Error calculando ROI: {e}")
         return 0.0
 
-
-# ================================================================
-# 📈 Precio actual (simulación o real)
-# ================================================================
 def get_current_price(symbol: str) -> float:
-    """
-    Obtiene el precio actual del par desde Bybit (modo real) o genera valor simulado.
-    """
+    # ⚠️ Este valor se obtiene de Bybit o se simula según el modo
     try:
-        if SIMULATION_MODE:
-            import random
-            simulated = round(random.uniform(0.98, 1.02), 4)
-            logger.info(f"💬 [SIM] Precio simulado {symbol}: {simulated}")
-            return simulated
-
-        url = f"https://api.bybit.com/v5/market/tickers?category=linear&symbol={symbol}"
-        response = requests.get(url, timeout=5)
-        data = response.json()
-
-        if "result" in data and "list" in data["result"]:
-            price = float(data["result"]["list"][0]["lastPrice"])
-            logger.info(f"💵 Precio actual {symbol}: {price}")
-            return price
-        else:
-            logger.warning(f"⚠️ No se encontró precio válido para {symbol}")
-            return 0.0
-
+        # En modo simulación, retorna un valor aleatorio entre ±2%
+        return round(random.uniform(0.98, 1.02), 4)
     except Exception as e:
-        logger.error(f"❌ Error obteniendo precio de {symbol}: {e}")
-        return 0.0
-
-
-# ================================================================
-# 📊 Cálculo de coincidencia técnica (match ratio)
-# ================================================================
-def calculate_match_ratio(trend_summary: dict, direction: str) -> float:
-    """
-    Calcula qué porcentaje de temporalidades coincide con la dirección de la señal.
-    """
-    try:
-        matches = sum(1 for trend in trend_summary.values() if trend == direction)
-        ratio = matches / len(trend_summary) if trend_summary else 0
-        logger.debug(f"📊 Match ratio {direction.upper()}: {ratio:.2f}")
-        return round(ratio, 2)
-    except Exception as e:
-        logger.error(f"❌ Error calculando match ratio: {e}")
+        logger.error(f"Error obteniendo precio actual para {symbol}: {e}")
         return 0.0
