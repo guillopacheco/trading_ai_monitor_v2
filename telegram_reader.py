@@ -1,16 +1,17 @@
 import re
 import logging
+import asyncio
 
 logger = logging.getLogger("telegram_reader")
-
 
 class TelegramSignalReader:
     """
     Lector y parser para señales del canal Andy Insider.
     """
 
-    def __init__(self):
+    def __init__(self, callback=None):
         self._processed_signals = set()
+        self.callback = callback  # nuevo: permite manejar señales procesadas externamente
 
     def parse_message(self, text: str):
         """Determina si el mensaje contiene una señal válida y la parsea."""
@@ -66,3 +67,15 @@ class TelegramSignalReader:
         except Exception as e:
             logger.error(f"❌ Error parseando señal: {e}")
             return None
+
+    async def start(self):
+        """
+        Este método simula la escucha asincrónica del canal de Telegram.
+        (Luego se conectará al cliente real de Telethon o python-telegram-bot)
+        """
+        logger.info("📡 TelegramSignalReader iniciado en modo escucha...")
+        while True:
+            await asyncio.sleep(10)  # simula espera de nuevos mensajes
+            # Aquí iría la lectura real de mensajes del canal
+            # Por ahora, solo dejamos un placeholder
+            pass

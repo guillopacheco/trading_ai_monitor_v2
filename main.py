@@ -2,7 +2,7 @@ import logging
 import asyncio
 import sys
 from datetime import datetime
-from telegram_reader import start_telegram_reader
+from telegram_reader import TelegramSignalReader
 from command_bot import start_command_bot
 from signal_manager import process_signal
 from bybit_client import get_open_positions
@@ -39,7 +39,7 @@ async def main():
     init_database()
 
     if mode == "signals":
-        asyncio.create_task(start_telegram_reader(callback=process_signal))
+        asyncio.create_task(TelegramSignalReader(callback=process_signal))
         asyncio.create_task(asyncio.to_thread(start_command_bot))
     elif mode == "monitor":
         positions = get_open_positions()

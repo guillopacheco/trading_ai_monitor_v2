@@ -2,7 +2,8 @@ import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from bybit import BybitClient
+from bybit_client import BybitClient
+from bybit_client import get_open_positions
 
 logger = logging.getLogger("indicators")
 
