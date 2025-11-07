@@ -6,10 +6,15 @@ import logging
 import pandas as pd
 from config import BYBIT_API_KEY, BYBIT_API_SECRET, SIMULATION_MODE, BYBIT_TESTNET
 
+
 logger = logging.getLogger("bybit_client")
 
-BASE_URL = "https://api-testnet.bybit.com" if BYBIT_TESTNET else "https://api.bybit.com"
-
+# Detect endpoint dinámico
+BYBIT_ENDPOINT = (
+    "https://api-testnet.bybit.com"
+    if BYBIT_TESTNET or SIMULATION_MODE
+    else "https://api.bybit.com"
+)
 
 # ================================================================
 # 🔐 Firma segura HMAC-SHA256
@@ -26,45 +31,61 @@ def generate_signature(params: dict) -> str:
 # ================================================================
 # 📈 Obtener OHLCV (segura, dinámica)
 # ================================================================
-def get_ohlcv_data(symbol: str, interval="1m", limit=200):
+def get_ohlcv_data(symbol: str, interval: str = "5", limit: int = 500):
     """
-    Devuelve un DataFrame con columnas: timestamp, open, high, low, close, volume
-    Compatible con Testnet o producción.
+    Recupera datos OHLCV de Bybit Spot o Futuros (Linear).
+    Maneja correctamente 6 o 7 columnas y faltantes.
     """
     try:
-        endpoint = "/v5/market/kline"
+        url = f"{BYBIT_ENDPOINT}/v5/market/kline"
         params = {
-            "category": "linear",
+            "category": "linear",  # Para Futuros USDT
             "symbol": symbol,
             "interval": interval,
-            "limit": limit,
+            "limit": limit
         }
-        response = requests.get(BASE_URL + endpoint, params=params, timeout=10)
-        data = response.json()
-
-        if "result" not in data or "list" not in data["result"]:
-            logger.warning(f"⚠️  Sin datos OHLCV para {symbol} ({interval})")
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code != 200:
+            logger.error(f"❌ Error HTTP {r.status_code} al obtener OHLCV: {r.text}")
             return None
 
-        raw_data = data["result"]["list"]
-        if not raw_data:
+        data = r.json()
+        if data.get("retCode") != 0 or not data.get("result"):
+            logger.warning(f"⚠️ Sin datos OHLCV válidos para {symbol}: {data}")
             return None
 
-        # Bybit devuelve a veces 7 columnas → adaptamos dinámicamente
-        df = pd.DataFrame(raw_data)
-        df.columns = df.columns[:7]  # prevenir error de longitud
-        df = df.iloc[:, :6]  # mantener solo las 6 columnas principales
-        df.columns = ["timestamp", "open", "high", "low", "close", "volume"]
+        rows = data["result"].get("list", [])
+        if not rows or len(rows) < 50:
+            logger.warning(f"⚠️ Insuficientes velas para {symbol} ({interval}m)")
+            return None
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
-        df = df.astype(float, errors="ignore")
-        df = df.sort_values("timestamp").reset_index(drop=True)
+        # Crear DataFrame tolerante a número variable de columnas
+        df = pd.DataFrame(rows)
+        # A veces la API devuelve [timestamp, open, high, low, close, volume, turnover]
+        if df.shape[1] >= 6:
+            df.columns = ["timestamp", "open", "high", "low", "close", "volume", "turnover"][:df.shape[1]]
+        else:
+            logger.error(f"❌ Estructura inesperada de OHLCV ({df.shape})")
+            return None
+
+        # Convertir tipos numéricos
+        df = df.astype({
+            "open": float,
+            "high": float,
+            "low": float,
+            "close": float,
+            "volume": float
+        })
+
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="ms")
+        df = df.sort_values("timestamp")
+
+        logger.info(f"📊 {symbol}: {len(df)} velas {interval}m cargadas desde Bybit.")
         return df
 
     except Exception as e:
-        logger.error(f"❌ Error procesando OHLCV {symbol} ({interval}): {e}")
+        logger.error(f"❌ Error procesando OHLCV {symbol} ({interval}m): {e}")
         return None
-
 
 # ================================================================
 # 📊 Posiciones abiertas
