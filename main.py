@@ -1,29 +1,19 @@
-"""
-main.py
----------------------------------------------------------
-Punto de entrada principal del sistema Trading AI Monitor.
-Inicia:
-1️⃣ Lector de señales de Telegram (canal de señales)
-2️⃣ Bot de comandos de Telegram (interactivo)
-3️⃣ Monitoreo de operaciones abiertas en Bybit
----------------------------------------------------------
-"""
-
 import logging
 import asyncio
 import sys
 from datetime import datetime
 
 from telegram_reader import start_telegram_reader
-from command_bot import start_command_bot
 from signal_manager import process_signal
 from bybit_client import get_open_positions
 from operation_tracker import monitor_open_positions
 from database import init_database
 from config import SIMULATION_MODE
+from command_bot import start_command_bot
+
 
 # ================================================================
-# 🧱 Configuración global del logger
+# 🧱 Configuración del logger global
 # ================================================================
 LOG_FILE = "trading_ai_monitor.log"
 
@@ -40,63 +30,46 @@ logger = logging.getLogger("__main__")
 
 
 # ================================================================
-# 🚀 Proceso principal
+# 🚀 Función principal
 # ================================================================
 async def main():
-    """
-    Lógica central:
-    - Inicia el bot de señales (Telethon)
-    - Inicia el bot de comandos
-    - Lanza el monitoreo de operaciones abiertas
-    """
-
-    # Detectar modo
-    mode = "signals"
-    if len(sys.argv) > 1 and sys.argv[1] == "--mode" and len(sys.argv) > 2:
-        mode = sys.argv[2]
-
     logger.info(f"🚀 Iniciando Trading AI Monitor (modo simulación: {SIMULATION_MODE})")
-
-    # ============================================================
-    # Inicializar base de datos
-    # ============================================================
     init_database()
 
-    # ============================================================
-    # Iniciar lector de señales y bot de comandos
-    # ============================================================
+    # Detectar modo desde argumentos (signals / monitor)
+    mode = "signals"
+    if len(sys.argv) > 2 and sys.argv[1] == "--mode":
+        mode = sys.argv[2]
+
+    # ================================================================
+    # 1️⃣ Iniciar modo señales (lector + bot de comandos)
+    # ================================================================
     if mode == "signals":
         logger.info("📡 Activando modo de análisis de señales...")
-        # Lector de Telegram (Telethon)
-        asyncio.create_task(start_telegram_reader(callback=process_signal))
-        # Bot de comandos (python-telegram-bot)
-        asyncio.create_task(start_command_bot())
 
+        # Telegram Reader (Telethon)
+        asyncio.create_task(start_telegram_reader(callback=process_signal))
+
+        # Bot de comandos (en hilo separado)
+        start_command_bot()
+
+    # ================================================================
+    # 2️⃣ Iniciar modo monitoreo (operaciones abiertas)
+    # ================================================================
     elif mode == "monitor":
-        logger.info("📊 Modo monitoreo de operaciones activado...")
+        logger.info("📊 Activando modo monitoreo de operaciones...")
         positions = get_open_positions()
         if positions:
             asyncio.create_task(asyncio.to_thread(monitor_open_positions, positions))
+        else:
+            logger.info("ℹ️ No hay posiciones abiertas actualmente.")
 
-    # ============================================================
-    # Recuperar posiciones abiertas para monitoreo
-    # ============================================================
-    logger.info("📡 Recuperando posiciones abiertas...")
-    positions = get_open_positions()
-
-    if positions:
-        logger.info(f"🧭 {len(positions)} posiciones activas detectadas, iniciando monitoreo...")
-        asyncio.create_task(asyncio.to_thread(monitor_open_positions, positions))
-    else:
-        logger.info("ℹ️ No hay posiciones abiertas actualmente.")
-
-    # ============================================================
-    # Bucle principal de mantenimiento
-    # ============================================================
+    # ================================================================
+    # 3️⃣ Mantener el sistema activo con logs cada 5 min
+    # ================================================================
     while True:
         await asyncio.sleep(300)
-        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        logger.info(f"⏳ Sistema activo — {now_str}")
+        logger.info(f"⏳ Sistema activo — {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
 
 # ================================================================

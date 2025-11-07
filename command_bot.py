@@ -66,7 +66,7 @@ async def reanudar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def run_monitor():
         try:
-            positions = []  # Normalmente se obtendrían desde Bybit (simulado aquí)
+            positions = []  # normalmente cargadas desde Bybit
             monitor_open_positions(positions)
         except Exception as e:
             logger.error(f"❌ Error en el hilo de monitoreo: {e}")
@@ -158,37 +158,39 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ================================================================
-# 🚀 Inicialización del bot (modo seguro para asyncio)
+# 🚀 Inicialización segura para Python 3.12
 # ================================================================
-async def start_command_bot():
+def start_command_bot():
+    """Lanza el bot en un hilo seguro con su propio loop."""
     try:
-        app = (
-            ApplicationBuilder()
-            .token(TELEGRAM_BOT_TOKEN)
-            .connect_timeout(30)
-            .read_timeout(30)
-            .build()
-        )
+        def run():
+            asyncio.set_event_loop(asyncio.new_event_loop())
+            loop = asyncio.get_event_loop()
 
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("estado", estado))
-        app.add_handler(CommandHandler("reanudar", reanudar))
-        app.add_handler(CommandHandler("detener", detener))
-        app.add_handler(CommandHandler("historial", historial))
-        app.add_handler(CommandHandler("limpiar", limpiar))
-        app.add_handler(CommandHandler("config", config))
-        app.add_handler(CommandHandler("help", help_command))
+            async def _run():
+                app = (
+                    ApplicationBuilder()
+                    .token(TELEGRAM_BOT_TOKEN)
+                    .connect_timeout(30)
+                    .read_timeout(30)
+                    .build()
+                )
 
-        logger.info("🤖 Bot de comandos inicializado correctamente (modo async, aislado del loop principal).")
+                app.add_handler(CommandHandler("start", start))
+                app.add_handler(CommandHandler("estado", estado))
+                app.add_handler(CommandHandler("reanudar", reanudar))
+                app.add_handler(CommandHandler("detener", detener))
+                app.add_handler(CommandHandler("historial", historial))
+                app.add_handler(CommandHandler("limpiar", limpiar))
+                app.add_handler(CommandHandler("config", config))
+                app.add_handler(CommandHandler("help", help_command))
 
-        # ✅ Ejecutar el bot en un hilo separado para no bloquear Telethon ni main.py
-        def run_bot_thread():
-            try:
-                asyncio.run(app.run_polling(drop_pending_updates=True, stop_signals=None, close_loop=False))
-            except Exception as e:
-                logger.error(f"❌ Error en el hilo del bot: {e}")
+                logger.info("🤖 Bot de comandos iniciado (loop aislado, Python 3.12 compatible)")
+                await app.run_polling(drop_pending_updates=True, stop_signals=None, close_loop=False)
 
-        bot_thread = threading.Thread(target=run_bot_thread, daemon=True)
+            loop.run_until_complete(_run())
+
+        bot_thread = threading.Thread(target=run, daemon=True)
         bot_thread.start()
 
     except Exception as e:
