@@ -1,228 +1,223 @@
+"""
+database.py
+------------------------------------------------------------
+Manejo centralizado de la base de datos SQLite para el sistema
+de análisis de señales de trading.
+------------------------------------------------------------
+"""
+
 import sqlite3
+import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 
+# ================================================================
+# ⚙️ Configuración
+# ================================================================
+DATABASE_PATH = Path("data/trading_signals.db")
 logger = logging.getLogger("database")
 
-DB_PATH = "trading_ai_monitor.db"
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-conn.row_factory = sqlite3.Row
-
-
 # ================================================================
-# 🧱 Inicialización
+# 🧱 Inicialización de la base de datos
 # ================================================================
 def init_database():
-    """Crea las tablas necesarias y repara columnas faltantes."""
+    """
+    Crea la base de datos y las tablas si no existen.
+    """
     try:
-        # Tabla de señales analizadas
-        conn.execute("""
+        DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pair TEXT,
-                direction TEXT,
-                leverage INTEGER DEFAULT 20,
+                symbol TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                leverage INTEGER,
                 entry REAL,
-                take_profits TEXT,
                 match_ratio REAL,
                 recommendation TEXT,
-                consistency TEXT,
-                divergences TEXT,
-                timestamp TEXT
+                timestamp TEXT,
+                raw_text TEXT
             )
-        """)
+            """
+        )
 
-        # Tabla de operaciones activas o evaluadas
-        conn.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS operations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT UNIQUE,
-                direction TEXT,
-                entry_price REAL,
-                current_price REAL,
-                leverage INTEGER,
-                roi REAL,
+                symbol TEXT NOT NULL,
                 status TEXT,
+                roi REAL,
                 last_update TEXT
             )
-        """)
-
-        # Tabla de alertas persistentes (para tracker)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS alert_records (
-                symbol TEXT PRIMARY KEY,
-                last_alert_level INTEGER DEFAULT 0,
-                last_alert_time TEXT
-            )
-        """)
-
-        # Migraciones defensivas (por si vienes de versión anterior)
-        columns = [r["name"] for r in conn.execute("PRAGMA table_info(signals)")]
-        if "consistency" not in columns:
-            conn.execute("ALTER TABLE signals ADD COLUMN consistency TEXT")
-        if "divergences" not in columns:
-            conn.execute("ALTER TABLE signals ADD COLUMN divergences TEXT")
+            """
+        )
 
         conn.commit()
+        conn.close()
         logger.info("✅ Base de datos inicializada correctamente con todas las tablas.")
-
     except Exception as e:
-        logger.error(f"❌ Error al inicializar la base de datos: {e}")
+        logger.error(f"❌ Error inicializando base de datos: {e}")
 
 
 # ================================================================
-# 🧾 Gestión de operaciones
+# 💾 Guardar señal analizada
 # ================================================================
-def update_operation_status(symbol, status, roi):
-    """Actualiza el estado y ROI de una operación existente."""
+def save_signal(data: dict):
+    """
+    Guarda una nueva señal analizada en la base de datos.
+    """
     try:
-        conn.execute("""
-            INSERT INTO operations (symbol, status, roi, last_update)
-            VALUES (?, ?, ?, datetime('now'))
-            ON CONFLICT(symbol) DO UPDATE SET
-                status = excluded.status,
-                roi = excluded.roi,
-                last_update = datetime('now')
-        """, (symbol, status, roi))
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO signals (
+                symbol, direction, leverage, entry,
+                match_ratio, recommendation, timestamp, raw_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["symbol"],
+                data["direction"],
+                data["leverage"],
+                data["entry"],
+                data.get("match_ratio", 0.0),
+                data.get("recommendation", "DESCARTAR"),
+                data.get("timestamp", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
+                data.get("raw_text", ""),
+            ),
+        )
+
         conn.commit()
-        logger.info(f"💾 Operación actualizada: {symbol} -> {status} ({roi:.2f}%)")
-    except Exception as e:
-        logger.error(f"❌ Error actualizando operación {symbol}: {e}")
-
-
-# ================================================================
-# ⚙️ Gestión de alertas persistentes
-# ================================================================
-def get_alert_record(symbol):
-    """Obtiene el último nivel y tiempo de alerta registrado para un símbolo."""
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT last_alert_level, last_alert_time FROM alert_records WHERE symbol = ?", (symbol,))
-        row = cur.fetchone()
-        if row:
-            return {"last_alert_level": row["last_alert_level"], "last_alert_time": row["last_alert_time"]}
-        return None
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo registro de alerta {symbol}: {e}")
-        return None
-
-
-def update_alert_record(symbol, level, timestamp):
-    """Actualiza o inserta el nivel y hora de la última alerta enviada para un símbolo."""
-    try:
-        conn.execute("""
-            INSERT INTO alert_records (symbol, last_alert_level, last_alert_time)
-            VALUES (?, ?, ?)
-            ON CONFLICT(symbol) DO UPDATE SET
-                last_alert_level = excluded.last_alert_level,
-                last_alert_time = excluded.last_alert_time
-        """, (symbol, level, timestamp))
-        conn.commit()
-        logger.debug(f"💾 Registro de alerta actualizado: {symbol} nivel {level} en {timestamp}")
-    except Exception as e:
-        logger.error(f"❌ Error actualizando registro de alerta {symbol}: {e}")
-
-
-# ================================================================
-# 💾 Guardar señal
-# ================================================================
-def save_signal(signal: dict):
-    """Guarda una señal analizada en la base de datos."""
-    try:
-        conn.execute("""
-            INSERT INTO signals
-            (pair, direction, leverage, entry, take_profits, match_ratio, recommendation, consistency, divergences, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            signal.get("pair"),
-            signal.get("direction"),
-            signal.get("leverage", 20),
-            signal.get("entry"),
-            str(signal.get("take_profits", [])),
-            signal.get("match_ratio"),
-            signal.get("recommendation"),
-            signal.get("consistency"),
-            str(signal.get("divergences", [])),
-            signal.get("timestamp", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
-        ))
-        conn.commit()
-        logger.info(f"✅ Señal guardada: {signal.get('pair')} | {signal.get('recommendation')}")
+        conn.close()
+        logger.info(f"💾 Señal guardada correctamente: {data['symbol']}")
     except Exception as e:
         logger.error(f"❌ Error guardando señal: {e}")
 
 
 # ================================================================
-# 📜 Consultar historial
+# 🔄 Actualizar estado de una señal
+# ================================================================
+def update_signal_status(symbol: str, new_status: str, roi: float | None = None):
+    """
+    Actualiza el estado o ROI de una operación.
+    """
+    try:
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO operations (symbol, status, roi, last_update)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                symbol,
+                new_status,
+                roi if roi is not None else 0.0,
+                datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+        logger.info(f"🧾 Estado actualizado: {symbol} → {new_status} ({roi}%)")
+    except Exception as e:
+        logger.error(f"❌ Error actualizando operación: {e}")
+
+
+# ================================================================
+# 📜 Obtener últimas señales analizadas (para /historial)
 # ================================================================
 def get_signals(limit: int = 10):
-    """Obtiene las señales más recientes."""
+    """
+    Devuelve las últimas señales registradas.
+    """
     try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT pair, direction, leverage, entry, take_profits, match_ratio, recommendation, consistency, divergences, timestamp
-            FROM signals ORDER BY id DESC LIMIT ?
-        """, (limit,))
-        rows = cur.fetchall()
-        return [
-            {
-                "pair": row["pair"],
-                "direction": row["direction"],
-                "leverage": row["leverage"],
-                "entry": row["entry"],
-                "take_profits": eval(row["take_profits"]) if row["take_profits"] else [],
-                "match_ratio": row["match_ratio"],
-                "recommendation": row["recommendation"],
-                "consistency": row["consistency"],
-                "divergences": eval(row["divergences"]) if row["divergences"] else [],
-                "timestamp": row["timestamp"],
-            } for row in rows
-        ]
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo historial de señales: {e}")
-        return []
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        cursor = conn.cursor()
 
-
-def get_signals_by_date(start_date: str, end_date: str):
-    """Obtiene señales dentro de un rango de fechas."""
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT pair, direction, leverage, entry, take_profits, match_ratio, recommendation, consistency, divergences, timestamp
+        cursor.execute(
+            """
+            SELECT symbol, direction, leverage, entry,
+                   match_ratio, recommendation, timestamp
             FROM signals
-            WHERE date(timestamp) BETWEEN ? AND ?
-            ORDER BY timestamp DESC
-        """, (start_date, end_date))
-        rows = cur.fetchall()
-        return [
-            {
-                "pair": row["pair"],
-                "direction": row["direction"],
-                "leverage": row["leverage"],
-                "entry": row["entry"],
-                "take_profits": eval(row["take_profits"]) if row["take_profits"] else [],
-                "match_ratio": row["match_ratio"],
-                "recommendation": row["recommendation"],
-                "consistency": row["consistency"],
-                "divergences": eval(row["divergences"]) if row["divergences"] else [],
-                "timestamp": row["timestamp"],
-            } for row in rows
-        ]
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        signals = []
+        for row in rows:
+            signals.append(
+                {
+                    "symbol": row[0],
+                    "direction": row[1],
+                    "leverage": row[2],
+                    "entry": row[3],
+                    "match_ratio": row[4],
+                    "recommendation": row[5],
+                    "timestamp": row[6],
+                }
+            )
+
+        return signals
+
     except Exception as e:
-        logger.error(f"❌ Error consultando señales por fecha: {e}")
+        logger.error(f"❌ Error obteniendo historial: {e}")
         return []
 
 
 # ================================================================
-# 🧹 Limpieza y mantenimiento
+# 🧹 Limpiar registros antiguos
 # ================================================================
 def clear_old_records(days: int = 30):
-    """Elimina señales más antiguas de N días."""
+    """
+    Elimina señales más antiguas que el límite de días especificado.
+    """
     try:
-        conn.execute("""
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            f"""
             DELETE FROM signals
-            WHERE julianday('now') - julianday(timestamp) > ?
-        """, (days,))
+            WHERE timestamp < datetime('now', '-{days} days')
+            """
+        )
+
         conn.commit()
-        logger.info(f"🧹 Registros antiguos (>{days} días) eliminados correctamente.")
+        conn.close()
+        logger.info(f"🧹 Registros de más de {days} días eliminados correctamente.")
     except Exception as e:
         logger.error(f"❌ Error limpiando registros antiguos: {e}")
+
+
+# ================================================================
+# 🔄 Versión asincrónica
+# ================================================================
+async def async_save_signal(data: dict):
+    """Versión asincrónica del guardado de señales."""
+    await asyncio.to_thread(save_signal, data)
+
+
+async def async_get_signals(limit: int = 10):
+    """Versión asincrónica para obtener historial."""
+    return await asyncio.to_thread(get_signals, limit)
+
+
+async def async_update_signal_status(symbol: str, new_status: str, roi: float | None = None):
+    """Versión asincrónica para actualizar operaciones."""
+    await asyncio.to_thread(update_signal_status, symbol, new_status, roi)

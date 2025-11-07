@@ -1,75 +1,109 @@
+"""
+telegram_reader.py
+------------------------------------------------------------
+Lector asincrónico de señales desde el canal de Telegram.
+Usa Telethon para conectarse a la cuenta del usuario y escuchar
+mensajes en el canal de señales configurado en el archivo .env.
+
+Cada mensaje nuevo detectado se pasa al callback `process_signal()`
+para su análisis técnico y almacenamiento.
+------------------------------------------------------------
+"""
+
 import logging
-import re
+import asyncio
 from telethon import TelegramClient, events
-from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION, TELEGRAM_SIGNAL_CHANNEL_ID
-from notifier import send_message
-from signal_manager import process_signal
+from telethon.errors import SessionPasswordNeededError, FloodWaitError
+from config import (
+    TELEGRAM_API_ID,
+    TELEGRAM_API_HASH,
+    TELEGRAM_PHONE,
+    TELEGRAM_SESSION,
+    TELEGRAM_SIGNAL_CHANNEL_ID,
+)
+from datetime import datetime
 
 logger = logging.getLogger("telegram_reader")
 
-# ==================== Cliente Telethon ===========================
-_client = None
+# ================================================================
+# 🧠 Clase principal del lector de señales
+# ================================================================
+class TelegramSignalReader:
+    def __init__(self, callback):
+        """
+        callback: función que procesa las señales (ej: process_signal)
+        """
+        self.callback = callback
+        self.client = None
+        self.connected = False
 
-def _get_client():
-    global _client
-    if _client is None:
-        _client = TelegramClient(TELEGRAM_SESSION, int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
-    return _client
-
-# ==================== Parser de señales ==========================
-signal_regex = re.compile(
-    r"#([A-Z0-9]+)/USDT\s*\((Long|Short)[^x]*x(\d+)\).*?Entry\s*-\s*([\d.]+).*?"
-    r"Take-Profit:\s*(?:🥉\s*([\d.]+).*?🥈\s*([\d.]+).*?🥇\s*([\d.]+).*?🚀\s*([\d.]+))?",
-    re.S
-)
-
-profit_update_regex = re.compile(r'✅\s*Price\s*-\s*\d', re.I)
-
-def parse_message(text: str):
-    if profit_update_regex.search(text):
-        logger.info("💰 Mensaje de profit — ignorado")
-        return None
-    m = signal_regex.search(text)
-    if not m:
-        return None
-    pair, direction, leverage, entry, tp1, tp2, tp3, tp4 = m.groups()
-    tps = [float(x) for x in (tp1, tp2, tp3, tp4) if x]
-    data = {
-        "pair": pair.strip(),
-        "direction": direction.lower(),
-        "leverage": int(leverage),
-        "entry": float(entry),
-        "take_profits": tps,
-        "message_text": text,
-    }
-    logger.info(f"✅ Señal parseada: {data['pair']} ({data['direction']}) x{data['leverage']}")
-    return data
-
-# ==================== Listener del canal =========================
-async def start_telegram_reader():
-    """
-    Conecta con la cuenta personal y escucha el canal de señales.
-    Cuando llega una señal válida, llama a process_signal(data).
-    """
-    client = _get_client()
-    await client.start()
-    logger.info("✅ Telethon conectado. Escuchando canal de señales...")
-
-    @client.on(events.NewMessage(chats=[int(TELEGRAM_SIGNAL_CHANNEL_ID)]))
-    async def handler(event):
+    # ------------------------------------------------------------
+    async def connect(self):
+        """Inicia sesión en Telegram y configura el cliente."""
         try:
-            text = event.message.message or ""
-            data = parse_message(text)
-            if data:
-                await send_message(f"🛰️ *Señal detectada*: #{data['pair']}/USDT ({data['direction']} x{data['leverage']})")
-                # process_signal puede ser sync o async; soportamos ambos
-                try:
-                    res = process_signal(data)
-                    if hasattr(res, "__await__"):
-                        await res
-                except Exception as e:
-                    logger.error(f"❌ Error en process_signal(): {e}")
-        except Exception as e:
-            logger.error(f"❌ Error manejando mensaje de Telegram: {e}")
+            self.client = TelegramClient(TELEGRAM_SESSION, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+            await self.client.connect()
 
-    await client.run_until_disconnected()
+            if not await self.client.is_user_authorized():
+                logger.info("🔑 Autenticación requerida. Solicitando código de verificación...")
+                await self.client.send_code_request(TELEGRAM_PHONE)
+                code = input("📲 Ingresa el código recibido por Telegram: ")
+                await self.client.sign_in(TELEGRAM_PHONE, code)
+
+            self.connected = True
+            me = await self.client.get_me()
+            logger.info(f"✅ Conectado como {me.first_name} ({me.id})")
+        except SessionPasswordNeededError:
+            logger.error("🔐 La cuenta tiene 2FA habilitado. Ingresa tu contraseña de Telegram.")
+            password = input("🔑 Contraseña: ")
+            await self.client.sign_in(password=password)
+        except Exception as e:
+            logger.error(f"❌ Error al conectar con Telegram: {e}")
+
+    # ------------------------------------------------------------
+    async def listen_signals(self):
+        """Escucha nuevos mensajes en el canal de señales configurado."""
+        if not self.client or not self.connected:
+            await self.connect()
+
+        logger.info("📡 TelegramSignalReader iniciado en modo escucha...")
+
+        @self.client.on(events.NewMessage(chats=int(TELEGRAM_SIGNAL_CHANNEL_ID)))
+        async def handler(event):
+            try:
+                text = event.raw_text.strip()
+                if not text:
+                    return
+
+                timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                logger.info(f"📥 Señal recibida ({timestamp}):\n{text[:80]}...")
+
+                # Ejecutar análisis de señal en una tarea separada
+                asyncio.create_task(self.callback(text))
+
+            except Exception as e:
+                logger.error(f"❌ Error procesando mensaje recibido: {e}")
+
+        # Mantener la sesión viva
+        try:
+            await self.client.run_until_disconnected()
+        except FloodWaitError as e:
+            logger.warning(f"⏳ FloodWait: esperando {e.seconds} segundos antes de reconectar...")
+            await asyncio.sleep(e.seconds)
+            await self.listen_signals()
+        except Exception as e:
+            logger.error(f"❌ Error en listener: {e}")
+            await asyncio.sleep(10)
+            await self.listen_signals()
+
+
+# ================================================================
+# 🚀 Función de arranque principal
+# ================================================================
+async def start_telegram_reader(callback):
+    """
+    Inicializa el cliente y lanza el modo escucha del canal de señales.
+    """
+    reader = TelegramSignalReader(callback)
+    await reader.connect()
+    await reader.listen_signals()
