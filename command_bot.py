@@ -1,12 +1,13 @@
 import logging
 import threading
+import asyncio
+from datetime import datetime
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
 )
-from datetime import datetime
 
 from database import get_signals, clear_old_records
 from notifier import send_message
@@ -65,7 +66,7 @@ async def reanudar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     def run_monitor():
         try:
-            positions = []  # Placeholder: normalmente se obtendrían desde Bybit
+            positions = []  # Normalmente se obtendrían desde Bybit (simulado aquí)
             monitor_open_positions(positions)
         except Exception as e:
             logger.error(f"❌ Error en el hilo de monitoreo: {e}")
@@ -95,35 +96,43 @@ async def detener(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 📜 /historial
 # ================================================================
 async def historial(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    signals = get_signals(limit=10)
-    if not signals:
-        await update.message.reply_text("📭 No hay señales registradas aún.", parse_mode="Markdown")
-        return
+    try:
+        signals = get_signals(limit=10)
+        if not signals:
+            await update.message.reply_text("📭 No hay señales registradas aún.", parse_mode="Markdown")
+            return
 
-    msg = "📜 *Últimas señales analizadas:*\n\n"
-    for sig in signals:
-        pair = sig.get("pair", "N/A")
-        direction = sig.get("direction", "?").upper()
-        leverage = sig.get("leverage", 0)
-        rec = sig.get("recommendation", "Sin datos")
-        ratio = sig.get("match_ratio", 0) * 100
-        ts = sig.get("timestamp", "Sin fecha")
+        msg = "📜 *Últimas señales analizadas:*\n\n"
+        for sig in signals:
+            pair = sig.get("pair", "N/A")
+            direction = sig.get("direction", "?").upper()
+            leverage = sig.get("leverage", 0)
+            rec = sig.get("recommendation", "Sin datos")
+            ratio = float(sig.get("match_ratio", 0)) * 100
+            ts = sig.get("timestamp", "Sin fecha")
 
-        msg += (
-            f"• {pair} ({direction}, {leverage}x)\n"
-            f"  ➤ {rec} ({ratio:.1f}%)\n"
-            f"  🕒 {ts}\n\n"
-        )
+            msg += (
+                f"• {pair} ({direction}, {leverage}x)\n"
+                f"  ➤ *{rec}* ({ratio:.1f}%)\n"
+                f"  🕒 {ts}\n\n"
+            )
 
-    await update.message.reply_text(msg.strip(), parse_mode="Markdown")
+        await update.message.reply_text(msg.strip(), parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"❌ Error al mostrar historial: {e}")
+        await update.message.reply_text("⚠️ Error al recuperar el historial de señales.")
 
 
 # ================================================================
 # 🧹 /limpiar
 # ================================================================
 async def limpiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    clear_old_records(days=30)
-    await update.message.reply_text("🧹 Registros antiguos eliminados correctamente.", parse_mode="Markdown")
+    try:
+        clear_old_records(days=30)
+        await update.message.reply_text("🧹 Registros antiguos eliminados correctamente.", parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"❌ Error limpiando registros: {e}")
+        await update.message.reply_text("⚠️ Error al limpiar registros antiguos.", parse_mode="Markdown")
 
 
 # ================================================================
@@ -149,7 +158,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ================================================================
-# 🚀 Inicialización del bot (async)
+# 🚀 Inicialización del bot (modo seguro para asyncio)
 # ================================================================
 async def start_command_bot():
     try:
@@ -157,6 +166,7 @@ async def start_command_bot():
             ApplicationBuilder()
             .token(TELEGRAM_BOT_TOKEN)
             .connect_timeout(30)
+            .read_timeout(30)
             .build()
         )
 
@@ -169,8 +179,17 @@ async def start_command_bot():
         app.add_handler(CommandHandler("config", config))
         app.add_handler(CommandHandler("help", help_command))
 
-        logger.info("🤖 Bot de comandos inicializado correctamente (modo async).")
-        await app.run_polling(drop_pending_updates=True)
+        logger.info("🤖 Bot de comandos inicializado correctamente (modo async, aislado del loop principal).")
+
+        # ✅ Ejecutar el bot en un hilo separado para no bloquear Telethon ni main.py
+        def run_bot_thread():
+            try:
+                asyncio.run(app.run_polling(drop_pending_updates=True, stop_signals=None, close_loop=False))
+            except Exception as e:
+                logger.error(f"❌ Error en el hilo del bot: {e}")
+
+        bot_thread = threading.Thread(target=run_bot_thread, daemon=True)
+        bot_thread.start()
 
     except Exception as e:
         logger.error(f"❌ Error iniciando command_bot: {e}")

@@ -72,4 +72,34 @@ async def process_signal(signal_data: dict):
         )
         notify_signal_result(symbol, msg)
 
-        logger.info(f"✅ Señal {symbol} procesada
+        # ======================================================
+        # Guardar en base de datos
+        # ======================================================
+        await save_signal({
+            "pair": symbol,
+            "direction": direction,
+            "leverage": leverage,
+            "entry": entry,
+            "match_ratio": result["match_ratio"],
+            "recommendation": result["recommendation"],
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        })
+
+        logger.info(f"✅ Señal {symbol} procesada correctamente ({direction.upper()} x{leverage})")
+
+        # ======================================================
+        # Notificar resultado
+        # ======================================================
+        message = (
+            f"📊 *Análisis de {symbol}*\n"
+            f"🔹 Dirección: {direction.upper()}\n"
+            f"📈 Entry: {entry}\n"
+            f"🎯 Coincidencia: {result['match_ratio']*100:.1f}%\n"
+            f"📌 Recomendación: *{result['recommendation']}*"
+        )
+
+        from notifier import send_message
+        await send_message(message)
+
+    except Exception as e:
+        logger.error(f"❌ Error procesando señal {symbol}: {e}")
