@@ -1,138 +1,134 @@
+"""
+divergence_detector.py
+Detección simple de divergencias RSI / MACD por ventana.
+Devuelve impacto agregado para sumar/restar a la confianza.
+"""
+
 import logging
-import numpy as np
+from typing import Dict, Tuple, Optional
 import pandas as pd
+import numpy as np
 
 logger = logging.getLogger("divergence_detector")
 
+LOOKBACK = 30  # velas revisadas por TF
 
-# ================================================================
-# ⚙️ Detección avanzada de divergencias RSI y MACD
-# ================================================================
-def detect_divergences(symbol: str, tf_data: dict, direction: str = None):
+def _as_series(arr) -> pd.Series:
+    if isinstance(arr, pd.Series):
+        return arr
+    return pd.Series(list(arr))
+
+def _divergence(price: pd.Series, indicator: pd.Series) -> Tuple[Optional[str], float]:
     """
-    Detecta divergencias RSI y MACD en distintas temporalidades.
-    Clasifica su fuerza y coherencia con la dirección esperada.
-    Retorna lista de divergencias encontradas.
+    Regla simple:
+    - Bullish: precio hace mínimos descendentes y el indicador hace mínimos ascendentes
+    - Bearish: precio hace máximos ascendentes y el indicador hace máximos descendentes
+    Strength ~ (1 - |corr|) para premiar desacople.
     """
-    divergences = []
+    if len(price) < 5 or len(indicator) < 5:
+        return None, 0.0
 
-    try:
-        for tf, df in tf_data.items():
-            if len(df) < 30:
-                continue
+    p = price.dropna()
+    i = indicator.dropna()
+    n = min(len(p), len(i))
+    if n < 5:
+        return None, 0.0
 
-            close = df["close"].values
-            rsi = df["rsi"].values
-            macd = df["macd"].values
-            price_peaks = detect_peaks(close)
-            rsi_peaks = detect_peaks(rsi)
-            macd_peaks = detect_peaks(macd)
+    p = p.iloc[-LOOKBACK:]
+    i = i.iloc[-LOOKBACK:]
 
-            # === 1️⃣ Comparar dirección de picos ===
-            if len(price_peaks) >= 2 and len(rsi_peaks) >= 2:
-                price_diff = close[price_peaks[-1]] - close[price_peaks[-2]]
-                rsi_diff = rsi[rsi_peaks[-1]] - rsi[rsi_peaks[-2]]
+    # extremos
+    p_low1 = p.iloc[: len(p)//2].min()
+    p_low2 = p.iloc[len(p)//2 :].min()
+    i_low1 = i.iloc[: len(i)//2].min()
+    i_low2 = i.iloc[len(i)//2 :].min()
 
-                if (price_diff > 0 and rsi_diff < 0):  # Divergencia bajista
-                    strength = classify_divergence_strength(rsi_diff, tf)
-                    if direction == "short":
-                        coherence = "coherente"
-                    else:
-                        coherence = "contraria"
-                    divergences.append({
-                        "type": "rsi",
-                        "tf": tf,
-                        "strength": strength,
-                        "coherence": coherence,
-                        "direction": "bearish"
-                    })
+    p_high1 = p.iloc[: len(p)//2].max()
+    p_high2 = p.iloc[len(p)//2 :].max()
+    i_high1 = i.iloc[: len(i)//2].max()
+    i_high2 = i.iloc[len(i)//2 :].max()
 
-                elif (price_diff < 0 and rsi_diff > 0):  # Divergencia alcista
-                    strength = classify_divergence_strength(rsi_diff, tf)
-                    if direction == "long":
-                        coherence = "coherente"
-                    else:
-                        coherence = "contraria"
-                    divergences.append({
-                        "type": "rsi",
-                        "tf": tf,
-                        "strength": strength,
-                        "coherence": coherence,
-                        "direction": "bullish"
-                    })
+    bull = (p_low2 < p_low1) and (i_low2 > i_low1)
+    bear = (p_high2 > p_high1) and (i_high2 < i_high1)
 
-            # === 2️⃣ Verificar también divergencias en MACD ===
-            if len(price_peaks) >= 2 and len(macd_peaks) >= 2:
-                price_diff = close[price_peaks[-1]] - close[price_peaks[-2]]
-                macd_diff = macd[macd_peaks[-1]] - macd[macd_peaks[-2]]
+    corr = p.corr(i)
+    corr = 0 if pd.isna(corr) else corr
+    strength = max(0.0, min(1.0, 1 - abs(corr)))
 
-                if (price_diff > 0 and macd_diff < 0):  # Divergencia bajista
-                    strength = classify_divergence_strength(macd_diff, tf)
-                    coherence = "coherente" if direction == "short" else "contraria"
-                    divergences.append({
-                        "type": "macd",
-                        "tf": tf,
-                        "strength": strength,
-                        "coherence": coherence,
-                        "direction": "bearish"
-                    })
-
-                elif (price_diff < 0 and macd_diff > 0):  # Divergencia alcista
-                    strength = classify_divergence_strength(macd_diff, tf)
-                    coherence = "coherente" if direction == "long" else "contraria"
-                    divergences.append({
-                        "type": "macd",
-                        "tf": tf,
-                        "strength": strength,
-                        "coherence": coherence,
-                        "direction": "bullish"
-                    })
-
-        # === 3️⃣ Resumen final ===
-        total = len(divergences)
-        strong = sum(1 for d in divergences if d["strength"] == "fuerte")
-        coherent = sum(1 for d in divergences if d["coherence"] == "coherente")
-
-        logger.info(
-            f"🔺 {symbol}: {total} divergencias detectadas ({strong} fuertes, {coherent} coherentes)"
-        )
-        return divergences
-
-    except Exception as e:
-        logger.error(f"❌ Error en detect_divergences({symbol}): {e}")
-        return []
+    if bull:
+        return "bullish", strength
+    if bear:
+        return "bearish", strength
+    return None, 0.0
 
 
-# ================================================================
-# 🔍 Utilidades internas
-# ================================================================
-def detect_peaks(series, window: int = 5):
+def evaluate_divergences(data_by_tf: Dict, signal_direction: str, leverage: int = 1) -> Dict:
     """
-    Identifica picos locales simples para evaluar divergencias.
+    data_by_tf: dict por TF con:
+      'price' (lista/serie), 'rsi_series', 'macd_line_series', 'volume' (opcional)
     """
-    peaks = []
-    try:
-        for i in range(window, len(series) - window):
-            if series[i] > max(series[i - window:i]) and series[i] > max(series[i + 1:i + window]):
-                peaks.append(i)
-        return peaks
-    except Exception:
-        return []
+    tf_weights = {"1m": 0.45, "5m": 0.30, "15m": 0.25, "30m": 0.20, "1h": 0.15}
+    divergences = {}
+    notes = []
+    total = 0.0
 
+    for tf, data in data_by_tf.items():
+        price = _as_series(data.get("price", []))
+        rsi_s = _as_series(data.get("rsi_series", []))
+        macd_s = _as_series(data.get("macd_line_series", []))
+        vol = _as_series(data.get("volume", []))
+        w = tf_weights.get(tf, 0.1)
 
-def classify_divergence_strength(diff_value: float, tf: str):
-    """
-    Clasifica la divergencia como fuerte, moderada o débil
-    según la magnitud relativa y el timeframe.
-    """
-    abs_diff = abs(diff_value)
-    multiplier = {"1m": 1.0, "5m": 0.8, "15m": 0.6, "1h": 0.5}.get(tf, 0.5)
+        r_div, r_str = _divergence(price, rsi_s)
+        m_div, m_str = _divergence(price, macd_s)
 
-    score = abs_diff * multiplier
+        divergences[tf] = {
+            "rsi": {"type": r_div, "strength": float(r_str)},
+            "macd": {"type": m_div, "strength": float(m_str)},
+            "volume_mean": float(np.mean(vol)) if len(vol) else 0.0,
+        }
 
-    if score > 0.8:
-        return "fuerte"
-    elif score > 0.4:
-        return "moderada"
-    else:
-        return "débil"
+        impact = 0.0
+        # apoyo a la señal
+        def supports(div_type: str) -> bool:
+            return ((signal_direction == "long" and div_type == "bullish") or
+                    (signal_direction == "short" and div_type == "bearish"))
+
+        if r_div and m_div and r_div == m_div:
+            if supports(r_div):
+                impact += 0.25 * w * (r_str + m_str) / 2
+                notes.append(f"{tf}: divergencia RSI+MACD a favor ({r_div})")
+            else:
+                impact -= 0.10 * w * (r_str + m_str) / 2
+                notes.append(f"{tf}: divergencia RSI+MACD en contra ({r_div})")
+        else:
+            if r_div:
+                if supports(r_div):
+                    impact += 0.18 * w * r_str
+                    notes.append(f"{tf}: RSI a favor ({r_div})")
+                else:
+                    impact -= 0.10 * w * r_str
+                    notes.append(f"{tf}: RSI en contra ({r_div})")
+            if m_div:
+                if supports(m_div):
+                    impact += 0.18 * w * m_str
+                    notes.append(f"{tf}: MACD a favor ({m_div})")
+                else:
+                    impact -= 0.10 * w * m_str
+                    notes.append(f"{tf}: MACD en contra ({m_div})")
+
+        # volumen realza el peso de la divergencia
+        vol_mean = divergences[tf]["volume_mean"]
+        vol_ratio = vol_mean / (1 + vol_mean)
+        if (r_div or m_div) and vol_ratio > 0.2:
+            impact *= (1 + 0.3 * vol_ratio)
+            notes.append(f"{tf}: volumen refuerza (ratio {vol_ratio:.2f})")
+
+        total += impact
+
+    if leverage >= 20:
+        total *= 0.9
+
+    total = max(-1.0, min(1.0, total))
+    logger.info(f"[divergence] impacto total={total:.3f}")
+    return {"divergences": divergences, "confidence_impact": float(total), "notes": notes}
