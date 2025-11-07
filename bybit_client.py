@@ -1,44 +1,87 @@
+"""
+bybit_client.py
+---------------------------------------------------------
+Cliente de conexión con la API pública y privada de Bybit.
+Incluye:
+- get_ohlcv_data(): descarga datos de velas OHLCV
+- get_open_positions(): consulta posiciones activas
+- open_position(): crea operaciones (simulado o real)
+---------------------------------------------------------
+Compatible con:
+    indicators.py
+    signal_manager.py
+    operation_tracker.py
+---------------------------------------------------------
+"""
+
 import time
 import hmac
 import hashlib
 import requests
 import logging
-
-from config import BYBIT_API_KEY, BYBIT_API_SECRET, SIMULATION_MODE
-
-# Opcionales/seguro por defecto si no existen en config.py
-try:
-    from config import BYBIT_TESTNET, BYBIT_CATEGORY
-except Exception:
-    BYBIT_TESTNET = False
-    BYBIT_CATEGORY = "linear"  # "linear", "inverse" o "spot"
+import pandas as pd
+from datetime import datetime
+from config import (
+    BYBIT_API_KEY,
+    BYBIT_API_SECRET,
+    BYBIT_CATEGORY,
+    SIMULATION_MODE,
+    BYBIT_TESTNET,
+)
 
 logger = logging.getLogger("bybit_client")
 
-BASE_URL = "https://api.bybit.com" if not BYBIT_TESTNET else "https://api-testnet.bybit.com"
-
-# Mapa timeframe → intervalo v5
-INTERVAL_MAP = {
-    "1m": "1",
-    "3m": "3",
-    "5m": "5",
-    "15m": "15",
-    "30m": "30",
-    "1h": "60",
-    "2h": "120",
-    "4h": "240",
-    "6h": "360",
-    "12h": "720",
-    "1d": "D",
-    "1w": "W",
-    "1M": "M",
-}
+# ================================================================
+# 🌐 Base URLs
+# ================================================================
+BASE_URL_MAINNET = "https://api.bybit.com"
+BASE_URL_TESTNET = "https://api-testnet.bybit.com"
+BASE_URL = BASE_URL_TESTNET if BYBIT_TESTNET or SIMULATION_MODE else BASE_URL_MAINNET
 
 # ================================================================
-# 🔐 Generación de firma segura (para endpoints privados)
+# 🕒 Control de tasa de llamadas
+# ================================================================
+_last_request_time = 0
+MIN_REQUEST_INTERVAL = 1.5  # segundos entre llamadas públicas
+
+
+def _safe_request(method: str, endpoint: str, params=None, headers=None):
+    """
+    Envuelve las solicitudes HTTP para manejar errores y pausas seguras.
+    """
+    global _last_request_time
+    try:
+        elapsed = time.time() - _last_request_time
+        if elapsed < MIN_REQUEST_INTERVAL:
+            time.sleep(MIN_REQUEST_INTERVAL - elapsed)
+
+        url = BASE_URL + endpoint
+        response = requests.request(method, url, params=params, headers=headers, timeout=10)
+
+        _last_request_time = time.time()
+        if response.status_code != 200:
+            logger.error(f"⚠️ Respuesta inesperada de Bybit ({response.status_code}): {response.text}")
+            return None
+
+        data = response.json()
+        if data.get("retCode") not in (0, None):
+            logger.warning(f"⚠️ Error de API Bybit: {data}")
+            return None
+
+        return data
+
+    except Exception as e:
+        logger.error(f"❌ Error en solicitud HTTP a Bybit: {e}")
+        return None
+
+
+# ================================================================
+# 🔐 Firma para API privada
 # ================================================================
 def generate_signature(params: dict) -> str:
-    """Genera una firma HMAC-SHA256 para la API privada."""
+    """
+    Genera una firma HMAC-SHA256 para la API privada.
+    """
     query_string = "&".join([f"{key}={params[key]}" for key in sorted(params)])
     return hmac.new(
         BYBIT_API_SECRET.encode("utf-8"),
@@ -48,63 +91,59 @@ def generate_signature(params: dict) -> str:
 
 
 # ================================================================
-# 📊 OHLCV (velas) — endpoint público v5
+# 📊 Obtener velas OHLCV
 # ================================================================
-def get_ohlcv(symbol: str, timeframe: str, limit: int = 200, category: str = None):
+def get_ohlcv_data(symbol: str, timeframe: str = "5m", limit: int = 200) -> pd.DataFrame:
     """
-    Devuelve lista de dicts OHLCV usando /v5/market/kline
-    Formato:
-    [
-      {'timestamp': int_ms, 'open': float, 'high': float, 'low': float, 'close': float, 'volume': float},
-      ...
-    ]
+    Obtiene datos OHLCV desde la API pública de Bybit.
+    Compatible con pandas_ta.
+    Devuelve DataFrame con columnas: time, open, high, low, close, volume.
     """
+
+    # Mapeo de timeframes
+    tf_map = {
+        "1m": "1",
+        "3m": "3",
+        "5m": "5",
+        "15m": "15",
+        "30m": "30",
+        "1h": "60",
+        "4h": "240",
+        "1d": "D",
+    }
+    interval = tf_map.get(timeframe, "5")
+
+    endpoint = "/v5/market/kline"
+    params = {
+        "category": BYBIT_CATEGORY,
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit,
+    }
+
+    data = _safe_request("GET", endpoint, params=params)
+    if not data or "result" not in data or "list" not in data["result"]:
+        logger.warning(f"⚠️ No se pudieron obtener velas para {symbol} ({timeframe})")
+        return None
+
     try:
-        interval = INTERVAL_MAP.get(timeframe)
-        if not interval:
-            raise ValueError(f"Timeframe no soportado: {timeframe}")
-
-        endpoint = "/v5/market/kline"
-        params = {
-            "category": category or BYBIT_CATEGORY or "linear",
-            "symbol": symbol,
-            "interval": interval,
-            "limit": min(max(int(limit), 1), 1000),
-        }
-        resp = requests.get(BASE_URL + endpoint, params=params, timeout=10)
-        data = resp.json()
-
-        if data.get("retCode") != 0 or "result" not in data or "list" not in data["result"]:
-            logger.warning(f"⚠️ Respuesta kline inesperada: {data}")
-            return []
-
-        rows = []
-        # Bybit v5 kline list: [startTime, open, high, low, close, volume, turnover]
-        for it in data["result"]["list"]:
-            ts = int(it[0])
-            o, h, l, c, vol = float(it[1]), float(it[2]), float(it[3]), float(it[4]), float(it[5])
-            rows.append({
-                "timestamp": ts,
-                "open": o,
-                "high": h,
-                "low": l,
-                "close": c,
-                "volume": vol
-            })
-        return rows
-
+        records = data["result"]["list"]
+        df = pd.DataFrame(records, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df = df.astype(float)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        return df
     except Exception as e:
-        logger.error(f"❌ Error get_ohlcv {symbol} {timeframe}: {e}")
-        return []
+        logger.error(f"❌ Error procesando OHLCV {symbol} ({timeframe}): {e}")
+        return None
 
 
 # ================================================================
-# 📂 Posiciones abiertas (privado)
+# 📂 Obtener posiciones abiertas
 # ================================================================
 def get_open_positions() -> list:
     """
-    Obtiene las posiciones abiertas desde la API privada de Bybit.
-    En modo simulación devuelve posiciones falsas para pruebas.
+    Obtiene posiciones abiertas (reales o simuladas).
     """
     if SIMULATION_MODE:
         logger.info("💬 [SIM] Posiciones simuladas cargadas.")
@@ -115,7 +154,7 @@ def get_open_positions() -> list:
 
     try:
         endpoint = "/v5/position/list"
-        params = {"category": BYBIT_CATEGORY or "linear", "settleCoin": "USDT", "limit": 20}
+        params = {"category": BYBIT_CATEGORY, "settleCoin": "USDT", "limit": 20}
         params["api_key"] = BYBIT_API_KEY
         params["timestamp"] = int(time.time() * 1000)
         params["sign"] = generate_signature(params)
@@ -126,17 +165,13 @@ def get_open_positions() -> list:
         positions = []
         if "result" in data and "list" in data["result"]:
             for pos in data["result"]["list"]:
-                # Filtra solo posiciones con tamaño > 0
-                try:
-                    if float(pos.get("size", 0)) > 0:
-                        positions.append({
-                            "symbol": pos["symbol"],
-                            "direction": "long" if pos.get("side") == "Buy" else "short",
-                            "entry": float(pos.get("avgPrice", 0)),
-                            "leverage": int(float(pos.get("leverage", 20))),
-                        })
-                except Exception:
-                    continue
+                if float(pos.get("size", 0)) > 0:
+                    positions.append({
+                        "symbol": pos["symbol"],
+                        "direction": "long" if pos["side"] == "Buy" else "short",
+                        "entry": float(pos["avgPrice"]),
+                        "leverage": int(pos["leverage"]),
+                    })
 
         logger.info(f"📊 {len(positions)} posiciones activas detectadas")
         return positions
@@ -147,11 +182,11 @@ def get_open_positions() -> list:
 
 
 # ================================================================
-# 🧾 Abrir una operación (opcional futuro)
+# 🧾 Crear una operación (simulada o real)
 # ================================================================
 def open_position(symbol: str, direction: str, amount: float, leverage: int = 20):
     """
-    Abre una posición real o simulada (futuro desarrollo automatizado).
+    Abre una operación en Bybit (o simulada).
     """
     if SIMULATION_MODE:
         logger.info(f"💬 [SIM] Abrir operación: {symbol} {direction.upper()} x{leverage} ${amount}")
@@ -170,6 +205,7 @@ def open_position(symbol: str, direction: str, amount: float, leverage: int = 20
             "timestamp": int(time.time() * 1000),
         }
         params["sign"] = generate_signature(params)
+
         response = requests.post(BASE_URL + endpoint, params=params, timeout=10)
         data = response.json()
 
@@ -183,3 +219,12 @@ def open_position(symbol: str, direction: str, amount: float, leverage: int = 20
     except Exception as e:
         logger.error(f"❌ Error abriendo posición: {e}")
         return {"status": "error", "message": str(e)}
+
+
+# ================================================================
+# 🧪 Test local manual
+# ================================================================
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    df = get_ohlcv_data("BTCUSDT", "5m", limit=100)
+    print(df.tail())
