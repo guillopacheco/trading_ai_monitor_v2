@@ -3,6 +3,7 @@ Funciones auxiliares para cálculos de riesgo, ROI y operaciones
 """
 import logging
 import random
+import re
 
 logger = logging.getLogger("helpers")
 
@@ -22,6 +23,33 @@ ROI_REVERSION_THRESHOLD = -30
 ROI_DYNAMIC_STOP_THRESHOLD = 60
 ROI_TAKE_PROFIT_THRESHOLD = 100
 ROI_PARTIAL_CLOSE_PERCENT = 70
+
+# ================================================================
+# 🔤 Normalización de símbolos
+# ================================================================
+def normalize_symbol(raw_symbol: str) -> str:
+    """
+    Limpia y estandariza el nombre del símbolo para uso en Bybit.
+    Ejemplos:
+      "#BTC/USDT" -> "BTCUSDT"
+      "ethusdt"   -> "ETHUSDT"
+      "SOL"       -> "SOLUSDT"
+    """
+    try:
+        # Quitar caracteres no alfabéticos ni numéricos relevantes
+        symbol = re.sub(r"[^A-Za-z0-9/]", "", raw_symbol).upper()
+
+        # Si ya incluye /USDT → reemplazar por USDT
+        if symbol.endswith("/USDT"):
+            symbol = symbol.replace("/", "")
+        elif not symbol.endswith("USDT"):
+            symbol = symbol + "USDT"
+
+        logger.debug(f"🔤 Normalizado símbolo: {raw_symbol} -> {symbol}")
+        return symbol
+    except Exception as e:
+        logger.error(f"❌ Error normalizando símbolo {raw_symbol}: {e}")
+        return raw_symbol.upper()
 
 # ================================================================
 # 💰 Cálculos de ROI y precio actual
