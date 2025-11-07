@@ -1,118 +1,75 @@
-"""
-signal_manager.py
-
-Gestor central de señales de trading:
-- Recibe las señales parseadas desde telegram_reader.py
-- Obtiene los datos de Bybit (OHLCV)
-- Calcula indicadores técnicos en 1m, 5m, 15m
-- Llama a trend_analysis.analyze_trend() para evaluar la calidad de la señal
-- Envía resultados al notifier (Telegram)
-"""
-
 import logging
-import time
-from helpers import normalize_symbol
+import asyncio
+from datetime import datetime
 from indicators import get_technical_data
 from trend_analysis import analyze_trend
+from divergence_detector import evaluate_divergences
+from database import save_signal
 from notifier import notify_signal_result
-from database import store_signal
+from helpers import normalize_symbol
 
 logger = logging.getLogger("signal_manager")
 
-# ================================================================
-# ⚙️ Configuración
-# ================================================================
-TIMEFRAMES = ["1m", "5m", "15m"]
-
 
 # ================================================================
-# 🚀 Procesamiento principal de señales
+# 🧩 Proceso principal de análisis de señales
 # ================================================================
-def process_signal(signal_data: dict):
+async def process_signal(signal_data: dict):
     """
-    Recibe una señal parseada y ejecuta el análisis técnico completo.
-    signal_data: {
-        'pair': 'BTC',
-        'direction': 'long',
-        'leverage': 20,
-        'entry': 67000.0,
-        'take_profits': [68000.0, 69000.0, 70000.0],
-        'message_text': '🔥 #BTC/USDT ...'
-    }
+    Procesa una señal proveniente del lector de Telegram:
+    - Normaliza el símbolo
+    - Obtiene datos técnicos
+    - Analiza tendencia, divergencias y volatilidad
+    - Guarda resultados en BD
+    - Envía notificación a Telegram
     """
     try:
         symbol = normalize_symbol(signal_data["pair"])
         direction = signal_data["direction"]
-        leverage = signal_data.get("leverage", 20)
-        entry_price = float(signal_data["entry"])
+        entry = float(signal_data["entry"])
+        leverage = int(signal_data.get("leverage", 20))
 
-        logger.info(f"🧠 Analizando señal {symbol} ({direction}, x{leverage})")
+        logger.info(f"📊 Analizando señal: {symbol} ({direction.upper()} x{leverage})")
 
-        # ================================================================
-        # 📊 Obtener datos técnicos de múltiples temporalidades
-        # ================================================================
-        indicators_by_tf = {}
-        for tf in TIMEFRAMES:
-            tf_data = get_technical_data(symbol, tf)
-            if tf_data:
-                indicators_by_tf[tf] = tf_data
-            else:
-                logger.warning(f"⚠️ Sin datos suficientes para {symbol} en {tf}")
-
-        if not indicators_by_tf:
-            logger.error(f"❌ No se pudieron obtener datos técnicos para {symbol}")
+        # === 1️⃣ Obtener datos técnicos por timeframe ===
+        indicators = await get_technical_data(symbol)
+        if not indicators:
+            logger.warning(f"⚠️ No se obtuvieron datos técnicos para {symbol}")
             return
 
-        # ================================================================
-        # 🤖 Análisis técnico avanzado
-        # ================================================================
+        # === 2️⃣ Ejecutar análisis de tendencia ===
         analysis = analyze_trend(
             symbol=symbol,
             signal_direction=direction,
-            entry_price=entry_price,
-            indicators_by_tf=indicators_by_tf,
+            entry_price=entry,
+            indicators_by_tf=indicators,
             leverage=leverage
         )
 
-        match_ratio = analysis["match_ratio"]
-        recommendation = analysis["recommendation"]
-        details = analysis["details"]
+        match_ratio = analysis.get("match_ratio", 0.0)
+        recommendation = analysis.get("recommendation", "DESCARTAR")
 
-        logger.info(
-            f"📈 Resultado {symbol}: match={match_ratio:.2f}, recomendación={recommendation}"
+        # === 3️⃣ Guardar en la base de datos ===
+        signal_record = {
+            "pair": symbol,
+            "direction": direction,
+            "leverage": leverage,
+            "entry": entry,
+            "take_profits": signal_data.get("take_profits"),
+            "match_ratio": match_ratio,
+            "recommendation": recommendation,
+        }
+        await save_signal(signal_record)
+
+        # === 4️⃣ Enviar notificación ===
+        msg = (
+            f"📊 *Análisis de {symbol}*\n"
+            f"🔹 Dirección: *{direction.upper()}*\n"
+            f"💰 Entrada: {entry}\n"
+            f"⚙️ Apalancamiento: x{leverage}\n"
+            f"📈 Coincidencia técnica: {match_ratio*100:.1f}%\n"
+            f"📌 *Recomendación:* {recommendation}\n"
         )
+        notify_signal_result(symbol, msg)
 
-        # ================================================================
-        # 💾 Guardar en base de datos
-        # ================================================================
-        store_signal(
-            symbol=symbol,
-            direction=direction,
-            leverage=leverage,
-            entry=entry_price,
-            match_ratio=match_ratio,
-            recommendation=recommendation,
-            timestamp=int(time.time()),
-        )
-
-        # ================================================================
-        # 📬 Notificar resultado
-        # ================================================================
-        summary_msg = (
-            f"📊 *Análisis de {symbol}*\n\n"
-            f"🔹 *Dirección:* {direction.upper()}\n"
-            f"🔹 *Apalancamiento:* x{leverage}\n"
-            f"🔹 *Entrada:* {entry_price}\n"
-            f"🔹 *Match ratio:* {match_ratio*100:.1f}%\n"
-            f"📌 *Recomendación:* {recommendation}\n\n"
-            f"🧠 *Notas técnicas:*\n"
-        )
-
-        # Agregar notas del análisis si existen
-        for note in details.get("divergence_notes", []):
-            summary_msg += f"• {note}\n"
-
-        notify_signal_result(symbol, summary_msg)
-
-    except Exception as e:
-        logger.error(f"❌ Error procesando señal {signal_data.get('pair', '?')}: {e}", exc_info=True)
+        logger.info(f"✅ Señal {symbol} procesada
