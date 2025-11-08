@@ -6,13 +6,14 @@ import logging
 import pandas as pd
 from config import BYBIT_API_KEY, BYBIT_API_SECRET, SIMULATION_MODE, BYBIT_TESTNET
 
-
 logger = logging.getLogger("bybit_client")
 
-# Detect endpoint dinámico
+# ================================================================
+# 🌐 Endpoint dinámico
+# ================================================================
 BYBIT_ENDPOINT = (
     "https://api-testnet.bybit.com"
-    if BYBIT_TESTNET or SIMULATION_MODE
+    if BYBIT_TESTNET and not SIMULATION_MODE
     else "https://api.bybit.com"
 )
 
@@ -29,63 +30,80 @@ def generate_signature(params: dict) -> str:
 
 
 # ================================================================
-# 📈 Obtener OHLCV (segura, dinámica)
+# 📈 Obtener OHLCV (robusta con fallback y latencia)
 # ================================================================
 def get_ohlcv_data(symbol: str, interval: str = "5", limit: int = 500):
     """
-    Recupera datos OHLCV de Bybit Spot o Futuros (Linear).
-    Maneja correctamente 6 o 7 columnas y faltantes.
+    Recupera datos OHLCV de Bybit Futuros (Linear) con manejo de intervalos,
+    reintentos, validación de estructura y logs de latencia.
     """
-    try:
-        url = f"{BYBIT_ENDPOINT}/v5/market/kline"
-        params = {
-            "category": "linear",  # Para Futuros USDT
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit
-        }
-        r = requests.get(url, params=params, timeout=10)
-        if r.status_code != 200:
-            logger.error(f"❌ Error HTTP {r.status_code} al obtener OHLCV: {r.text}")
-            return None
+    valid_intervals = {"1", "3", "5", "15", "30", "60", "240", "D"}
+    if interval not in valid_intervals:
+        logger.warning(f"⚠️ Intervalo no válido '{interval}', usando '5'")
+        interval = "5"
 
-        data = r.json()
-        if data.get("retCode") != 0 or not data.get("result"):
-            logger.warning(f"⚠️ Sin datos OHLCV válidos para {symbol}: {data}")
-            return None
+    url = f"{BYBIT_ENDPOINT}/v5/market/kline"
+    params = {
+        "category": "linear",
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit
+    }
 
-        rows = data["result"].get("list", [])
-        if not rows or len(rows) < 50:
-            logger.warning(f"⚠️ Insuficientes velas para {symbol} ({interval}m)")
-            return None
+    for attempt in range(3):
+        try:
+            start_time = time.time()
+            r = requests.get(url, params=params, timeout=10)
+            latency = time.time() - start_time
 
-        # Crear DataFrame tolerante a número variable de columnas
-        df = pd.DataFrame(rows)
-        # A veces la API devuelve [timestamp, open, high, low, close, volume, turnover]
-        if df.shape[1] >= 6:
-            df.columns = ["timestamp", "open", "high", "low", "close", "volume", "turnover"][:df.shape[1]]
-        else:
-            logger.error(f"❌ Estructura inesperada de OHLCV ({df.shape})")
-            return None
+            if r.status_code != 200:
+                logger.error(f"❌ HTTP {r.status_code} ({latency:.2f}s) — {r.text}")
+                time.sleep(2)
+                continue
 
-        # Convertir tipos numéricos
-        df = df.astype({
-            "open": float,
-            "high": float,
-            "low": float,
-            "close": float,
-            "volume": float
-        })
+            data = r.json()
+            if data.get("retCode") != 0 or not data.get("result"):
+                logger.warning(f"⚠️ Respuesta inválida ({latency:.2f}s): {data}")
+                time.sleep(2)
+                continue
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="ms")
-        df = df.sort_values("timestamp")
+            rows = data["result"].get("list", [])
+            if not rows or len(rows) < 50:
+                logger.warning(f"⚠️ Insuficientes velas ({len(rows)}) para {symbol} ({interval}m)")
+                if attempt == 2 and interval != "1":
+                    logger.info(f"🔁 Reintentando con temporalidad menor (1m)")
+                    return get_ohlcv_data(symbol, "1", limit)
+                time.sleep(2)
+                continue
 
-        logger.info(f"📊 {symbol}: {len(df)} velas {interval}m cargadas desde Bybit.")
-        return df
+            # Crear DataFrame robusto
+            df = pd.DataFrame(rows)
+            if df.shape[1] >= 6:
+                df.columns = ["timestamp", "open", "high", "low", "close", "volume", "turnover"][:df.shape[1]]
+            else:
+                logger.error(f"❌ Estructura inesperada: {df.shape}")
+                return None
 
-    except Exception as e:
-        logger.error(f"❌ Error procesando OHLCV {symbol} ({interval}m): {e}")
-        return None
+            df = df.astype({
+                "open": float,
+                "high": float,
+                "low": float,
+                "close": float,
+                "volume": float
+            })
+            df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="ms")
+            df = df.sort_values("timestamp")
+
+            logger.info(f"📊 {symbol}: {len(df)} velas {interval}m cargadas en {latency:.2f}s.")
+            return df
+
+        except Exception as e:
+            logger.error(f"❌ Intento {attempt+1}: {e}")
+            time.sleep(2)
+
+    logger.error(f"❌ No se pudo obtener OHLCV para {symbol} tras 3 intentos.")
+    return None
+
 
 # ================================================================
 # 📊 Posiciones abiertas
@@ -108,7 +126,7 @@ def get_open_positions():
             "timestamp": int(time.time() * 1000),
         }
         params["sign"] = generate_signature(params)
-        response = requests.get(BASE_URL + endpoint, params=params, timeout=10)
+        response = requests.get(BYBIT_ENDPOINT + endpoint, params=params, timeout=10)
         data = response.json()
 
         positions = []
@@ -121,7 +139,8 @@ def get_open_positions():
                         "entry": float(pos["avgPrice"]),
                         "leverage": int(pos["leverage"]),
                     })
-        logger.info(f"📊 {len(positions)} posiciones activas detectadas")
+
+        logger.info(f"📊 {len(positions)} posiciones activas detectadas.")
         return positions
 
     except Exception as e:

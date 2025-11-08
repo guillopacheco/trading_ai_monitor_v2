@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+import asyncio
 from telegram import Bot
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
 
@@ -21,20 +22,34 @@ except Exception as e:
 # ================================================================
 def send_message(text: str):
     """
-    Envía un mensaje a Telegram o lo registra si está en modo simulación.
+    Envío seguro de mensajes Telegram.
+    Compatible con entornos sincrónicos (test, main, signal_manager).
     """
-    if SIMULATION_MODE or not bot:
-        logger.info(f"💬 [SIMULADO] {text}")
-        return True
-
     try:
-        bot.send_message(chat_id=TELEGRAM_USER_ID, text=text, parse_mode="Markdown")
+        if SIMULATION_MODE:
+            logger.info(f"💬 [SIMULADO] {text}")
+            return True
+
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_USER_ID:
+            logger.warning("⚠️ Token o USER_ID no configurados.")
+            return False
+
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+
+        # Si hay un loop activo (como con Telethon), usa create_task
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(bot.send_message(chat_id=TELEGRAM_USER_ID, text=text, parse_mode="Markdown"))
+        except RuntimeError:
+            # Si no hay loop activo (modo normal)
+            asyncio.run(bot.send_message(chat_id=TELEGRAM_USER_ID, text=text, parse_mode="Markdown"))
+
         logger.info("📨 Mensaje enviado correctamente")
         return True
-    except Exception as e:
-        logger.error(f"❌ Error enviando mensaje: {e}")
-        return False
 
+    except Exception as e:
+        logger.error(f"❌ Error enviando mensaje Telegram: {e}")
+        return False
 
 # ================================================================
 # 📊 Resultados de señales
@@ -49,7 +64,6 @@ def notify_signal_result(symbol: str, message: str):
         logger.info(f"✅ Notificación de análisis enviada para {symbol}")
     except Exception as e:
         logger.error(f"❌ Error notificando resultado de {symbol}: {e}")
-
 
 # ================================================================
 # ♻️ Reactivaciones técnicas
