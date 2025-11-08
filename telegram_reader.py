@@ -1,122 +1,114 @@
-"""
-telegram_reader.py
-----------------------------------
-Lee mensajes del canal de Telegram de NeuroTrader y detecta señales o actualizaciones de profit.
-Compatible con signal_manager.py (asincronía gestionada externamente).
-"""
-
+# telegram_reader.py
 import asyncio
 import logging
-from datetime import datetime
+import re
 from telethon import TelegramClient, events
-
-from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION, TELEGRAM_SIGNAL_CHANNEL_ID
-from notifier import send_message
-from signal_manager import process_signal
+from config import (
+    TELEGRAM_API_ID,
+    TELEGRAM_API_HASH,
+    TELEGRAM_PHONE,
+    TELEGRAM_SESSION,
+    TELEGRAM_SIGNAL_CHANNEL_ID,
+)
+from notifier import send_message, notify_profit_update
 
 logger = logging.getLogger("telegram_reader")
 
-# ================================================================
-# ⚙️ Inicialización del cliente de Telethon
-# ================================================================
-client = TelegramClient(TELEGRAM_SESSION, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+# ---------------------------
+# Parsers
+# ---------------------------
 
+PAIR_RE = re.compile(r"#?([A-Z0-9]+)\s*/\s*([A-Z]{3,5})")
+DIR_RE = re.compile(r"\b(Long|Short)\b", re.IGNORECASE)
+LEV_RE = re.compile(r"x\s?(\d{1,3})")
+ENTRY_RE = re.compile(r"(?:Entry\s*[-:]?\s*)([0-9]*\.?[0-9]+)", re.IGNORECASE)
 
-# ================================================================
-# 🧠 Parser básico de señales
-# ================================================================
-def parse_signal_message(message_text: str):
+PROFIT_UPDATE_RE = re.compile(
+    r"^#?[A-Z0-9]+/USDT.*?(?:Price\s*[-:]\s*[0-9]*\.?[0-9]+).*?(?:Profit\s*[-:]\s*\d+%)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+def parse_signal_text(text: str):
     """
-    Interpreta una señal recibida del canal de Telegram.
-    Retorna un diccionario con los campos relevantes o None si no es una señal válida.
+    Devuelve dict con {pair, direction, entry, leverage} o None si no es señal válida.
     """
-    try:
-        text = message_text.replace("\n", " ").replace("*", "").strip()
+    # Detectar y descartar profit updates
+    if PROFIT_UPDATE_RE.search(text):
+        return {"type": "profit_update"}
 
-        # --- Caso: señales tipo "🔥 #BTC/USDT (Long📈, x20) 🔥 Entry - 71000 ..."
-        if "Entry" in text and "/" in text:
-            pair = text.split("#")[1].split("(")[0].replace("/", "").strip()
-            direction = "long" if "long" in text.lower() else "short"
-            leverage = 0
-            if "x" in text.lower():
-                try:
-                    leverage = int(text.lower().split("x")[1].split(")")[0].split()[0])
-                except Exception:
-                    leverage = 20
+    m_pair = PAIR_RE.search(text)
+    m_dir = DIR_RE.search(text)
+    m_lev = LEV_RE.search(text)
+    m_ent = ENTRY_RE.search(text)
 
-            # Buscar entrada (Entry o Price)
-            entry = 0.0
-            if "entry" in text.lower():
-                entry = float(text.lower().split("entry")[1].split()[0].replace("-", "").strip())
-            elif "price" in text.lower():
-                entry = float(text.lower().split("price")[1].split()[0].replace("-", "").strip())
-
-            return {
-                "pair": pair.upper(),
-                "direction": direction,
-                "entry": entry,
-                "leverage": leverage,
-                "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            }
-
-        # --- Caso: actualizaciones de profit (ej. "✅ Price - 0.08661 🔝 Profit - 60%")
-        if "profit" in text.lower() and "price" in text.lower():
-            parts = text.split("Price")[1].split("Profit")
-            try:
-                price_val = float(parts[0].replace("-", "").strip().split()[0])
-                profit_val = parts[1].replace("-", "").replace("%", "").strip().split()[0]
-            except Exception:
-                price_val, profit_val = 0, 0
-
-            return {
-                "type": "profit_update",
-                "price": price_val,
-                "profit": profit_val,
-                "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            }
-
+    if not (m_pair and m_dir and m_ent):
         return None
 
-    except Exception as e:
-        logger.error(f"❌ Error parseando mensaje: {e}")
-        return None
+    base, quote = m_pair.group(1), m_pair.group(2)
+    direction = m_dir.group(1).lower()
+    entry = float(m_ent.group(1))
+    leverage = int(m_lev.group(1)) if m_lev else 0
 
+    return {
+        "type": "signal",
+        "pair": f"{base}{quote}".upper(),  # NORMALIZADO A SIN '/'
+        "direction": direction,
+        "entry": entry,
+        "leverage": leverage,
+    }
 
-# ================================================================
-# 📡 Escucha en tiempo real del canal
-# ================================================================
+# ---------------------------
+# Runner
+# ---------------------------
+
 async def start_telegram_reader():
-    """Inicia la escucha del canal de señales."""
-    @client.on(events.NewMessage(chats=TELEGRAM_SIGNAL_CHANNEL_ID))
-    async def handler(event):
-        try:
-            message = event.message.message.strip()
-            logger.info(f"📥 Señal recibida ({datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}):\n{message[:150]}")
+    """
+    Inicia el lector de señales (async). No recibe callback por compatibilidad con tu main.py actual.
+    Llama internamente a signal_manager.process_signal sin await (desde un hilo).
+    """
+    from signal_manager import process_signal  # import diferido para evitar ciclos
 
-            parsed = parse_signal_message(message)
-            if not parsed:
-                logger.warning("⚠️ Mensaje ignorado: formato no reconocido.")
-                return
-
-            # --- Si es una actualización de profit
-            if parsed.get("type") == "profit_update":
-                msg = (
-                    f"📈 *Actualización de Profit Detectada*\n"
-                    f"💰 Precio: {parsed['price']}\n"
-                    f"📊 Profit: {parsed['profit']}%\n"
-                    f"🕒 {parsed['timestamp']}"
-                )
-                send_message(msg)
-                logger.info(f"💬 Profit update enviada: {parsed['profit']}%")
-                return
-
-            # --- Si es una señal nueva
-            await process_signal(parsed)
-
-        except Exception as e:
-            logger.error(f"❌ Error manejando mensaje de Telegram: {e}")
-            send_message(f"❌ Error procesando mensaje: {e}")
+    chat_id = int(str(TELEGRAM_SIGNAL_CHANNEL_ID).replace(" ", ""))
 
     logger.info("📡 TelegramSignalReader iniciado en modo escucha...")
-    async with client:
-        await client.run_until_disconnected()
+
+    client = TelegramClient(TELEGRAM_SESSION, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+    await client.start(phone=TELEGRAM_PHONE)
+
+    me = await client.get_me()
+    logger.info(f"✅ Conectado como {me.first_name} ({me.id})")
+
+    @client.on(events.NewMessage(chats=chat_id))
+    async def handler(event):
+        try:
+            text = (event.message.message or "").strip()
+            if not text:
+                return
+
+            logger.info(f"📥 Señal recibida ({event.message.date}):\n{text[:120]}{'...' if len(text)>120 else ''}")
+
+            parsed = parse_signal_text(text)
+            if not parsed:
+                logger.debug("ℹ️ Mensaje ignorado (no coincide con formato de señal).")
+                return
+
+            if parsed.get("type") == "profit_update":
+                # No relanzar análisis; solo notificar opcionalmente.
+                notify_profit_update(text)
+                return
+
+            # Señal válida → procesar en hilo sync
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, process_signal, {
+                "pair": parsed["pair"],
+                "direction": parsed["direction"],
+                "entry": parsed["entry"],
+                "leverage": parsed["leverage"],
+                "timestamp": str(event.message.date)
+            })
+
+        except Exception as e:
+            logger.error(f"❌ Error en handler de señales: {e}")
+            send_message(f"⚠️ Error leyendo una señal: {e}")
+
+    await client.run_until_disconnected()

@@ -1,159 +1,97 @@
-import asyncio
+# operation_tracker.py
 import logging
 import time
-from datetime import datetime
-
-from helpers import get_current_price, calculate_roi
+from bybit_client import get_open_positions
 from indicators import get_technical_data
 from trend_analysis import analyze_trend
-from notifier import notify_operation_alert  # ✅ nombre corregido
-from database import update_operation_status, get_alert_record, update_alert_record
-from config import (
-    SIMULATION_MODE,
-    ROI_REVERSION_THRESHOLD,
-    ROI_DYNAMIC_STOP_THRESHOLD,
-    ROI_TAKE_PROFIT_THRESHOLD
-)
+from notifier import notify_operation_alert
 
 logger = logging.getLogger("operation_tracker")
 
+LOSS_STEPS = [-30, -50, -70, -90]  # ejemplo de niveles de pérdida (por ROI %)
+CHECK_BASE_SECONDS = 60           # ciclo base de evaluación (1 min)
 
-# ================================================================
-# ⚙️ Función principal de monitoreo
-# ================================================================
-async def monitor_open_positions(positions):
+def _classify_volatility(indicators_by_tf):
+    # Simple: usa ATR_rel promedio si está disponible
+    vals = []
+    for tf, d in indicators_by_tf.items():
+        v = d.get("atr_rel")
+        if v is not None:
+            vals.append(v)
+    if not vals:
+        return "LOW"
+    avg = sum(vals) / len(vals)
+    if avg > 0.03:
+        return "HIGH"
+    if avg > 0.015:
+        return "MEDIUM"
+    return "LOW"
+
+def _suggestion_from_result(result):
+    rec = (result or {}).get("recommendation", "ESPERAR")
+    if rec in ("ENTRADA", "ENTRADA_CON_PRECAUCION"):
+        return "Mantener (tendencia a favor)"
+    if rec == "ESPERAR":
+        return "Evaluar / reducir riesgo"
+    return "Cerrar o revertir"
+
+def monitor_open_positions(initial_positions=None):
     """
-    Monitorea las operaciones abiertas periódicamente.
-    Si el ROI cae por debajo de los umbrales definidos, ejecuta análisis técnico.
+    Monitorea posiciones reales en Bybit.
+    - Si initial_positions es None, las consulta cada ciclo.
+    - Calcula análisis técnico por posición y dispara alertas cuando corresponde.
     """
-    if not positions:
-        logger.info("ℹ️ No hay posiciones abiertas para monitorear.")
-        return
+    logger.info("🧭 Iniciando monitoreo de operaciones abiertas...")
 
-    logger.info(f"🧭 Iniciando monitoreo de {len(positions)} operaciones abiertas...")
+    while True:
+        try:
+            positions = initial_positions or get_open_positions()
+            if not positions:
+                logger.info("ℹ️ No hay posiciones activas. Reintentando más tarde...")
+                time.sleep(30)
+                continue
 
-    while positions:
-        for pos in positions:
-            symbol = pos["symbol"]
-            direction = pos["direction"].lower()
-            entry = float(pos["entry"])
-            leverage = int(pos["leverage"])
+            for pos in positions:
+                symbol = pos.get("symbol", "").upper()
+                direction = pos.get("direction", "").lower()
+                entry = float(pos.get("entry", 0))
+                lev = int(pos.get("leverage", 20))
 
-            try:
-                # =========================================================
-                # 🔹 Obtener precio actual (simulado o real)
-                # =========================================================
-                current_price = get_current_price(symbol)
-                if current_price is None:
-                    logger.warning(f"⚠️ No se pudo obtener precio para {symbol}.")
+                # Indicadores
+                indicators = get_technical_data(symbol, intervals=["1m", "5m", "15m"])
+                if not indicators:
+                    logger.warning(f"⚠️ Datos insuficientes para {symbol}")
                     continue
 
-                roi = calculate_roi(entry, current_price, direction, leverage)
-                vol_label = "HIGH" if abs(roi) > ROI_DYNAMIC_STOP_THRESHOLD else "LOW"
+                # (Aquí podrías calcular ROI real desde tu exchange; placeholder -999 indica que debes integrarlo)
+                roi = float(pos.get("roi", -999.0))  # integra tu ROI real si lo tienes
 
-                logger.info(f"⏱️ {symbol}: ROI {roi:.2f}% | Vol {vol_label}")
+                result = analyze_trend(symbol, direction, entry, indicators, lev)
+                vol = _classify_volatility(indicators)
+                suggestion = _suggestion_from_result(result)
 
-                # =========================================================
-                # ⚠️ Verificar umbrales de pérdida o ganancia
-                # =========================================================
-                alert_level = None
-                if roi <= ROI_REVERSION_THRESHOLD:
-                    alert_level = "LOSS"
-                elif roi >= ROI_TAKE_PROFIT_THRESHOLD:
-                    alert_level = "TP"
-                elif roi >= ROI_DYNAMIC_STOP_THRESHOLD:
-                    alert_level = "WARNING"
+                # Gatillos por pérdidas (si tienes ROI real, cámbialo aquí)
+                for step in LOSS_STEPS:
+                    if roi <= step:
+                        notify_operation_alert(symbol, direction, roi, step, vol, suggestion)
+                        break
 
-                if alert_level:
-                    # Registrar o verificar alerta previa
-                    existing_alert = get_alert_record(symbol)
-                    if not existing_alert or existing_alert["level"] != alert_level:
-                        await handle_operation_alert(
-                            symbol=symbol,
-                            direction=direction,
-                            entry=entry,
-                            leverage=leverage,
-                            roi=roi,
-                            vol_label=vol_label,
-                            alert_level=alert_level,
-                        )
-                        update_alert_record(symbol, alert_level)
-                    else:
-                        logger.debug(f"🔁 Alerta ya registrada para {symbol} ({alert_level})")
+                # Ritmo según volatilidad
+                if vol == "HIGH":
+                    sleep_s = max(300, CHECK_BASE_SECONDS * 0.5)
+                elif vol == "MEDIUM":
+                    sleep_s = CHECK_BASE_SECONDS
+                else:
+                    sleep_s = CHECK_BASE_SECONDS * 1.2
 
-                # =========================================================
-                # 💾 Actualizar en la base de datos
-                # =========================================================
-                update_operation_status(symbol, "open", roi)
+                logger.info(f"⏱️ {symbol}: ROI {roi:.2f}% | Vol {vol} | Próximo check en {sleep_s/60:.1f} min")
 
-                # =========================================================
-                # 💤 Pausa adaptativa según ROI y volatilidad
-                # =========================================================
-                sleep_time = 300 if abs(roi) < 20 else 120  # 5min normal, 2min en alerta
-                logger.info(f"⏳ Próximo chequeo en {sleep_time / 60:.1f} min ({symbol})...")
-                await asyncio.sleep(sleep_time)
+            # Si las posiciones se pasan “initial_positions”, solo 1 ciclo
+            if initial_positions is not None:
+                return
 
-            except Exception as e:
-                logger.error(f"❌ Error monitoreando {symbol}: {e}")
+            time.sleep(15)
 
-        await asyncio.sleep(5)
-
-
-# ================================================================
-# 🚨 Evaluación técnica cuando hay alerta de pérdida o ganancia
-# ================================================================
-async def handle_operation_alert(symbol, direction, entry, leverage, roi, vol_label, alert_level):
-    """
-    Ejecuta un análisis técnico multi-temporal para decidir si cerrar,
-    mantener o revertir una posición en alerta.
-    """
-    try:
-        logger.warning(f"🚨 Alerta detectada en {symbol} ({alert_level}) ROI {roi:.2f}%")
-
-        # =========================================================
-        # 🧠 Obtener indicadores multi-TF
-        # =========================================================
-        data_by_tf = get_technical_data(symbol)
-        if not data_by_tf:
-            msg = f"⚠️ Datos insuficientes para ATR de {symbol}"
-            logger.warning(msg)
-            notify_operation_alert(symbol, direction, roi, vol_label, msg)
-            return
-
-        # =========================================================
-        # 📊 Analizar tendencia técnica
-        # =========================================================
-        analysis = analyze_trend(symbol, direction, entry, data_by_tf, leverage)
-        recommendation = analysis.get("recommendation", "EVALUAR")
-        match_ratio = analysis.get("match_ratio", 0)
-
-        # =========================================================
-        # 💬 Enviar alerta con recomendación técnica
-        # =========================================================
-        message = (
-            f"⚠️ *ALERTA DE OPERACIÓN*\n\n"
-            f"🪙 *Par:* {symbol}\n"
-            f"📈 *Dirección:* {direction.upper()}\n"
-            f"💰 *ROI actual:* {roi:.2f}%\n"
-            f"🌡️ *Volatilidad:* {vol_label}\n"
-            f"📊 *Match Ratio:* {match_ratio:.2f}\n\n"
-            f"📌 *Recomendación técnica:* {recommendation}"
-        )
-
-        notify_operation_alert(symbol, direction, roi, vol_label, message)
-        logger.warning(f"🚨 Alerta enviada: {symbol} {alert_level} ({roi:.2f}%)")
-
-    except Exception as e:
-        logger.error(f"❌ Error durante análisis técnico de alerta {symbol}: {e}")
-
-
-# ================================================================
-# 🧪 Ejecutar monitoreo en modo de prueba
-# ================================================================
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    test_positions = [
-        {"symbol": "BTCUSDT", "direction": "long", "entry": 71000, "leverage": 20},
-        {"symbol": "ETHUSDT", "direction": "short", "entry": 3600, "leverage": 20},
-    ]
-    asyncio.run(monitor_open_positions(test_positions))
+        except Exception as e:
+            logger.error(f"❌ Error en monitor_open_positions: {e}")
+            time.sleep(20)
