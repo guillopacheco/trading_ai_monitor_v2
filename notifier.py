@@ -1,111 +1,101 @@
+"""
+indicators.py (versión estable)
+-------------------------------
+Obtiene y calcula indicadores técnicos multi-temporalidad para análisis de señales.
+Compatible con signal_manager.py, trend_analysis.py y operation_tracker.py.
+"""
+
+import pandas as pd
+import numpy as np
+import pandas_ta as ta
 import logging
-from datetime import datetime
-import asyncio
-from telegram import Bot
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
+from bybit_client import get_ohlcv_data
 
-logger = logging.getLogger("notifier")
-
-# ================================================================
-# 🤖 Inicialización del bot
-# ================================================================
-try:
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    logger.info("✅ Conexión con Telegram establecida")
-except Exception as e:
-    bot = None
-    logger.error(f"❌ Error conectando con Telegram: {e}")
+logger = logging.getLogger("indicators")
 
 
 # ================================================================
-# ✉️ Envío seguro de mensajes
+# 📊 Obtener indicadores técnicos multi-temporalidad
 # ================================================================
-def send_message(text: str):
+def get_technical_data(symbol: str, intervals=["1m", "5m", "15m"]):
     """
-    Envío seguro de mensajes Telegram.
-    Compatible con entornos sincrónicos (test, main, signal_manager).
+    Recupera indicadores EMA, RSI, MACD, Bollinger Bands, ATR y volatilidad.
+    Maneja tolerancia ante columnas faltantes y nombres diferentes.
     """
-    try:
-        if SIMULATION_MODE:
-            logger.info(f"💬 [SIMULADO] {text}")
-            return True
+    data = {}
 
-        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_USER_ID:
-            logger.warning("⚠️ Token o USER_ID no configurados.")
-            return False
-
-        bot = Bot(token=TELEGRAM_BOT_TOKEN)
-
-        # Si hay un loop activo (como con Telethon), usa create_task
+    for tf in intervals:
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(bot.send_message(chat_id=TELEGRAM_USER_ID, text=text, parse_mode="Markdown"))
-        except RuntimeError:
-            # Si no hay loop activo (modo normal)
-            asyncio.run(bot.send_message(chat_id=TELEGRAM_USER_ID, text=text, parse_mode="Markdown"))
+            interval = tf.replace("m", "")  # Bybit usa "1", "5", "15" ...
+            df = get_ohlcv_data(symbol, interval=interval)
 
-        logger.info("📨 Mensaje enviado correctamente")
-        return True
+            if df is None or len(df) < 50:
+                logger.warning(f"⚠️ Insuficientes velas para {symbol} ({tf})")
+                continue
 
-    except Exception as e:
-        logger.error(f"❌ Error enviando mensaje Telegram: {e}")
-        return False
+            # ================================================================
+            # 🧮 Indicadores técnicos principales
+            # ================================================================
+            df["ema_short"] = ta.ema(df["close"], length=20)
+            df["ema_long"] = ta.ema(df["close"], length=50)
+            df["rsi"] = ta.rsi(df["close"], length=14)
 
-# ================================================================
-# 📊 Resultados de señales
-# ================================================================
-def notify_signal_result(symbol: str, message: str):
-    """
-    Notifica el resultado del análisis técnico inicial.
-    """
-    try:
-        header = f"🧠 *ANÁLISIS COMPLETADO* — {symbol}\n\n"
-        send_message(header + message)
-        logger.info(f"✅ Notificación de análisis enviada para {symbol}")
-    except Exception as e:
-        logger.error(f"❌ Error notificando resultado de {symbol}: {e}")
+            macd_df = ta.macd(df["close"], fast=12, slow=26, signal=9)
+            if macd_df is not None and isinstance(macd_df, pd.DataFrame):
+                df["macd"] = macd_df.iloc[:, 0]
+                df["macd_signal"] = macd_df.iloc[:, 1]
+                df["macd_hist"] = macd_df.iloc[:, 2]
+            else:
+                df["macd"] = df["macd_signal"] = df["macd_hist"] = np.nan
 
-# ================================================================
-# ♻️ Reactivaciones técnicas
-# ================================================================
-def notify_reactivation(symbol: str, message: str):
-    """
-    Notifica una reactivación técnica antes del precio de entrada.
-    """
-    try:
-        header = f"♻️ *REACTIVACIÓN TÉCNICA DETECTADA* — {symbol}\n\n"
-        send_message(header + message)
-        logger.info(f"✅ Reactivación notificada para {symbol}")
-    except Exception as e:
-        logger.error(f"❌ Error notificando reactivación de {symbol}: {e}")
+            # ================================================================
+            # 📊 Bollinger Bands (tolerante a nombres de columnas)
+            # ================================================================
+            try:
+                bb = ta.bbands(df["close"], length=20)
+                if bb is not None and isinstance(bb, pd.DataFrame):
+                    # Buscar columnas U/M/L sin importar formato decimal
+                    bb_cols = {c.split("_")[1]: c for c in bb.columns if c.startswith("BB")}
+                    df["bb_upper"] = bb[bb_cols.get("U", list(bb.columns)[0])]
+                    df["bb_mid"] = bb[bb_cols.get("M", list(bb.columns)[1])]
+                    df["bb_lower"] = bb[bb_cols.get("L", list(bb.columns)[2])]
+                else:
+                    df["bb_upper"] = df["bb_mid"] = df["bb_lower"] = np.nan
+            except Exception as e:
+                logger.warning(f"⚠️ Error calculando Bollinger Bands para {symbol}: {e}")
+                df["bb_upper"] = df["bb_mid"] = df["bb_lower"] = np.nan
 
+            # ================================================================
+            # 📈 ATR, volatilidad y ancho de bandas
+            # ================================================================
+            df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+            df["atr_rel"] = df["atr"] / df["close"]
+            df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_mid"]
 
-# ================================================================
-# ⚠️ Alertas de operaciones abiertas
-# ================================================================
-def notify_operation_alert(symbol: str, message: str):
-    """
-    Envía una alerta de pérdida progresiva o recomendación técnica
-    mientras la operación está abierta.
-    """
-    try:
-        header = f"⚠️ *ALERTA DE OPERACIÓN* — {symbol}\n\n"
-        send_message(header + message)
-        logger.warning(f"🚨 Alerta de operación enviada: {symbol}")
-    except Exception as e:
-        logger.error(f"❌ Error notificando alerta de {symbol}: {e}")
+            # ================================================================
+            # 🧠 Resumen técnico final
+            # ================================================================
+            data[tf] = {
+                "price": df["close"].iloc[-1],
+                "ema_short": df["ema_short"].iloc[-1],
+                "ema_long": df["ema_long"].iloc[-1],
+                "rsi": df["rsi"].iloc[-1],
+                "rsi_series": df["rsi"].tail(10).tolist(),
+                "macd": df["macd"].iloc[-1],
+                "macd_hist": df["macd_hist"].iloc[-1],
+                "macd_series": df["macd"].tail(10).tolist(),
+                "atr_rel": df["atr_rel"].iloc[-1],
+                "bb_width": df["bb_width"].iloc[-1],
+                "volume": df["volume"].iloc[-1],
+            }
 
+            logger.info(f"📊 {symbol}: {len(df)} velas {tf} procesadas correctamente.")
 
-# ================================================================
-# 🧾 Historial o informes
-# ================================================================
-def notify_summary_report(summary: str):
-    """
-    Envía un resumen general o informe diario/semanal.
-    """
-    try:
-        header = f"📋 *REPORTE DE ESTADO* — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-        send_message(header + summary)
-        logger.info("✅ Reporte de estado enviado")
-    except Exception as e:
-        logger.error(f"❌ Error enviando reporte: {e}")
+        except Exception as e:
+            logger.error(f"❌ Error calculando indicadores para {symbol} ({tf}): {e}")
+
+    if not data:
+        logger.warning(f"⚠️ No se pudieron obtener indicadores para {symbol}")
+        return None
+
+    return data
