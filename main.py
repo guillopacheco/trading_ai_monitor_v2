@@ -5,7 +5,6 @@ from datetime import datetime
 from database import init_database
 from config import SIMULATION_MODE
 from telegram_reader import start_telegram_reader
-from signal_manager import process_signal
 from bybit_client import get_open_positions
 from operation_tracker import monitor_open_positions
 from command_bot import start_command_bot
@@ -51,7 +50,8 @@ async def main():
     # 🧠 Lector de señales (Telethon)
     if mode == "signals":
         logger.info("📡 Activando modo de análisis de señales...")
-        tasks.append(asyncio.create_task(start_telegram_reader(callback=process_signal)))
+        # ✅ Sin callback: el lector maneja internamente el análisis y filtrado
+        tasks.append(asyncio.create_task(start_telegram_reader()))
 
     # 🤖 Bot de comandos Telegram
     tasks.append(asyncio.create_task(start_command_bot()))

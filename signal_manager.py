@@ -1,5 +1,4 @@
 import logging
-import asyncio
 from datetime import datetime
 
 from helpers import normalize_symbol
@@ -12,11 +11,11 @@ logger = logging.getLogger("signal_manager")
 
 
 # ================================================================
-# 🧠 Procesamiento de señales recibidas
+# 🧠 Procesamiento principal de señales recibidas
 # ================================================================
-async def process_signal(signal_data: dict):
+def process_signal(signal_data: dict):
     """
-    Procesa una señal de trading recibida del lector de Telegram.
+    Procesa una señal de trading recibida desde Telegram.
 
     Args:
         signal_data (dict): Ejemplo:
@@ -30,6 +29,9 @@ async def process_signal(signal_data: dict):
     """
     symbol = None
     try:
+        # ------------------------------------------------------------
+        # 🔹 Normalización y validación de datos
+        # ------------------------------------------------------------
         symbol = normalize_symbol(signal_data["pair"])
         direction = signal_data.get("direction", "").lower()
         entry = float(signal_data.get("entry", 0))
@@ -38,10 +40,10 @@ async def process_signal(signal_data: dict):
 
         logger.info(f"📊 Analizando señal: {symbol.upper()} ({direction.upper()} x{leverage})")
 
-        # ================================================================
-        # 1️⃣ Obtener datos técnicos por temporalidad
-        # ================================================================
-        indicators_by_tf = await get_technical_data(symbol)
+        # ------------------------------------------------------------
+        # 1️⃣ Obtener indicadores técnicos multi-temporalidad
+        # ------------------------------------------------------------
+        indicators_by_tf = get_technical_data(symbol)
 
         if not indicators_by_tf:
             msg = f"⚠️ No se pudieron obtener indicadores para {symbol.upper()}"
@@ -49,10 +51,11 @@ async def process_signal(signal_data: dict):
             send_message(msg)
             return
 
-        # ================================================================
-        # 2️⃣ Analizar tendencia general (EMA, RSI, MACD, divergencias)
-        # ================================================================
+        # ------------------------------------------------------------
+        # 2️⃣ Analizar tendencia global
+        # ------------------------------------------------------------
         trend_result = analyze_trend(symbol, direction, entry, indicators_by_tf, leverage)
+
         match_ratio = trend_result.get("match_ratio", 0)
         recommendation = trend_result.get("recommendation", "SIN DATOS")
 
@@ -62,13 +65,12 @@ async def process_signal(signal_data: dict):
             f"🔹 *Ratio de coincidencia:* {match_ratio:.2f}\n"
             f"📌 *Recomendación:* {recommendation}"
         )
-
         send_message(msg)
 
-        # ================================================================
-        # 3️⃣ Guardar señal procesada en base de datos
-        # ================================================================
-        await save_signal({
+        # ------------------------------------------------------------
+        # 3️⃣ Guardar señal analizada en base de datos
+        # ------------------------------------------------------------
+        save_signal({
             "pair": symbol.upper(),
             "direction": direction.upper(),
             "entry": entry,
@@ -78,7 +80,7 @@ async def process_signal(signal_data: dict):
             "timestamp": ts
         })
 
-        logger.info(f"✅ Señal {symbol} procesada y guardada correctamente.")
+        logger.info(f"✅ Señal {symbol.upper()} procesada y guardada correctamente.")
         send_message(f"✅ Señal {symbol.upper()} procesada correctamente ({recommendation}).")
 
     except Exception as e:
@@ -87,10 +89,10 @@ async def process_signal(signal_data: dict):
 
 
 # ================================================================
-# 🧪 Simulación manual de señales (para pruebas)
+# 🧪 Modo de prueba local
 # ================================================================
-async def simulate_signal_test():
-    """Permite lanzar un test de señal sin depender de Telegram."""
+def simulate_signal_test():
+    """Permite lanzar un test de señal sin depender del lector de Telegram."""
     try:
         test_signal = {
             "pair": "SOON/USDT",
@@ -101,7 +103,7 @@ async def simulate_signal_test():
         }
 
         logger.info("🚀 Iniciando test de análisis técnico con señal simulada...")
-        await process_signal(test_signal)
+        process_signal(test_signal)
         logger.info("✅ Test completado correctamente.")
         send_message("💬 [SIMULADO] ✅ Test de señal simulada completado correctamente.")
 
@@ -111,7 +113,7 @@ async def simulate_signal_test():
 
 
 # ================================================================
-# 🏁 Ejecución directa (para debug)
+# 🏁 Ejecución directa (para debug manual)
 # ================================================================
 if __name__ == "__main__":
-    asyncio.run(simulate_signal_test())
+    simulate_signal_test()
