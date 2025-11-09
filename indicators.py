@@ -1,101 +1,81 @@
 """
-indicators.py (versión estable)
--------------------------------
-Obtiene y calcula indicadores técnicos multi-temporalidad para análisis de señales.
-Compatible con signal_manager.py, trend_analysis.py y operation_tracker.py.
+indicators.py (sincronizado 2025)
+---------------------------------
+Cálculo técnico multi-temporalidad — integrado con bybit_client_v13_signals_fix.py.
 """
 
 import pandas as pd
 import numpy as np
 import pandas_ta as ta
 import logging
-from bybit_client import get_ohlcv_data
+from bybit_client_v13_signals_fix import get_ohlcv_data
 
 logger = logging.getLogger("indicators")
 
 
-# ================================================================
-# 📊 Obtener indicadores técnicos multi-temporalidad
-# ================================================================
-def get_technical_data(symbol: str, intervals=["1m", "5m", "15m"]):
-    """
-    Recupera indicadores EMA, RSI, MACD, Bollinger Bands, ATR y volatilidad.
-    Maneja tolerancia ante columnas faltantes y nombres diferentes.
-    """
-    data = {}
+def _validate_df(df: pd.DataFrame, symbol: str, tf: str) -> bool:
+    """Valida estructura mínima del DataFrame."""
+    if df is None or df.empty:
+        logger.warning(f"⚠️ No se recibieron datos para {symbol} ({tf})")
+        return False
+    if not {"open", "high", "low", "close", "volume"}.issubset(df.columns):
+        logger.error(f"❌ Columnas faltantes en OHLCV {symbol} ({tf})")
+        return False
+    if len(df) < 20:
+        logger.warning(f"⚠️ Solo {len(df)} velas disponibles para {symbol} ({tf})")
+        return False
+    return True
 
+
+def get_technical_data(symbol: str, intervals=["1m", "5m", "15m"]):
+    """Calcula EMA, RSI, MACD, Bollinger, ATR y devuelve resumen técnico."""
+    data = {}
     for tf in intervals:
         try:
-            interval = tf.replace("m", "")  # Bybit usa "1", "5", "15" ...
+            interval = tf.replace("m", "")
             df = get_ohlcv_data(symbol, interval=interval)
-
-            if df is None or len(df) < 50:
-                logger.warning(f"⚠️ Insuficientes velas para {symbol} ({tf})")
+            if not _validate_df(df, symbol, tf):
                 continue
 
-            # ================================================================
-            # 🧮 Indicadores técnicos principales
-            # ================================================================
-            df["ema_short"] = ta.ema(df["close"], length=20)
-            df["ema_long"] = ta.ema(df["close"], length=50)
+            # EMA / RSI
+            df["ema_short"] = ta.ema(df["close"], length=10)
+            df["ema_long"] = ta.ema(df["close"], length=30)
             df["rsi"] = ta.rsi(df["close"], length=14)
 
-            macd_df = ta.macd(df["close"], fast=12, slow=26, signal=9)
-            if macd_df is not None and isinstance(macd_df, pd.DataFrame):
-                df["macd"] = macd_df.iloc[:, 0]
-                df["macd_signal"] = macd_df.iloc[:, 1]
-                df["macd_hist"] = macd_df.iloc[:, 2]
-            else:
-                df["macd"] = df["macd_signal"] = df["macd_hist"] = np.nan
+            # MACD
+            macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
+            if isinstance(macd, pd.DataFrame):
+                df["macd"], df["macd_signal"], df["macd_hist"] = macd.iloc[:, 0], macd.iloc[:, 1], macd.iloc[:, 2]
 
-            # ================================================================
-            # 📊 Bollinger Bands (tolerante a nombres de columnas)
-            # ================================================================
-            try:
-                bb = ta.bbands(df["close"], length=20)
-                if bb is not None and isinstance(bb, pd.DataFrame):
-                    # Buscar columnas U/M/L sin importar formato decimal
-                    bb_cols = {c.split("_")[1]: c for c in bb.columns if c.startswith("BB")}
-                    df["bb_upper"] = bb[bb_cols.get("U", list(bb.columns)[0])]
-                    df["bb_mid"] = bb[bb_cols.get("M", list(bb.columns)[1])]
-                    df["bb_lower"] = bb[bb_cols.get("L", list(bb.columns)[2])]
-                else:
-                    df["bb_upper"] = df["bb_mid"] = df["bb_lower"] = np.nan
-            except Exception as e:
-                logger.warning(f"⚠️ Error calculando Bollinger Bands para {symbol}: {e}")
-                df["bb_upper"] = df["bb_mid"] = df["bb_lower"] = np.nan
+            # Bollinger
+            bb = ta.bbands(df["close"], length=20)
+            if isinstance(bb, pd.DataFrame):
+                df["bb_upper"], df["bb_mid"], df["bb_lower"] = bb.iloc[:, 0], bb.iloc[:, 1], bb.iloc[:, 2]
 
-            # ================================================================
-            # 📈 ATR, volatilidad y ancho de bandas
-            # ================================================================
+            # ATR
             df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
             df["atr_rel"] = df["atr"] / df["close"]
             df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_mid"]
 
-            # ================================================================
-            # 🧠 Resumen técnico final
-            # ================================================================
+            last = df.iloc[-1]
+            trend = "bullish" if last["ema_short"] > last["ema_long"] else "bearish"
+
             data[tf] = {
-                "price": df["close"].iloc[-1],
-                "ema_short": df["ema_short"].iloc[-1],
-                "ema_long": df["ema_long"].iloc[-1],
-                "rsi": df["rsi"].iloc[-1],
-                "rsi_series": df["rsi"].tail(10).tolist(),
-                "macd": df["macd"].iloc[-1],
-                "macd_hist": df["macd_hist"].iloc[-1],
-                "macd_series": df["macd"].tail(10).tolist(),
-                "atr_rel": df["atr_rel"].iloc[-1],
-                "bb_width": df["bb_width"].iloc[-1],
-                "volume": df["volume"].iloc[-1],
+                "price": float(last["close"]),
+                "ema_short": float(last["ema_short"]),
+                "ema_long": float(last["ema_long"]),
+                "rsi": float(last["rsi"]),
+                "macd": float(last["macd"]),
+                "macd_hist": float(last["macd_hist"]),
+                "atr_rel": float(last["atr_rel"]),
+                "bb_width": float(last["bb_width"]),
+                "volume": float(last["volume"]),
+                "trend": trend,
             }
 
-            logger.info(f"📊 {symbol}: {len(df)} velas {tf} procesadas correctamente.")
+            logger.info(f"📊 {symbol} ({tf}): {trend.upper()} ({len(df)} velas)")
 
         except Exception as e:
             logger.error(f"❌ Error calculando indicadores para {symbol} ({tf}): {e}")
 
-    if not data:
-        logger.warning(f"⚠️ No se pudieron obtener indicadores para {symbol}")
-        return None
-
-    return data
+    return data if data else None
