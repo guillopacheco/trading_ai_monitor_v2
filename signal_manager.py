@@ -1,119 +1,96 @@
+import re
 import logging
-from datetime import datetime
-
-from helpers import normalize_symbol
+import asyncio
+from bybit_client import get_ohlcv_data
 from indicators import get_technical_data
-from trend_analysis import analyze_trend
-from database import save_signal
 from notifier import send_message
 
 logger = logging.getLogger("signal_manager")
 
-
 # ================================================================
-# 🧠 Procesamiento principal de señales recibidas
+# 🧠 Limpieza y normalización de señales
 # ================================================================
-def process_signal(signal_data: dict):
-    """
-    Procesa una señal de trading recibida desde Telegram.
+def clean_signal_text(text: str) -> str:
+    """Limpia y normaliza el texto de la señal recibido por Telegram."""
+    text = re.sub(r"[^a-zA-Z0-9\s/._-]", "", text)
+    text = text.replace(" ", "").replace("\n", "")
+    return text.strip()
 
-    Args:
-        signal_data (dict): Ejemplo:
-            {
-                "pair": "BTC/USDT",
-                "direction": "LONG",
-                "entry": 27150.0,
-                "leverage": 20,
-                "timestamp": "2025-11-07 03:00:00"
-            }
-    """
-    symbol = None
+def extract_signal_details(message: str):
+    """Extrae par, dirección y apalancamiento de la señal."""
     try:
-        # ------------------------------------------------------------
-        # 🔹 Normalización y validación de datos
-        # ------------------------------------------------------------
-        symbol = normalize_symbol(signal_data["pair"])
-        direction = signal_data.get("direction", "").lower()
-        entry = float(signal_data.get("entry", 0))
-        leverage = int(signal_data.get("leverage", 20))
-        ts = signal_data.get("timestamp", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+        # Normaliza el texto
+        msg = clean_signal_text(message.upper())
+        # Ejemplo: "#SOON/USDT(LONGX20)" o "#PROMPT/USDT(SHORTX20)"
+        pair_match = re.search(r"#?([A-Z0-9]+)[/\\-]?USDT", msg)
+        direction_match = re.search(r"(LONG|SHORT)", msg)
+        leverage_match = re.search(r"X(\d+)", msg)
 
-        logger.info(f"📊 Analizando señal: {symbol.upper()} ({direction.upper()} x{leverage})")
+        if not pair_match or not direction_match:
+            logger.warning(f"⚠️ Señal no reconocida: {message}")
+            return None
 
-        # ------------------------------------------------------------
-        # 1️⃣ Obtener indicadores técnicos multi-temporalidad
-        # ------------------------------------------------------------
-        indicators_by_tf = get_technical_data(symbol)
+        pair = f"{pair_match.group(1)}USDT"
+        direction = direction_match.group(1).lower()
+        leverage = int(leverage_match.group(1)) if leverage_match else 20
+        return pair, direction, leverage
 
-        if not indicators_by_tf:
-            msg = f"⚠️ No se pudieron obtener indicadores para {symbol.upper()}"
-            logger.warning(msg)
-            send_message(msg)
+    except Exception as e:
+        logger.error(f"❌ Error extrayendo datos de señal: {e}")
+        return None
+
+# ================================================================
+# 📊 Análisis técnico de señales
+# ================================================================
+async def process_signal(signal_message: str):
+    """Procesa una señal recibida, analiza el par y envía recomendación."""
+    try:
+        details = extract_signal_details(signal_message)
+        if not details:
+            logger.warning("⚠️ No se pudo interpretar la señal.")
             return
 
-        # ------------------------------------------------------------
-        # 2️⃣ Analizar tendencia global
-        # ------------------------------------------------------------
-        trend_result = analyze_trend(symbol, direction, entry, indicators_by_tf, leverage)
+        pair, direction, leverage = details
+        logger.info(f"📊 Analizando señal: {pair} ({direction.upper()} x{leverage})")
 
-        match_ratio = trend_result.get("match_ratio", 0)
-        recommendation = trend_result.get("recommendation", "SIN DATOS")
+        # --- Carga de velas ---
+        timeframes = ["1", "5", "15"]
+        dataframes = {}
 
-        msg = (
-            f"📊 *Análisis de {symbol.upper()}*\n"
-            f"🔹 *Dirección:* {direction.upper()} (x{leverage})\n"
-            f"🔹 *Ratio de coincidencia:* {match_ratio:.2f}\n"
-            f"📌 *Recomendación:* {recommendation}"
+        for tf in timeframes:
+            df = get_ohlcv_data(pair, tf)
+            if df is not None and not df.empty:
+                dataframes[tf] = df
+            else:
+                logger.warning(f"⚠️ Insuficientes velas para {pair} ({tf}m)")
+
+        if not dataframes:
+            logger.warning(f"⚠️ No se pudieron obtener indicadores para {pair}")
+            await send_message(f"⚠️ No se pudieron obtener datos para {pair}")
+            return
+
+        # --- Análisis técnico por temporalidad ---
+        analysis = {}
+        for tf, df in dataframes.items():
+            analysis[tf] = get_technical_data(df)
+
+        # --- Generar recomendación ---
+        summary = []
+        for tf, res in analysis.items():
+            summary.append(f"🔹 **{tf}m:** {res.get('tendencia', 'Indefinida')}")
+
+        recommendation = "✅ Coincide con la señal" if all(
+            direction in res.get("tendencia", "").lower() for res in analysis.values()
+        ) else "⚠️ Señal no confirmada por las tendencias."
+
+        message = (
+            f"📊 **Análisis de {pair}**\n"
+            + "\n".join(summary)
+            + f"\n📌 **Recomendación:** {recommendation}"
         )
-        send_message(msg)
 
-        # ------------------------------------------------------------
-        # 3️⃣ Guardar señal analizada en base de datos
-        # ------------------------------------------------------------
-        save_signal({
-            "pair": symbol.upper(),
-            "direction": direction.upper(),
-            "entry": entry,
-            "leverage": leverage,
-            "match_ratio": match_ratio,
-            "recommendation": recommendation,
-            "timestamp": ts
-        })
-
-        logger.info(f"✅ Señal {symbol.upper()} procesada y guardada correctamente.")
-        send_message(f"✅ Señal {symbol.upper()} procesada correctamente ({recommendation}).")
+        await send_message(message)
 
     except Exception as e:
-        logger.error(f"❌ Error procesando señal {symbol or 'desconocida'}: {e}")
-        send_message(f"❌ Error procesando señal {symbol or 'desconocida'}: {e}")
-
-
-# ================================================================
-# 🧪 Modo de prueba local
-# ================================================================
-def simulate_signal_test():
-    """Permite lanzar un test de señal sin depender del lector de Telegram."""
-    try:
-        test_signal = {
-            "pair": "SOON/USDT",
-            "direction": "SHORT",
-            "entry": 1.2994,
-            "leverage": 20,
-            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        }
-
-        logger.info("🚀 Iniciando test de análisis técnico con señal simulada...")
-        process_signal(test_signal)
-        logger.info("✅ Test completado correctamente.")
-        send_message("💬 [SIMULADO] ✅ Test de señal simulada completado correctamente.")
-
-    except Exception as e:
-        logger.error(f"❌ Error ejecutando el test: {e}")
-        send_message(f"💬 [SIMULADO] ❌ Error ejecutando test de señal simulada: {e}")
-
-
-# ================================================================
-# 🏁 Ejecución directa (para debug manual)
-# ================================================================
-if __name__ == "__main__":
-    simulate_signal_test()
+        logger.error(f"❌ Error procesando señal: {e}")
+        await send_message(f"⚠️ Error analizando la señal: {e}")

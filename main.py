@@ -1,87 +1,67 @@
+"""
+main.py — Orquestador
+- Inicializa DB
+- Lanza lector de Telegram (telegram_reader.start_telegram_reader)
+- Lanza bot de comandos (command_bot.start_command_bot)
+- Lanza monitor de posiciones (operation_tracker.monitor_open_positions)
+"""
+
 import logging
 import asyncio
 import sys
 from datetime import datetime
+
 from database import init_database
 from config import SIMULATION_MODE
-from telegram_reader import start_telegram_reader
-from bybit_client import get_open_positions
-from operation_tracker import monitor_open_positions
+from telegram_reader import start_telegram_reader  # Debe internamente llamar a process_signal
 from command_bot import start_command_bot
+from operation_tracker import monitor_open_positions
 
-# ================================================================
-# 🧱 Configuración de logging global
-# ================================================================
 LOG_FILE = "trading_ai_monitor.log"
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
+    handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()],
 )
 
 logger = logging.getLogger("__main__")
 
-
-# ================================================================
-# 🚀 Función principal (loop global estable)
-# ================================================================
 async def main():
     logger.info(f"🚀 Iniciando Trading AI Monitor (modo simulación: {SIMULATION_MODE})")
-
-    # 1️⃣ Inicializar base de datos
     init_database()
 
-    # 2️⃣ Determinar modo de ejecución
+    # Modo (por si deseas variantes)
     mode = "signals"
     if len(sys.argv) > 2 and sys.argv[1] == "--mode":
         mode = sys.argv[2]
 
-    # 3️⃣ Obtener posiciones abiertas (para el modo monitor)
-    logger.info("📡 Recuperando posiciones abiertas...")
-    positions = get_open_positions()
-
-    # 4️⃣ Crear tareas concurrentes
     tasks = []
 
-    # 🧠 Lector de señales (Telethon)
+    # Lector de Telegram (señales)
     if mode == "signals":
-        logger.info("📡 Activando modo de análisis de señales...")
-        # ✅ Sin callback: el lector maneja internamente el análisis y filtrado
         tasks.append(asyncio.create_task(start_telegram_reader()))
 
-    # 🤖 Bot de comandos Telegram
+    # Bot de comandos
     tasks.append(asyncio.create_task(start_command_bot()))
 
-    # 💹 Monitoreo de operaciones abiertas
-    if positions:
-        logger.info(f"🧭 {len(positions)} posiciones activas detectadas, iniciando monitoreo...")
-        tasks.append(asyncio.to_thread(monitor_open_positions, positions))
-    else:
-        logger.info("ℹ️ No hay posiciones abiertas actualmente.")
+    # Monitor de posiciones (asíncrono)
+    tasks.append(asyncio.create_task(monitor_open_positions(poll_seconds=60)))
 
-    # 5️⃣ Mantener el sistema activo permanentemente
     try:
         while True:
             await asyncio.sleep(300)
-            logger.info(f"⏳ Sistema activo — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"⏳ Sistema activo — {datetime.now():%Y-%m-%d %H:%M:%S}")
     except asyncio.CancelledError:
         logger.warning("🛑 Bucle principal cancelado.")
     except Exception as e:
         logger.error(f"❌ Error crítico en main(): {e}")
     finally:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
+        for t in tasks:
+            if not t.done():
+                t.cancel()
         logger.info("🧹 Tareas limpiadas. Finalizando sistema.")
 
-
-# ================================================================
-# 🏁 Punto de entrada
-# ================================================================
 if __name__ == "__main__":
     try:
         asyncio.run(main())
