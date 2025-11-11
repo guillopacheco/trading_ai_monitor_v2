@@ -1,8 +1,10 @@
 """
-divergence_detector.py (versión mejorada)
-----------------------------------------
-Detecta divergencias RSI/MACD y volumen.
-Pondera por temporalidad y tipo de divergencia.
+divergence_detector.py (versión final sincronizada)
+------------------------------------------------------------
+Analiza divergencias en RSI, MACD y Volumen a partir de los datos
+calculados en indicators.py. Compatible con trend_analysis.py y
+test_trend_system.py.
+------------------------------------------------------------
 """
 
 import numpy as np
@@ -10,72 +12,59 @@ import logging
 
 logger = logging.getLogger("divergence_detector")
 
-# Pesos y lookbacks por temporalidad
-TF_WEIGHTS = {"1m": 0.25, "5m": 0.35, "15m": 0.25, "30m": 0.10, "1h": 0.05}
-LOOKBACKS = {"1m": 30, "5m": 25, "15m": 20, "30m": 15, "1h": 10}
-
-
 # ================================================================
-# 🧩 Detección de divergencias
+# 📈 Detección de divergencias
 # ================================================================
-def detect_divergences(symbol, ind, tf, direction):
+def detect_divergences(symbol: str, tech_data: dict):
     """
-    Analiza divergencias RSI/MACD/volumen.
-    Devuelve un factor [-1, +1] que afecta el score total.
+    Detecta divergencias básicas RSI, MACD y Volumen.
+
+    Args:
+        symbol (str): par analizado (ej. BTCUSDT)
+        tech_data (dict): datos técnicos generados por indicators.get_technical_data()
+
+    Returns:
+        dict: estado de divergencias {'RSI': str, 'MACD': str, 'Volumen': str}
     """
     try:
-        rsi_series = ind.get("rsi_series", [])
-        macd_series = ind.get("macd_series", [])
-        prices = ind.get("price", [])
-        volumes = ind.get("volume", [])
+        results = {"RSI": "Ninguna", "MACD": "Ninguna", "Volumen": "Ninguna"}
 
-        lookback = LOOKBACKS.get(tf, 20)
-        weight = TF_WEIGHTS.get(tf, 0.2)
+        for tf, data in tech_data.items():
+            rsi_series = data.get("rsi_series", [])
+            macd_series = data.get("macd_series", [])
+            volume = data.get("volume", 0)
 
-        if len(rsi_series) < 5 or len(macd_series) < 5:
-            return 0
+            # ================================================================
+            # 🔹 Divergencia RSI (comparación últimas dos oscilaciones)
+            # ================================================================
+            if len(rsi_series) >= 3:
+                prev, last = rsi_series[-3], rsi_series[-1]
+                if last > prev and last > 60:
+                    results["RSI"] = f"Alcista ({tf})"
+                elif last < prev and last < 40:
+                    results["RSI"] = f"Bajista ({tf})"
 
-        # --- RSI Divergencia ---
-        rsi_diff = np.diff(rsi_series[-lookback:])
-        price_diff = np.diff(prices[-lookback:]) if isinstance(prices, list) else []
+            # ================================================================
+            # 🔹 Divergencia MACD (histograma)
+            # ================================================================
+            if len(macd_series) >= 3:
+                prev, last = macd_series[-3], macd_series[-1]
+                if last > prev and last > 0:
+                    results["MACD"] = f"Alcista ({tf})"
+                elif last < prev and last < 0:
+                    results["MACD"] = f"Bajista ({tf})"
 
-        if len(price_diff) > 3:
-            if direction == "long" and rsi_diff[-1] > 0 and price_diff[-1] < 0:
-                rsi_div = +1
-            elif direction == "short" and rsi_diff[-1] < 0 and price_diff[-1] > 0:
-                rsi_div = +1
-            else:
-                rsi_div = -0.5
-        else:
-            rsi_div = 0
+            # ================================================================
+            # 🔹 Divergencia de Volumen
+            # ================================================================
+            if volume and volume > 0:
+                atr_rel = data.get("atr_rel", 0)
+                if atr_rel > 0.02 and volume > 1.3 * np.mean([v for v in [volume, volume * 0.9, volume * 1.1]]):
+                    results["Volumen"] = f"Alta volatilidad ({tf})"
 
-        # --- MACD Divergencia ---
-        macd_diff = np.diff(macd_series[-lookback:])
-        if len(macd_diff) > 3:
-            if direction == "long" and macd_diff[-1] > 0 and price_diff[-1] < 0:
-                macd_div = +1
-            elif direction == "short" and macd_diff[-1] < 0 and price_diff[-1] > 0:
-                macd_div = +1
-            else:
-                macd_div = -0.5
-        else:
-            macd_div = 0
-
-        # --- Divergencia de volumen ---
-        vol_div = 0
-        if len(volumes) > 5:
-            vol_diff = np.diff(volumes[-lookback:])
-            if price_diff[-1] > 0 and vol_diff[-1] < 0:
-                vol_div = -0.5  # sube con volumen débil → bajista
-            elif price_diff[-1] < 0 and vol_diff[-1] < 0:
-                vol_div = +0.5  # cae con volumen débil → alcista
-
-        # --- Consolidar ---
-        divergence_score = (rsi_div + macd_div + vol_div) / 3
-        divergence_score *= weight
-
-        return np.clip(divergence_score, -1, 1)
+        logger.info(f"📊 {symbol}: divergencias detectadas {results}")
+        return results
 
     except Exception as e:
-        logger.error(f"❌ Error detectando divergencias para {symbol} ({tf}): {e}")
-        return 0
+        logger.error(f"❌ Error detectando divergencias en {symbol}: {e}")
+        return {"RSI": "Error", "MACD": "Error", "Volumen": "Error"}

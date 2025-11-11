@@ -41,7 +41,16 @@ TELEGRAM_USER_ID = os.getenv("TELEGRAM_USER_ID")
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 
-# True si deseas usar el entorno de prueba
+# Entorno operativo: "real" o "demo"
+BYBIT_ENV = os.getenv("BYBIT_ENV", "real").lower()
+
+# Endpoint según entorno
+if BYBIT_ENV == "demo":
+    BYBIT_ENDPOINT = "https://api-demo.bybit.com"
+else:
+    BYBIT_ENDPOINT = "https://api.bybit.com"
+
+# True si deseas usar testnet
 BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 
 # Categoría de mercado (linear, inverse, spot)
@@ -51,7 +60,6 @@ BYBIT_CATEGORY = "linear"
 # ⚙️ Configuración general
 # ================================================================
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "true").lower() == "true"
-
 APP_MODE = os.getenv("APP_MODE", "ANALYSIS")  # ANALYSIS o TRADING
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DATABASE_PATH = "data/trading_signals.db"
@@ -96,8 +104,8 @@ SECONDS_IN_DAY = 86400
 
 REVIEW_INTERVAL_NORMAL = 900   # 15 minutos
 REVIEW_INTERVAL_HIGH_VOL = 300  # 5 minutos
-MAX_WAIT_TIME = 24 * SECONDS_IN_HOUR          # 24 horas
-EXTENDED_MONITORING_TIMEOUT = 72 * SECONDS_IN_HOUR  # 72 horas
+MAX_WAIT_TIME = 24 * SECONDS_IN_HOUR
+EXTENDED_MONITORING_TIMEOUT = 72 * SECONDS_IN_HOUR
 
 # ================================================================
 # 📈 Condiciones de vigilancia extendida
@@ -139,11 +147,13 @@ def validate_config():
     if missing:
         raise ValueError(f"⚠️ Faltan variables críticas en .env: {', '.join(missing)}")
 
-    print("✅ Configuración validada correctamente.")
-
+    print(f"✅ Configuración validada correctamente. Entorno: {BYBIT_ENV.upper()}")
+    print(f"🌍 Endpoint activo: {BYBIT_ENDPOINT}")
 
 # ================================================================
 # 📌 Ejecución directa para validar entorno
 # ================================================================
 if __name__ == "__main__":
     validate_config()
+
+ANALYSIS_DEBUG_MODE = True  # Cambia a False para producció

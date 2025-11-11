@@ -1,121 +1,123 @@
 """
-trend_analysis.py (versión mejorada)
------------------------------------
-Evalúa la tendencia técnica y genera una recomendación consolidada.
-Compatible con indicators.py y divergence_detector.py.
+trend_analysis.py (versión final-validada)
+------------------------------------------
+Consolida análisis técnico multi-temporalidad:
+- Evalúa tendencias por EMA10 / EMA30, RSI y MACD.
+- Integra divergencias (RSI / MACD / volumen) desde divergence_detector.py.
+- Calcula coherencia entre temporalidades.
+- Genera recomendación final para signal_manager / operation_tracker.
+
+Modo validación (configurable vía ANALYSIS_DEBUG_MODE en config.py)
 """
 
-import numpy as np
 import logging
+from indicators import get_technical_data
 from divergence_detector import detect_divergences
+from config import ANALYSIS_DEBUG_MODE, DEFAULT_TIMEFRAMES
 
 logger = logging.getLogger("trend_analysis")
 
 # ================================================================
-# ⚙️ Parámetros de ponderación
+# 🔍 Determinar tendencia general
 # ================================================================
-WEIGHTS = {
-    "ema": 0.35,
-    "rsi": 0.20,
-    "macd": 0.25,
-    "divergence": 0.20,
-    "volatility": 0.15
-}
+def determine_trend(tech: dict) -> str:
+    """Determina tendencia básica a partir de EMA y MACD."""
+    ema_short = tech.get("ema_short", 0)
+    ema_long = tech.get("ema_long", 0)
+    macd_hist = tech.get("macd_hist", 0)
+    rsi = tech.get("rsi", 50)
 
-TF_WEIGHTS = {"1m": 0.25, "5m": 0.35, "15m": 0.25, "30m": 0.10, "1h": 0.05}
-TF_ATR_FACTORS = {"1m": 0.5, "5m": 0.8, "15m": 1.0, "30m": 1.3, "1h": 1.6}
-
+    if ema_short > ema_long and macd_hist > 0 and rsi > 55:
+        return "Alcista"
+    elif ema_short < ema_long and macd_hist < 0 and rsi < 45:
+        return "Bajista"
+    else:
+        return "Lateral / Mixta"
 
 # ================================================================
-# 🧭 Análisis técnico principal
+# 🧠 Análisis de coherencia multi-temporalidad
 # ================================================================
-def analyze_trend(symbol, direction, entry, indicators_by_tf, leverage):
+def analyze_trend(symbol: str, direction: str, entry_price: float = None, tech_multi: dict = None, leverage: int = 20):
     """
-    Evalúa la tendencia global combinando indicadores técnicos.
-    Retorna un dict con match_ratio y recomendación textual.
+    Analiza tendencias multi-temporalidad y genera una recomendación final.
+    Compatible con indicadores de indicators.py y divergencias.
     """
-
     try:
-        direction = direction.lower()
-        scores = []
+        if tech_multi is None:
+            tech_multi = get_technical_data(symbol, intervals=DEFAULT_TIMEFRAMES)
+        if not tech_multi:
+            logger.warning(f"⚠️ No se encontraron datos técnicos para {symbol}")
+            return {"symbol": symbol, "recommendation": "Sin datos", "match_ratio": 0.0}
 
-        for tf, ind in indicators_by_tf.items():
-            score = 0
-            tf_factor = TF_ATR_FACTORS.get(tf, 1.0)
-
-            # --- EMA ---
-            if ind["ema_short"] and ind["ema_long"]:
-                ema_score = 1 if (ind["ema_short"] > ind["ema_long"]) == (direction == "long") else -1
-                score += WEIGHTS["ema"] * ema_score
-
-            # --- RSI (sesgo y momentum) ---
-            rsi = ind["rsi"]
-            if rsi:
-                if direction == "long":
-                    score += WEIGHTS["rsi"] * ((rsi - 50) / 50)
-                else:
-                    score -= WEIGHTS["rsi"] * ((rsi - 50) / 50)
-
-                # Momentum (pendiente RSI)
-                if len(ind["rsi_series"]) >= 3:
-                    rsi_slope = np.polyfit(range(len(ind["rsi_series"])), ind["rsi_series"], 1)[0]
-                    if direction == "long" and rsi_slope < 0:
-                        score -= 0.1
-                    elif direction == "short" and rsi_slope > 0:
-                        score -= 0.1
-
-            # --- MACD (histograma y pendiente) ---
-            macd_hist = ind["macd_hist"]
-            if macd_hist:
-                macd_score = np.sign(macd_hist) if direction == "long" else -np.sign(macd_hist)
-                score += WEIGHTS["macd"] * macd_score
-
-                if len(ind["macd_series"]) >= 3:
-                    macd_slope = np.polyfit(range(len(ind["macd_series"])), ind["macd_series"], 1)[0]
-                    if direction == "long" and macd_slope < 0:
-                        score -= 0.1
-                    elif direction == "short" and macd_slope > 0:
-                        score -= 0.1
-
-            # --- Divergencias RSI/MACD ---
-            divergence_score = detect_divergences(symbol, ind, tf, direction)
-            score += WEIGHTS["divergence"] * divergence_score
-
-            # --- Volatilidad adaptativa (penaliza ATR alto) ---
-            atr_penalty = (ind["atr_rel"] / tf_factor)
-            score -= WEIGHTS["volatility"] * atr_penalty
-
-            # --- Validación por BB Width ---
-            if ind["bb_width"] < 0.01:
-                score -= 0.05  # mercado lateral
-
-            scores.append(score * TF_WEIGHTS.get(tf, 0.2))
+        trends = {}
+        for tf, tech in tech_multi.items():
+            trend = determine_trend(tech)
+            trends[tf] = trend
+            if ANALYSIS_DEBUG_MODE:
+                logger.debug(f"{symbol} [{tf}] → EMA10={tech.get('ema_short'):.4f}, EMA30={tech.get('ema_long'):.4f}, "
+                             f"MACD_HIST={tech.get('macd_hist'):.4f}, RSI={tech.get('rsi'):.2f} → {trend}")
 
         # ================================================================
-        # 🧮 Consolidación multi-temporalidad
+        # 📈 Evaluar divergencias RSI / MACD / Volumen
         # ================================================================
-        avg_score = np.mean(scores) if scores else 0
-        tf_alignment = sum(1 for s in scores if s > 0.5)
+        divergences = detect_divergences(symbol, tech_multi)
+        div_summary = ", ".join([f"{k}: {v}" for k, v in divergences.items() if v != "Ninguna"]) or "Ninguna detectada"
 
-        # Si solo una temporalidad apoya la señal → degradar
-        if avg_score < 0.45 and tf_alignment < 2:
-            recommendation = "⏸️ ESPERAR"
-        elif avg_score > 0.65 and tf_alignment >= 2:
-            recommendation = "✅ ENTRADA"
-        elif avg_score > 0.5:
-            recommendation = "⚠️ ENTRADA CON PRECAUCIÓN"
-        else:
-            recommendation = "❌ DESCARTAR"
+        # ================================================================
+        # 📊 Calcular coherencia entre temporalidades
+        # ================================================================
+        trend_values = list(trends.values())
+        major_trend = max(set(trend_values), key=trend_values.count)
+        match_ratio = trend_values.count(major_trend) / len(trend_values) * 100
 
-        logger.info(
-            f"🧠 {symbol}: score={avg_score:.2f}, tf_align={tf_alignment}, rec={recommendation}"
-        )
+        # ================================================================
+        # 📌 Generar recomendación final
+        # ================================================================
+        recommendation = "⚠️ Señal no confirmada."
+        if major_trend.lower() == direction.lower() and match_ratio >= 66:
+            recommendation = "✅ Coincide con la dirección de la señal."
+        elif "Lateral" in major_trend:
+            recommendation = "⚠️ Mercado lateral — esperar confirmación."
+        elif match_ratio < 50:
+            recommendation = "❌ Tendencias contradictorias — evitar entrada."
 
-        return {
-            "match_ratio": round(avg_score, 2),
-            "recommendation": recommendation,
+        if any(v in ["Bajista", "Alcista"] for v in divergences.values()):
+            recommendation += " (⚠️ Divergencia detectada)"
+
+        # ================================================================
+        # 🧾 Resultado estructurado
+        # ================================================================
+        result = {
+            "symbol": symbol,
+            "trends": trends,
+            "major_trend": major_trend,
+            "match_ratio": round(match_ratio, 2),
+            "divergences": divergences,
+            "recommendation": recommendation
         }
 
+        # ================================================================
+        # 🪶 Logging del resultado
+        # ================================================================
+        summary_lines = [f"🔹 {tf}: {tr}" for tf, tr in trends.items()]
+        logger.info(
+            f"📊 Análisis {symbol} → {major_trend} ({match_ratio:.1f}%)\n"
+            + "\n".join(summary_lines)
+            + f"\n📈 Divergencias: {div_summary}\n📌 Recomendación: {recommendation}"
+        )
+
+        return result
+
     except Exception as e:
-        logger.error(f"❌ Error en analyze_trend() para {symbol}: {e}")
-        return {"match_ratio": 0, "recommendation": "ERROR"}
+        logger.error(f"❌ Error analizando tendencia de {symbol}: {e}")
+        return {"symbol": symbol, "recommendation": "Error", "match_ratio": 0.0}
+
+
+# ================================================================
+# 🧪 Prueba local
+# ================================================================
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    print("🚀 Test local de trend_analysis (final-validada)")
+    test = analyze_trend("BTCUSDT", direction="long")
+    print(test)

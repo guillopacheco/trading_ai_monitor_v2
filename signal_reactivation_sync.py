@@ -74,8 +74,11 @@ async def auto_reactivation_loop(interval: int = 900):
     logger.info("🔁 Iniciando monitoreo automático de reactivaciones...")
 
     while True:
+        reactivation_status["running"] = True
+        reactivation_status["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             signals = get_signals(limit=20)
+            reactivation_status["monitored_signals"] = len(signals)
             if not signals:
                 logger.info("📭 No hay señales en base de datos para revisar.")
                 await asyncio.sleep(interval)
@@ -107,3 +110,16 @@ if __name__ == "__main__":
         asyncio.run(auto_reactivation_loop())
     except KeyboardInterrupt:
         print("\n🛑 Reactivación detenida manualmente.")
+
+# ================================================================
+# 👁 Estado del módulo de reactivación
+# ================================================================
+reactivation_status = {
+    "running": False,
+    "last_run": None,
+    "monitored_signals": 0,
+}
+
+def get_reactivation_status():
+    """Devuelve el estado actual del módulo de reactivación."""
+    return reactivation_status

@@ -1,4 +1,4 @@
-# telegram_reader.py
+# telegram_reader.py (versión sincronizada 2025-11)
 import asyncio
 import logging
 import re
@@ -32,7 +32,6 @@ def parse_signal_text(text: str):
     """
     Devuelve dict con {pair, direction, entry, leverage} o None si no es señal válida.
     """
-    # Detectar y descartar profit updates
     if PROFIT_UPDATE_RE.search(text):
         return {"type": "profit_update"}
 
@@ -51,7 +50,7 @@ def parse_signal_text(text: str):
 
     return {
         "type": "signal",
-        "pair": f"{base}{quote}".upper(),  # NORMALIZADO A SIN '/'
+        "pair": f"{base}{quote}".upper(),
         "direction": direction,
         "entry": entry,
         "leverage": leverage,
@@ -63,10 +62,10 @@ def parse_signal_text(text: str):
 
 async def start_telegram_reader():
     """
-    Inicia el lector de señales (async). No recibe callback por compatibilidad con tu main.py actual.
-    Llama internamente a signal_manager.process_signal sin await (desde un hilo).
+    Inicia el lector de señales y lanza análisis automático.
+    Compatible con main.py y trend_system_final.
     """
-    from signal_manager import process_signal  # import diferido para evitar ciclos
+    from signal_manager import process_signal  # import diferido (evita bucles)
 
     chat_id = int(str(TELEGRAM_SIGNAL_CHANNEL_ID).replace(" ", ""))
 
@@ -93,22 +92,15 @@ async def start_telegram_reader():
                 return
 
             if parsed.get("type") == "profit_update":
-                # No relanzar análisis; solo notificar opcionalmente.
-                notify_profit_update(text)
+                await notify_profit_update(text)
                 return
 
-            # Señal válida → procesar en hilo sync
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, process_signal, {
-                "pair": parsed["pair"],
-                "direction": parsed["direction"],
-                "entry": parsed["entry"],
-                "leverage": parsed["leverage"],
-                "timestamp": str(event.message.date)
-            })
+            # 🧠 Procesa la señal completa (texto original)
+            logger.info(f"🧠 Lanzando análisis automático para {parsed['pair']} ({parsed['direction'].upper()} x{parsed['leverage']})")
+            asyncio.create_task(process_signal(text))
 
         except Exception as e:
             logger.error(f"❌ Error en handler de señales: {e}")
-            send_message(f"⚠️ Error leyendo una señal: {e}")
+            await send_message(f"⚠️ Error leyendo una señal: {e}")
 
     await client.run_until_disconnected()

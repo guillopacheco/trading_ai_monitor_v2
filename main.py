@@ -17,6 +17,8 @@ from telegram_reader import start_telegram_reader  # Debe internamente llamar a 
 from command_bot import start_command_bot
 from operation_tracker import monitor_open_positions
 
+from signal_reactivation_sync import auto_reactivation_loop
+
 LOG_FILE = "trading_ai_monitor.log"
 
 logging.basicConfig(
@@ -61,6 +63,13 @@ async def main():
             if not t.done():
                 t.cancel()
         logger.info("🧹 Tareas limpiadas. Finalizando sistema.")
+
+    try:
+        # Lanza el proceso de reactivación automática en segundo plano
+        asyncio.create_task(auto_reactivation_loop(900))  # 900 segundos = 15 minutos
+        logger.info("♻️ Reactivación automática de señales habilitada (intervalo: 15 min).")
+    except Exception as e:
+        logger.error(f"❌ No se pudo iniciar el módulo de reactivación automática: {e}")
 
 if __name__ == "__main__":
     try:
