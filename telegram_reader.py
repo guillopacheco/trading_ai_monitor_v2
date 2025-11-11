@@ -1,4 +1,4 @@
-# telegram_reader.py (versión sincronizada 2025-11)
+# telegram_reader.py (versión corregida y sincronizada)
 import asyncio
 import logging
 import re
@@ -28,10 +28,9 @@ PROFIT_UPDATE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+
 def parse_signal_text(text: str):
-    """
-    Devuelve dict con {pair, direction, entry, leverage} o None si no es señal válida.
-    """
+    """Devuelve dict con {pair, direction, entry, leverage} o None si no es señal válida."""
     if PROFIT_UPDATE_RE.search(text):
         return {"type": "profit_update"}
 
@@ -61,10 +60,7 @@ def parse_signal_text(text: str):
 # ---------------------------
 
 async def start_telegram_reader():
-    """
-    Inicia el lector de señales y lanza análisis automático.
-    Compatible con main.py y trend_system_final.
-    """
+    """Inicia el lector de señales y lanza análisis automático."""
     from signal_manager import process_signal  # import diferido (evita bucles)
 
     chat_id = int(str(TELEGRAM_SIGNAL_CHANNEL_ID).replace(" ", ""))
@@ -92,15 +88,17 @@ async def start_telegram_reader():
                 return
 
             if parsed.get("type") == "profit_update":
-                await notify_profit_update(text)
+                # ✅ Sin await porque notify_profit_update() es síncrono
+                asyncio.to_thread(notify_profit_update, text)
                 return
 
-            # 🧠 Procesa la señal completa (texto original)
+            # 🧠 Procesar señal válida en segundo plano
             logger.info(f"🧠 Lanzando análisis automático para {parsed['pair']} ({parsed['direction'].upper()} x{parsed['leverage']})")
             asyncio.create_task(process_signal(text))
 
         except Exception as e:
             logger.error(f"❌ Error en handler de señales: {e}")
-            await send_message(f"⚠️ Error leyendo una señal: {e}")
+            # ✅ sin await
+            asyncio.to_thread(send_message, f"⚠️ Error leyendo una señal: {e}")
 
     await client.run_until_disconnected()

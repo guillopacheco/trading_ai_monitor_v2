@@ -1,10 +1,4 @@
-"""
-signal_manager.py (sincronizado 2025)
--------------------------------------
-Gestión de señales Telegram → Análisis técnico → Recomendación.
-Integrado con indicators.py y bybit_client_v13_signals_fix.py.
-"""
-
+# signal_manager.py (versión corregida y sincronizada)
 import re
 import logging
 import asyncio
@@ -12,7 +6,6 @@ from indicators import get_technical_data
 from notifier import send_message
 
 logger = logging.getLogger("signal_manager")
-
 
 # ================================================================
 # 🧠 Limpieza y extracción de señales
@@ -43,7 +36,6 @@ def extract_signal_details(message: str):
         logger.error(f"❌ Error extrayendo datos de señal: {e}")
         return None
 
-
 # ================================================================
 # 📊 Procesamiento de señales
 # ================================================================
@@ -52,7 +44,7 @@ async def process_signal(signal_message: str):
     try:
         details = extract_signal_details(signal_message)
         if not details:
-            await send_message("⚠️ No se pudo interpretar la señal recibida.")
+            await asyncio.to_thread(send_message, "⚠️ No se pudo interpretar la señal recibida.")
             return
 
         pair, direction, leverage = details
@@ -60,7 +52,7 @@ async def process_signal(signal_message: str):
 
         data = get_technical_data(pair, intervals=["1m", "5m", "15m"])
         if not data:
-            await send_message(f"⚠️ No se pudieron obtener indicadores para {pair}")
+            await asyncio.to_thread(send_message, f"⚠️ No se pudieron obtener indicadores para {pair}")
             return
 
         summary = []
@@ -80,8 +72,8 @@ async def process_signal(signal_message: str):
             + "\n".join(summary)
             + f"\n📌 **Recomendación:** {recommendation}"
         )
-        await send_message(message)
+        await asyncio.to_thread(send_message, message)
 
     except Exception as e:
         logger.error(f"❌ Error procesando señal: {e}")
-        await send_message(f"⚠️ Error analizando la señal: {e}")
+        await asyncio.to_thread(send_message, f"⚠️ Error analizando la señal: {e}")
