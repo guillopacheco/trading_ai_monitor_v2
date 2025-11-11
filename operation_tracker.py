@@ -2,31 +2,32 @@
 operation_tracker.py — Monitor inteligente de posiciones abiertas
 ---------------------------------------------------------------
 - Lee posiciones desde bybit_client (real o simulado)
-- Calcula ROI y evalúa niveles de pérdida (-30, -50, -70, -90)
-- Evalúa volatilidad con ATR relativo (via indicators)
-- Llama analyze_trend() para sugerencias automáticas
-- Envía alertas progresivas via notifier
+- Calcula ROI y PnL en tiempo real
+- Evalúa niveles de pérdida (-30, -50, -70, -90)
+- Evalúa volatilidad (ATR relativo)
+- Analiza tendencia con analyze_trend()
+- Envía alertas automáticas vía notifier
 """
 
 import logging
 import asyncio
-from bybit_client import get_open_positions, get_ohlcv_data
+from bybit_client import get_open_positions, get_ohlcv_data, get_account_info
 from indicators import get_technical_data
 from trend_analysis import analyze_trend
 from notifier import notify_operation_alert, send_message
 
 logger = logging.getLogger("operation_tracker")
 
-LOSS_LEVELS = [-30, -50, -70, -90]  # niveles de pérdida progresivos
+LOSS_LEVELS = [-30, -50, -70, -90]  # Niveles de pérdida progresivos
 
 
 async def monitor_open_positions(poll_seconds: int = 60):
     """
-    Bucle asíncrono para supervisar posiciones abiertas activamente.
-    Evalúa ROI, volatilidad y tendencia; envía alertas automáticas.
+    Bucle asíncrono que supervisa posiciones abiertas activamente.
+    Evalúa ROI, PnL y volatilidad en tiempo real; genera alertas automáticas.
     """
     logger.info("🧭 Iniciando monitoreo de operaciones abiertas...")
-    last_alert_level: dict[str, int] = {}  # symbol -> último nivel avisado
+    last_alert_level: dict[str, int] = {}  # Guarda el último nivel avisado por símbolo
 
     while True:
         try:
@@ -36,27 +37,33 @@ async def monitor_open_positions(poll_seconds: int = 60):
                 await asyncio.sleep(poll_seconds)
                 continue
 
+            account = get_account_info()
+            equity = float(account.get("totalEquity", 0) or 0)
+
             for pos in positions:
                 symbol = pos["symbol"]
-                direction = pos["direction"].lower()
-                entry = float(pos["entry"] or 0)
-                lev = int(pos.get("leverage", 20) or 20)
+                side = pos.get("side", "Buy")
+                direction = "long" if side.lower() == "buy" else "short"
+                entry = float(pos.get("entryPrice") or 0)
+                size = float(pos.get("size") or 0)
+                lev = int(float(pos.get("leverage", 20)))
+                mark_price = float(pos.get("markPrice", entry))
 
-                # === Precio actual ===
-                df = get_ohlcv_data(symbol, "1", limit=100)
-                if df is None or df.empty:
-                    logger.warning(f"⚠️ Sin OHLCV reciente para {symbol}")
+                if size <= 0:
                     continue
 
-                current = float(df["close"].iloc[-1])
-                roi = 0.0
-                if entry > 0:
-                    raw = (current - entry) / entry
-                    if direction == "short":
-                        raw = -raw
-                    roi = raw * lev * 100.0
+                # === ROI & PnL ===
+                pnl = float(pos.get("unrealisedPnl", 0))
+                raw = (mark_price - entry) / entry
+                if direction == "short":
+                    raw = -raw
+                roi = raw * lev * 100.0
 
-                # === Volatilidad simple (ATR relativo) ===
+                logger.info(
+                    f"📊 {symbol}: {direction.upper()} | Entry={entry:.4f} | Mark={mark_price:.4f} | ROI={roi:.2f}% | PnL={pnl:.2f} USDT"
+                )
+
+                # === Volatilidad relativa (ATR) ===
                 tech = get_technical_data(symbol, intervals=["1m"])
                 atr_rel = 0.0
                 if tech and "1m" in tech:
@@ -67,43 +74,44 @@ async def monitor_open_positions(poll_seconds: int = 60):
                     "HIGH"
                 )
 
-                # === Detección de pérdida significativa ===
+                # === Evaluar pérdidas críticas ===
                 loss_level_hit = None
                 for lvl in LOSS_LEVELS:
                     if roi <= lvl:
                         loss_level_hit = lvl
-                if loss_level_hit is not None:
-                    prev = last_alert_level.get(symbol)
-                    if prev is None or loss_level_hit < prev:
-                        suggestion = "Evaluar tendencia y considerar cerrar o revertir."
 
-                        # === Enriquecimiento con análisis multi-TF ===
-                        try:
-                            tech_multi = get_technical_data(symbol, intervals=["1m", "5m", "15m"])
-                            if tech_multi:
-                                tr = analyze_trend(symbol, direction, entry, tech_multi, lev)
-                                rec = tr.get("recommendation", "EVALUAR")
-                                match = tr.get("match_ratio", 0)
-                                suggestion = f"{rec} (match {match:.2f})"
-                        except Exception as err:
-                            logger.warning(f"⚠️ analyze_trend falló para {symbol}: {err}")
+                # Detectar pérdidas >= -30% (alerta temprana)
+                if roi <= -30 and (symbol not in last_alert_level or roi < last_alert_level[symbol]):
+                    suggestion = "⚠️ Pérdida significativa detectada. Evaluar reversión."
 
-                        # === Notificar alerta ===
-                        notify_operation_alert(
-                            symbol=symbol,
-                            direction=direction,
-                            roi=roi,
-                            loss_level=loss_level_hit,
-                            volatility=volatility,
-                            suggestion=suggestion,
-                        )
+                    # === Análisis de tendencia multi-temporalidad ===
+                    try:
+                        tech_multi = get_technical_data(symbol, intervals=["1m", "5m", "15m"])
+                        if tech_multi:
+                            trend_result = analyze_trend(symbol, direction, entry, tech_multi, lev)
+                            rec = trend_result.get("recommendation", "EVALUAR")
+                            match = trend_result.get("match_ratio", 0)
+                            suggestion = f"{rec} (Match {match:.2f})"
+                    except Exception as err:
+                        logger.warning(f"⚠️ analyze_trend falló para {symbol}: {err}")
 
-                        last_alert_level[symbol] = loss_level_hit
+                    # === Enviar alerta ===
+                    notify_operation_alert(
+                        symbol=symbol,
+                        direction=direction,
+                        roi=roi,
+                        pnl=pnl,
+                        loss_level=loss_level_hit or -30,
+                        volatility=volatility,
+                        suggestion=suggestion,
+                    )
+
+                    last_alert_level[symbol] = roi
 
             await asyncio.sleep(poll_seconds)
 
         except asyncio.CancelledError:
-            logger.warning("🛑 Monitor de posiciones cancelado.")
+            logger.warning("🛑 Monitor de posiciones cancelado manualmente.")
             break
         except Exception as e:
             logger.error(f"❌ Error en monitor_open_positions(): {e}")

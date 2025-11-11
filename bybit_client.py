@@ -1,7 +1,12 @@
-# ================================================================
-# bybit_client_v15_verified.py
-# Cliente verificado para Bybit API v5 — Producción
-# ================================================================
+"""
+bybit_client.py — versión final verificada (producción 2025)
+------------------------------------------------------------
+Cliente unificado Bybit API v5 (UTA / Real / Testnet)
+- Firma HMAC correcta (parámetros ordenados alfabéticamente)
+- Compatible con análisis técnico y monitoreo de posiciones
+- Integrado con operación y logging del sistema
+------------------------------------------------------------
+"""
 
 import os
 import time
@@ -9,202 +14,197 @@ import hmac
 import hashlib
 import requests
 import logging
-from dotenv import load_dotenv
+import pandas as pd
 from urllib.parse import urlencode
-from typing import Dict, List, Optional
+from dotenv import load_dotenv
+from config import (
+    BYBIT_API_KEY,
+    BYBIT_API_SECRET,
+    SIMULATION_MODE,
+    BYBIT_TESTNET,
+)
 
 # ================================================================
-# 🔧 Configuración inicial
+# 🧭 Configuración global
 # ================================================================
 load_dotenv()
 logger = logging.getLogger("bybit_client")
 
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
-BYBIT_ENDPOINT = os.getenv("BYBIT_ENDPOINT", "https://api.bybit.com")
-SIMULATION_MODE = os.getenv("SIMULATION_MODE", "False").lower() == "true"
+BYBIT_ENDPOINT = (
+    "https://api-testnet.bybit.com"
+    if (SIMULATION_MODE or str(BYBIT_TESTNET).lower() == "true")
+    else "https://api.bybit.com"
+)
 
 
 # ================================================================
-# 🔐 Cliente principal
+# 🔐 Firma HMAC-SHA256 (orden alfabético)
 # ================================================================
-class BybitClientVerified:
-    """Cliente Bybit con firma manual validada y endpoints v5"""
+def _generate_signature(params: dict) -> str:
+    sorted_params = sorted(params.items())
+    param_str = "&".join(f"{k}={v}" for k, v in sorted_params)
+    return hmac.new(
+        bytes(BYBIT_API_SECRET, "utf-8"),
+        param_str.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
-    def __init__(self):
-        if not BYBIT_API_KEY or not BYBIT_API_SECRET:
-            raise ValueError("❌ Faltan credenciales BYBIT_API_KEY o BYBIT_API_SECRET en .env")
 
-        self.api_key = BYBIT_API_KEY
-        self.api_secret = BYBIT_API_SECRET
-        self.base_url = f"{BYBIT_ENDPOINT}/v5"
+# ================================================================
+# 🌐 Request genérico firmado
+# ================================================================
+def _make_request(endpoint: str, params: dict) -> dict:
+    timestamp = str(int(time.time() * 1000))
+    recv_window = "5000"
 
-        mode = "🧪 SIMULACIÓN" if SIMULATION_MODE else "💹 REAL"
-        logger.info(f"✅ BybitClient iniciado en modo {mode}")
+    base_params = {
+        "api_key": BYBIT_API_KEY,
+        "timestamp": timestamp,
+        "recvWindow": recv_window,
+    }
 
-    # ============================================================
-    # 🧾 Firma (signature)
-    # ============================================================
-    def _generate_signature(self, params: Dict) -> str:
-        """Genera la firma ordenando alfabéticamente los parámetros"""
-        sorted_params = sorted(params.items())
-        param_str = "&".join([f"{k}={v}" for k, v in sorted_params])
-        signature = hmac.new(
-            bytes(self.api_secret, "utf-8"),
-            param_str.encode("utf-8"),
-            hashlib.sha256
-        ).hexdigest()
-        return signature
+    all_params = {**params, **base_params}
+    all_params["sign"] = _generate_signature(all_params)
 
-    # ============================================================
-    # 🌐 Request genérico
-    # ============================================================
-    def _make_request(self, endpoint: str, params: Dict) -> Dict:
-        """Ejecuta una solicitud GET firmada a Bybit"""
-        timestamp = str(int(time.time() * 1000))
-        recv_window = "5000"
+    url = f"{BYBIT_ENDPOINT}/v5/{endpoint}?{urlencode(all_params)}"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        logger.info(f"📡 {endpoint}: retCode={data.get('retCode')} {data.get('retMsg')}")
+        return data
+    except Exception as e:
+        logger.error(f"❌ Error en request {endpoint}: {e}")
+        return {"retCode": -1, "retMsg": str(e)}
 
-        base_params = {
-            "api_key": self.api_key,
-            "timestamp": timestamp,
-            "recvWindow": recv_window,
+
+# ================================================================
+# 📊 Obtener datos OHLCV
+# ================================================================
+def get_ohlcv_data(symbol: str, interval: str = "5", limit: int = 200):
+    """Obtiene velas OHLCV (mercado linear USDT)."""
+    try:
+        url = f"{BYBIT_ENDPOINT}/v5/market/kline"
+        params = {
+            "category": "linear",
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "limit": limit,
         }
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
+        if data.get("retCode") != 0:
+            logger.warning(f"⚠️ Error Bybit OHLCV: {data}")
+            return None
 
-        all_params = {**params, **base_params}
-        all_params["sign"] = self._generate_signature(all_params)
+        rows = data["result"].get("list", [])
+        if not rows:
+            logger.warning(f"⚠️ Sin datos OHLCV para {symbol}")
+            return None
 
-        url = f"{self.base_url}/{endpoint}?{urlencode(all_params)}"
+        df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
+        df = df.astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="ms")
+        df = df.sort_values("timestamp")
+        logger.info(f"📈 {symbol}: {len(df)} velas ({interval}m) procesadas correctamente.")
+        return df
 
-        try:
-            response = requests.get(url, timeout=10)
-            data = response.json()
+    except Exception as e:
+        logger.error(f"❌ Error en get_ohlcv_data({symbol}): {e}")
+        return None
 
-            code = data.get("retCode")
-            msg = data.get("retMsg")
-            logger.info(f"🌐 Request {endpoint} → {code} ({msg})")
-            return data
 
-        except Exception as e:
-            logger.error(f"❌ Error en request {endpoint}: {e}")
-            return {"retCode": -1, "retMsg": str(e)}
+# ================================================================
+# 💼 Obtener información de cuenta
+# ================================================================
+def get_account_info():
+    """Devuelve balance general de cuenta UTA."""
+    if SIMULATION_MODE:
+        logger.info("💬 [SIM] Modo simulación activo (get_account_info).")
+        return {"totalEquity": "10000", "totalWalletBalance": "9500", "availableBalance": "8500"}
 
-    # ============================================================
-    # 💰 Información de cuenta
-    # ============================================================
-    def get_account_info(self) -> Dict:
-        """Obtiene información de la cuenta unificada"""
-        if SIMULATION_MODE:
-            return self._get_simulated_account()
+    data = _make_request("account/wallet-balance", {"accountType": "UNIFIED"})
+    if data.get("retCode") == 0:
+        return data["result"]["list"][0]
+    return {"error": data.get("retMsg", "Error desconocido")}
 
-        data = self._make_request("account/wallet-balance", {"accountType": "UNIFIED"})
-        if data.get("retCode") == 0:
-            return data["result"]["list"][0]
-        else:
-            return {"error": data.get("retMsg", "Error desconocido")}
 
-    # ============================================================
-    # 📈 Posiciones abiertas
-    # ============================================================
-    def get_open_positions(self) -> List[Dict]:
-        """Devuelve las posiciones abiertas en contratos lineales USDT"""
-        if SIMULATION_MODE:
-            return self._get_simulated_positions()
-
-        data = self._make_request("position/list", {"category": "linear", "settleCoin": "USDT"})
-        if data.get("retCode") == 0:
-            return [
-                pos for pos in data["result"]["list"]
-                if float(pos.get("size", 0)) > 0
-            ]
-        else:
-            logger.warning(f"⚠️ Error al obtener posiciones: {data.get('retMsg')}")
-            return []
-
-    # ============================================================
-    # 📋 Órdenes abiertas
-    # ============================================================
-    def get_open_orders(self) -> List[Dict]:
-        """Devuelve las órdenes activas"""
-        if SIMULATION_MODE:
-            return []
-
-        data = self._make_request("order/realtime", {"category": "linear", "settleCoin": "USDT"})
-        if data.get("retCode") == 0:
-            return data["result"]["list"]
-        else:
-            return []
-
-    # ============================================================
-    # 🧮 Formateadores
-    # ============================================================
-    def format_position_message(self, position: Dict) -> str:
-        side_emoji = "🟢" if position["side"].lower() == "buy" else "🔴"
-        pnl = float(position.get("unrealisedPnl", 0))
-        pnl_emoji = "📈" if pnl >= 0 else "📉"
-
-        msg = (
-            f"{side_emoji} **{position['symbol']}**\n"
-            f"┌ Dirección: {position['side']}\n"
-            f"├ Tamaño: {position['size']}\n"
-            f"├ Entrada: ${position['entryPrice']}\n"
-            f"├ Actual: ${position.get('markPrice', 'N/A')}\n"
-            f"├ Leverage: {position['leverage']}x\n"
-            f"├ PnL: {pnl_emoji} ${pnl:.2f}\n"
-            f"└ Liq: ${position.get('liqPrice', 'N/A')}\n"
-        )
-        return msg
-
-    def format_account_summary(self, account_info: Dict, positions: List[Dict]) -> str:
-        total_pnl = sum(float(p.get("unrealisedPnl", 0)) for p in positions)
-        balance = account_info.get("totalWalletBalance", "0")
-        equity = account_info.get("totalEquity", "0")
-        available = account_info.get("availableBalance", "0")
-
-        msg = (
-            f"💼 **RESUMEN DE CUENTA**\n"
-            f"┌ Balance: ${balance}\n"
-            f"├ Equity: ${equity}\n"
-            f"├ Disponible: ${available}\n"
-            f"├ Posiciones: {len(positions)}\n"
-            f"└ P&L Total: ${total_pnl:.2f}\n"
-        )
-        return msg
-
-    # ============================================================
-    # 🧪 Datos simulados
-    # ============================================================
-    def _get_simulated_positions(self):
+# ================================================================
+# 📈 Obtener posiciones abiertas
+# ================================================================
+def get_open_positions():
+    """Devuelve posiciones abiertas (reales o simuladas)."""
+    if SIMULATION_MODE:
+        logger.info("💬 [SIM] Retornando posiciones simuladas.")
         return [
-            {
-                "symbol": "BTCUSDT",
-                "side": "Buy",
-                "size": "0.01",
-                "entryPrice": "45000.0",
-                "leverage": "20",
-                "unrealisedPnl": "150.50",
-                "liqPrice": "42000.0",
-                "markPrice": "45150.5"
-            }
+            {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1", "entryPrice": "68000", "leverage": "20"},
+            {"symbol": "ETHUSDT", "side": "Sell", "size": "1", "entryPrice": "3600", "leverage": "20"},
         ]
 
-    def _get_simulated_account(self):
-        return {
-            "totalEquity": "10000.0",
-            "totalWalletBalance": "9500.0",
-            "availableBalance": "8500.0"
-        }
+    data = _make_request("position/list", {"category": "linear", "settleCoin": "USDT"})
+    if data.get("retCode") != 0:
+        logger.error(f"❌ Error en get_open_positions(): {data.get('retMsg')}")
+        return []
+
+    positions = [
+        p for p in data["result"].get("list", []) if float(p.get("size", 0)) > 0
+    ]
+    logger.info(f"📊 {len(positions)} posiciones abiertas detectadas.")
+    return positions
 
 
 # ================================================================
-# 🧩 Ejemplo de uso (solo para prueba directa)
+# 🧾 Obtener órdenes abiertas
+# ================================================================
+def get_open_orders():
+    """Devuelve órdenes pendientes (solo lineales)."""
+    data = _make_request("order/realtime", {"category": "linear", "settleCoin": "USDT", "openOnly": "1"})
+    if data.get("retCode") != 0:
+        logger.warning(f"⚠️ Error al obtener órdenes: {data.get('retMsg')}")
+        return []
+    return data["result"].get("list", [])
+
+
+# ================================================================
+# 🧮 Formatear reportes para Telegram
+# ================================================================
+def format_account_summary(account_info: dict, positions: list) -> str:
+    total_pnl = sum(float(p.get("unrealisedPnl", 0)) for p in positions)
+    equity = account_info.get("totalEquity", "0")
+    balance = account_info.get("totalWalletBalance", "0")
+    available = account_info.get("availableBalance", "0")
+    return (
+        f"💼 **RESUMEN DE CUENTA**\n"
+        f"┌ Balance Total: ${balance}\n"
+        f"├ Equity: ${equity}\n"
+        f"├ Disponible: ${available}\n"
+        f"├ Posiciones Abiertas: {len(positions)}\n"
+        f"└ P&L Total: ${total_pnl:.2f}\n"
+    )
+
+
+def format_position_message(position: dict) -> str:
+    side_emoji = "🟢" if position["side"].lower() == "buy" else "🔴"
+    pnl = float(position.get("unrealisedPnl", 0))
+    pnl_emoji = "📈" if pnl >= 0 else "📉"
+    return (
+        f"{side_emoji} **{position['symbol']}**\n"
+        f"┌ Dirección: {position['side']}\n"
+        f"├ Tamaño: {position['size']}\n"
+        f"├ Precio Entrada: ${position['entryPrice']}\n"
+        f"├ Precio Actual: ${position.get('markPrice', 'N/A')}\n"
+        f"├ Apalancamiento: {position['leverage']}x\n"
+        f"├ P&L: {pnl_emoji} ${pnl:.2f}\n"
+        f"└ Precio Liq: ${position.get('liqPrice', 'N/A')}\n"
+    )
+
+
+# ================================================================
+# 🔍 Prueba local
 # ================================================================
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    client = BybitClientVerified()
-
-    account = client.get_account_info()
-    positions = client.get_open_positions()
-
-    print(client.format_account_summary(account, positions))
-    for pos in positions:
-        print(client.format_position_message(pos))
+    print("🚀 Test BybitClient (v15 verified final)")
+    acc = get_account_info()
+    pos = get_open_positions()
+    print(format_account_summary(acc, pos))
+    for p in pos:
+        print(format_position_message(p))
