@@ -10,7 +10,9 @@ from notifier import send_message
 logger = logging.getLogger("reversal_monitor")
 
 
-async def monitor_reversals(interval_seconds=900):
+async def monitor_reversals(poll_seconds: int = 600, interval_seconds: int = None):
+    if interval_seconds is not None:
+        poll_seconds = interval_seconds
     """Monitorea señales recientes y detecta posibles reversiones de tendencia."""
     logger.info("🚨 Iniciando monitor de reversiones de posiciones...")
 

@@ -18,6 +18,7 @@ from trend_system_final import analyze_and_format
 from indicators import get_technical_data
 from notifier import send_message
 from database import get_signals, update_operation_status
+from datetime import datetime
 
 logger = logging.getLogger("signal_reactivation_sync")
 

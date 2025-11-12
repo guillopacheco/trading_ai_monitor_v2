@@ -5,8 +5,7 @@ import asyncio
 
 logger = logging.getLogger("database")
 
-DB_PATH = "data/trading_signals.db"
-
+DB_PATH = "trading_ai_monitor.db"
 
 # ================================================================
 # 🧱 Inicialización de la base de datos

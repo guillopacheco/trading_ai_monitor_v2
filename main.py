@@ -17,6 +17,8 @@ from telegram_reader import start_telegram_reader  # Debe internamente llamar a 
 from command_bot import start_command_bot
 from operation_tracker import monitor_open_positions
 from signal_reactivation_sync import auto_reactivation_loop
+from position_reversal_monitor import monitor_reversals  # 👈 importar el módulo
+
 
 LOG_FILE = "trading_ai_monitor.log"
 
@@ -52,9 +54,9 @@ async def main():
     # 🧠 Monitor de posibles reversiones técnicas (cada 5 min)
     tasks.append(asyncio.create_task(monitor_reversals(interval_seconds=300)))
 
-     # ♻️ Reactivación automática de señales
+    # ♻️ Reactivación automática de señales
     try:
-        asyncio.create_task(auto_reactivation_loop(900))
+        asyncio.create_task(auto_reactivation_loop(900))  # cada 15 min
         logger.info("♻️ Reactivación automática de señales habilitada (intervalo: 15 min).")
     except Exception as e:
         logger.error(f"❌ No se pudo iniciar el módulo de reactivación automática: {e}")
