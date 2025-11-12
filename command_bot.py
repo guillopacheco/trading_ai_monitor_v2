@@ -1,8 +1,19 @@
+import logging
+import asyncio
+from datetime import datetime
+
+# 🔹 Importar estas clases ANTES de usarlas
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+from database import get_signals, clear_old_records
+from notifier import send_message
 from operation_tracker import monitor_open_positions
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
 from trend_system_final import analyze_and_format
 
 logger = logging.getLogger("command_bot")
+
 
 # Estado global del monitoreo
 active_monitoring = {"running": False, "task": None}
