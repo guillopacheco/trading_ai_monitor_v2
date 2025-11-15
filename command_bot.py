@@ -10,7 +10,7 @@ from database import get_signals, clear_old_records
 from notifier import send_message
 from operation_tracker import monitor_open_positions
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
-from trend_system_final import analyze_and_format
+from trend_system import analyze_and_format
 from position_reversal_monitor import monitor_reversals
 
 logger = logging.getLogger("command_bot")

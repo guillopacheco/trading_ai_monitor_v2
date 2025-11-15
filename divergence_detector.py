@@ -17,11 +17,11 @@ logger = logging.getLogger("divergence_detector")
 # ================================================================
 def detect_divergences(symbol: str, tech_data: dict):
     """
-    Versión nueva:
-    - Usa los campos 'smart_rsi_div', 'smart_macd_div', 'smart_confidence'
-      generados en indicators.get_technical_data().
-    - Mantiene el formato de salida: {'RSI': str, 'MACD': str, 'Volumen': str}
-    para compatibilidad con trend_analysis.py.
+    Versión nueva corregida:
+    - Toma divergencias reales desde indicators.py (smart divergences).
+    - Si no hay smart, cae en divergencias simples (legacy).
+    - Devuelve formato clásico: {'RSI': str, 'MACD': str, 'Volumen': str}
+    para compatibilidad con trend_analysis.
     """
     try:
         results = {"RSI": "Ninguna", "MACD": "Ninguna", "Volumen": "Ninguna"}
@@ -29,41 +29,54 @@ def detect_divergences(symbol: str, tech_data: dict):
         if not tech_data:
             return results
 
-        best_rsi = None
-        best_macd = None
-        best_conf = 0.0
-        high_vol = False
+        best_conf = 0
+
+        # Selección final
+        best_rsi_text = None
+        best_macd_text = None
 
         for tf, data in tech_data.items():
-            rsi_type = data.get("smart_rsi_div") or data.get("rsi_div")
-            macd_type = data.get("smart_macd_div") or data.get("macd_div")
+
+            # --- SMART DIVERGENCIAS (preferidas) ---
+            smart_rsi = data.get("smart_rsi_div", "none")
+            smart_macd = data.get("smart_macd_div", "none")
             conf = float(data.get("smart_confidence", 0.0))
-            atr_rel = float(data.get("atr_rel", 0.0))
-            bb_width = float(data.get("bb_width", 0.0))
 
-            # Elegimos la divergencia con mayor confianza
-            if rsi_type and rsi_type != "none" and conf >= best_conf:
-                best_conf = conf
-                best_rsi = f"{'Alcista' if rsi_type == 'bullish' else 'Bajista'} ({tf})"
+            # --- LEGACY BACKUP ---
+            legacy_rsi = data.get("rsi_div")
+            legacy_macd = data.get("macd_div")
 
-            if macd_type and macd_type != "none" and conf >= best_conf:
-                best_conf = conf
-                best_macd = f"{'Alcista' if macd_type == 'bullish' else 'Bajista'} ({tf})"
+            # === RSI ===
+            if smart_rsi != "none":
+                if conf >= best_conf:
+                    best_conf = conf
+                    best_rsi_text = f"{'Alcista' if smart_rsi=='bullish' else 'Bajista'} ({tf})"
+            elif legacy_rsi and legacy_rsi not in ["None", None, "Ninguna"]:
+                best_rsi_text = f"{legacy_rsi} ({tf})"
 
-            # Volatilidad / volumen altos como “divergencia de volatilidad”
-            if atr_rel > 0.02 or bb_width > 0.06:
-                high_vol = True
+            # === MACD ===
+            if smart_macd != "none":
+                if conf >= best_conf:
+                    best_conf = conf
+                    best_macd_text = f"{'Alcista' if smart_macd=='bullish' else 'Bajista'} ({tf})"
+            elif legacy_macd and legacy_macd not in ["None", None, "Ninguna"]:
+                best_macd_text = f"{legacy_macd} ({tf})"
 
-        if best_rsi:
-            results["RSI"] = best_rsi
-        if best_macd:
-            results["MACD"] = best_macd
-        if high_vol:
-            results["Volumen"] = "Alta volatilidad"
+            # === Volumen / volatilidad ===
+            atr_rel = float(data.get("atr_rel", 0))
+            if atr_rel > 0.02:
+                results["Volumen"] = f"Alta volatilidad ({tf})"
 
-        logger.info(f"📊 {symbol}: divergencias smart {results}")
+        # Aplicar resultados
+        if best_rsi_text:
+            results["RSI"] = best_rsi_text
+
+        if best_macd_text:
+            results["MACD"] = best_macd_text
+
         return results
 
     except Exception as e:
         logger.error(f"❌ Error detectando divergencias en {symbol}: {e}")
         return {"RSI": "Error", "MACD": "Error", "Volumen": "Error"}
+
