@@ -11,6 +11,7 @@ from notifier import send_message
 from operation_tracker import monitor_open_positions
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
 from trend_system_final import analyze_and_format
+from position_reversal_monitor import monitor_reversals
 
 logger = logging.getLogger("command_bot")
 
@@ -86,6 +87,17 @@ async def reanudar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     active_monitoring["task"] = asyncio.create_task(run_monitor())
     await update.message.reply_text("🟢 Monitoreo iniciado correctamente.", parse_mode="Markdown")
+
+async def reversion(update, context):
+    """Ejecuta una verificación inmediata de reversiones técnicas."""
+    user = update.effective_user
+    await update.message.reply_text("🔍 Analizando posibles reversiones técnicas en operaciones abiertas...")
+    try:
+        # Ejecuta solo una pasada del monitor
+        await monitor_reversals(run_once=True)
+        await update.message.reply_text("✅ Análisis de reversión completado. Si hay señales de reversión, ya fueron notificadas.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al ejecutar análisis de reversión: {e}")
 
 # ================================================================
 # 🛑 /detener
@@ -262,6 +274,7 @@ async def start_command_bot():
         app.add_handler(CommandHandler("help", help_command))
         app.add_handler(CommandHandler("analizar", cmd_analizar))
         app.add_handler(CommandHandler("reactivacion", reactivacion))
+        app.add_handler(CommandHandler("reversion", reversion))
 
         await app.initialize()
         await app.start()

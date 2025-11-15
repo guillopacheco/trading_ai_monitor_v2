@@ -1,6 +1,6 @@
 """
 operation_tracker.py — Monitor inteligente de posiciones abiertas
----------------------------------------------------------------
+-----------------------------------------------------------------
 - Lee posiciones desde bybit_client (real o simulado)
 - Calcula ROI y PnL en tiempo real
 - Evalúa niveles de pérdida (-30, -50, -70, -90)
@@ -14,11 +14,11 @@ import asyncio
 from bybit_client import get_open_positions, get_ohlcv_data, get_account_info
 from indicators import get_technical_data
 from trend_analysis import analyze_trend
-from notifier import notify_operation_alert, send_message
+from notifier import notify_operation_alert
 
 logger = logging.getLogger("operation_tracker")
 
-LOSS_LEVELS = [-30, -50, -70, -90]  # Niveles de pérdida progresivos
+LOSS_LEVELS = [-30, -50, -70, -90]  # niveles de pérdida progresivos
 
 
 async def monitor_open_positions(poll_seconds: int = 60):
@@ -27,7 +27,7 @@ async def monitor_open_positions(poll_seconds: int = 60):
     Evalúa ROI, PnL y volatilidad en tiempo real; genera alertas automáticas.
     """
     logger.info("🧭 Iniciando monitoreo de operaciones abiertas...")
-    last_alert_level: dict[str, int] = {}  # Guarda el último nivel avisado por símbolo
+    last_alert_level: dict[str, float] = {}  # símbolo -> último ROI avisado
 
     while True:
         try:
@@ -41,50 +41,62 @@ async def monitor_open_positions(poll_seconds: int = 60):
             equity = float(account.get("totalEquity", 0) or 0)
 
             for pos in positions:
-                symbol = pos["symbol"]
+                symbol = pos.get("symbol")
                 side = pos.get("side", "Buy")
                 direction = "long" if side.lower() == "buy" else "short"
                 entry = float(pos.get("entryPrice") or 0)
                 size = float(pos.get("size") or 0)
                 lev = int(float(pos.get("leverage", 20)))
-                mark_price = float(pos.get("markPrice", entry))
+                mark_price = float(pos.get("markPrice") or entry)
+                pnl = float(pos.get("unrealisedPnl", 0) or 0)
 
                 if size <= 0:
                     continue
+                if entry <= 0:
+                    logger.warning(f"⚠️ Precio de entrada inválido para {symbol}: {entry}")
+                    continue
 
-                # === ROI & PnL ===
-                pnl = float(pos.get("unrealisedPnl", 0))
-                raw = (mark_price - entry) / entry
-                if direction == "short":
-                    raw = -raw
-                roi = raw * lev * 100.0
+                # === ROI y PnL ===
+                try:
+                    raw = (mark_price - entry) / entry
+                    if direction == "short":
+                        raw = -raw
+                    roi = raw * lev * 100.0
+                except ZeroDivisionError:
+                    logger.error(f"❌ Error: división por cero en {symbol} (entry={entry})")
+                    continue
 
+                # 💰 Mostrar PnL y ROI en tiempo real
                 logger.info(
-                    f"📊 {symbol}: {direction.upper()} | Entry={entry:.4f} | Mark={mark_price:.4f} | ROI={roi:.2f}% | PnL={pnl:.2f} USDT"
+                    f"📊 {symbol}: {direction.upper()} | Entry={entry:.4f} | Mark={mark_price:.4f} | "
+                    f"ROI={roi:.2f}% | PnL={pnl:.2f} USDT | Size={size}"
                 )
 
                 # === Volatilidad relativa (ATR) ===
-                tech = get_technical_data(symbol, intervals=["1m"])
-                atr_rel = 0.0
-                if tech and "1m" in tech:
-                    atr_rel = float(tech["1m"].get("atr_rel", 0) or 0)
+                try:
+                    tech = get_technical_data(symbol, intervals=["1m"])
+                    atr_rel = float(tech["1m"].get("atr_rel", 0)) if tech and "1m" in tech else 0.0
+                except Exception as e:
+                    atr_rel = 0.0
+                    logger.warning(f"⚠️ No se pudo calcular volatilidad para {symbol}: {e}")
+
                 volatility = (
                     "LOW" if atr_rel < 0.01 else
                     "MEDIUM" if atr_rel < 0.02 else
                     "HIGH"
                 )
 
-                # === Evaluar pérdidas críticas ===
+                # === Detectar niveles de pérdida ===
                 loss_level_hit = None
                 for lvl in LOSS_LEVELS:
                     if roi <= lvl:
                         loss_level_hit = lvl
 
-                # Detectar pérdidas >= -30% (alerta temprana)
+                # Alerta temprana de pérdida o cambio de tendencia
                 if roi <= -30 and (symbol not in last_alert_level or roi < last_alert_level[symbol]):
                     suggestion = "⚠️ Pérdida significativa detectada. Evaluar reversión."
 
-                    # === Análisis de tendencia multi-temporalidad ===
+                    # === Análisis técnico multi-TF ===
                     try:
                         tech_multi = get_technical_data(symbol, intervals=["1m", "5m", "15m"])
                         if tech_multi:
@@ -95,16 +107,20 @@ async def monitor_open_positions(poll_seconds: int = 60):
                     except Exception as err:
                         logger.warning(f"⚠️ analyze_trend falló para {symbol}: {err}")
 
-                    # === Enviar alerta ===
-                    notify_operation_alert(
-                        symbol=symbol,
-                        direction=direction,
-                        roi=roi,
-                        pnl=pnl,
-                        loss_level=loss_level_hit or -30,
-                        volatility=volatility,
-                        suggestion=suggestion,
-                    )
+                    # === Enviar alerta de operación ===
+                    try:
+                        notify_operation_alert(
+                            symbol=symbol,
+                            direction=direction,
+                            roi=roi,
+                            pnl=pnl,
+                            loss_level=loss_level_hit or -30,
+                            volatility=volatility,
+                            suggestion=suggestion,
+                        )
+                        logger.info(f"🔔 Alerta enviada para {symbol} (ROI={roi:.2f}%)")
+                    except Exception as e:
+                        logger.error(f"❌ No se pudo enviar alerta para {symbol}: {e}")
 
                     last_alert_level[symbol] = roi
 

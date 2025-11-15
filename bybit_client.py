@@ -36,7 +36,6 @@ BYBIT_ENDPOINT = (
     else "https://api.bybit.com"
 )
 
-
 # ================================================================
 # 🔐 Firma HMAC-SHA256 (orden alfabético)
 # ================================================================
@@ -48,7 +47,6 @@ def _generate_signature(params: dict) -> str:
         param_str.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
-
 
 # ================================================================
 # 🌐 Request genérico firmado
@@ -75,7 +73,6 @@ def _make_request(endpoint: str, params: dict) -> dict:
     except Exception as e:
         logger.error(f"❌ Error en request {endpoint}: {e}")
         return {"retCode": -1, "retMsg": str(e)}
-
 
 # ================================================================
 # 📊 Obtener datos OHLCV
@@ -112,7 +109,6 @@ def get_ohlcv_data(symbol: str, interval: str = "5", limit: int = 200):
         logger.error(f"❌ Error en get_ohlcv_data({symbol}): {e}")
         return None
 
-
 # ================================================================
 # 💼 Obtener información de cuenta
 # ================================================================
@@ -127,7 +123,6 @@ def get_account_info():
         return data["result"]["list"][0]
     return {"error": data.get("retMsg", "Error desconocido")}
 
-
 # ================================================================
 # 📈 Obtener posiciones abiertas
 # ================================================================
@@ -136,8 +131,8 @@ def get_open_positions():
     if SIMULATION_MODE:
         logger.info("💬 [SIM] Retornando posiciones simuladas.")
         return [
-            {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1", "entryPrice": "68000", "leverage": "20"},
-            {"symbol": "ETHUSDT", "side": "Sell", "size": "1", "entryPrice": "3600", "leverage": "20"},
+            {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1", "entryPrice": "68000", "leverage": "20", "avgPrice": "68000"},
+            {"symbol": "ETHUSDT", "side": "Sell", "size": "1", "entryPrice": "3600", "leverage": "20", "avgPrice": "3600"},
         ]
 
     data = _make_request("position/list", {"category": "linear", "settleCoin": "USDT"})
@@ -145,12 +140,24 @@ def get_open_positions():
         logger.error(f"❌ Error en get_open_positions(): {data.get('retMsg')}")
         return []
 
-    positions = [
-        p for p in data["result"].get("list", []) if float(p.get("size", 0)) > 0
-    ]
+    positions = []
+    for p in data["result"].get("list", []):
+        if float(p.get("size", 0)) > 0:
+            entry_price = p.get("entryPrice", "0")
+            avg_price = p.get("avgPrice", "0")
+
+            # ✅ Usa avgPrice si entryPrice es 0 o inválido
+            if not entry_price or entry_price == "0" or float(entry_price) == 0:
+                if avg_price and avg_price != "0" and float(avg_price) > 0:
+                    p["entryPrice"] = avg_price
+                    logger.info(f"ℹ️ Usando avgPrice como entrada alternativa para {p['symbol']} ({avg_price})")
+                else:
+                    logger.warning(f"⚠️ Precio de entrada inválido para {p['symbol']}: entryPrice={entry_price}, avgPrice={avg_price}")
+
+            positions.append(p)
+
     logger.info(f"📊 {len(positions)} posiciones abiertas detectadas.")
     return positions
-
 
 # ================================================================
 # 🧾 Obtener órdenes abiertas
@@ -162,7 +169,6 @@ def get_open_orders():
         logger.warning(f"⚠️ Error al obtener órdenes: {data.get('retMsg')}")
         return []
     return data["result"].get("list", [])
-
 
 # ================================================================
 # 🧮 Formatear reportes para Telegram
@@ -181,7 +187,6 @@ def format_account_summary(account_info: dict, positions: list) -> str:
         f"└ P&L Total: ${total_pnl:.2f}\n"
     )
 
-
 def format_position_message(position: dict) -> str:
     side_emoji = "🟢" if position["side"].lower() == "buy" else "🔴"
     pnl = float(position.get("unrealisedPnl", 0))
@@ -196,7 +201,6 @@ def format_position_message(position: dict) -> str:
         f"├ P&L: {pnl_emoji} ${pnl:.2f}\n"
         f"└ Precio Liq: ${position.get('liqPrice', 'N/A')}\n"
     )
-
 
 # ================================================================
 # 🔍 Prueba local

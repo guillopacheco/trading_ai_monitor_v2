@@ -17,52 +17,51 @@ logger = logging.getLogger("divergence_detector")
 # ================================================================
 def detect_divergences(symbol: str, tech_data: dict):
     """
-    Detecta divergencias básicas RSI, MACD y Volumen.
-
-    Args:
-        symbol (str): par analizado (ej. BTCUSDT)
-        tech_data (dict): datos técnicos generados por indicators.get_technical_data()
-
-    Returns:
-        dict: estado de divergencias {'RSI': str, 'MACD': str, 'Volumen': str}
+    Versión nueva:
+    - Usa los campos 'smart_rsi_div', 'smart_macd_div', 'smart_confidence'
+      generados en indicators.get_technical_data().
+    - Mantiene el formato de salida: {'RSI': str, 'MACD': str, 'Volumen': str}
+    para compatibilidad con trend_analysis.py.
     """
     try:
         results = {"RSI": "Ninguna", "MACD": "Ninguna", "Volumen": "Ninguna"}
 
+        if not tech_data:
+            return results
+
+        best_rsi = None
+        best_macd = None
+        best_conf = 0.0
+        high_vol = False
+
         for tf, data in tech_data.items():
-            rsi_series = data.get("rsi_series", [])
-            macd_series = data.get("macd_series", [])
-            volume = data.get("volume", 0)
+            rsi_type = data.get("smart_rsi_div") or data.get("rsi_div")
+            macd_type = data.get("smart_macd_div") or data.get("macd_div")
+            conf = float(data.get("smart_confidence", 0.0))
+            atr_rel = float(data.get("atr_rel", 0.0))
+            bb_width = float(data.get("bb_width", 0.0))
 
-            # ================================================================
-            # 🔹 Divergencia RSI (comparación últimas dos oscilaciones)
-            # ================================================================
-            if len(rsi_series) >= 3:
-                prev, last = rsi_series[-3], rsi_series[-1]
-                if last > prev and last > 60:
-                    results["RSI"] = f"Alcista ({tf})"
-                elif last < prev and last < 40:
-                    results["RSI"] = f"Bajista ({tf})"
+            # Elegimos la divergencia con mayor confianza
+            if rsi_type and rsi_type != "none" and conf >= best_conf:
+                best_conf = conf
+                best_rsi = f"{'Alcista' if rsi_type == 'bullish' else 'Bajista'} ({tf})"
 
-            # ================================================================
-            # 🔹 Divergencia MACD (histograma)
-            # ================================================================
-            if len(macd_series) >= 3:
-                prev, last = macd_series[-3], macd_series[-1]
-                if last > prev and last > 0:
-                    results["MACD"] = f"Alcista ({tf})"
-                elif last < prev and last < 0:
-                    results["MACD"] = f"Bajista ({tf})"
+            if macd_type and macd_type != "none" and conf >= best_conf:
+                best_conf = conf
+                best_macd = f"{'Alcista' if macd_type == 'bullish' else 'Bajista'} ({tf})"
 
-            # ================================================================
-            # 🔹 Divergencia de Volumen
-            # ================================================================
-            if volume and volume > 0:
-                atr_rel = data.get("atr_rel", 0)
-                if atr_rel > 0.02 and volume > 1.3 * np.mean([v for v in [volume, volume * 0.9, volume * 1.1]]):
-                    results["Volumen"] = f"Alta volatilidad ({tf})"
+            # Volatilidad / volumen altos como “divergencia de volatilidad”
+            if atr_rel > 0.02 or bb_width > 0.06:
+                high_vol = True
 
-        logger.info(f"📊 {symbol}: divergencias detectadas {results}")
+        if best_rsi:
+            results["RSI"] = best_rsi
+        if best_macd:
+            results["MACD"] = best_macd
+        if high_vol:
+            results["Volumen"] = "Alta volatilidad"
+
+        logger.info(f"📊 {symbol}: divergencias smart {results}")
         return results
 
     except Exception as e:

@@ -156,4 +156,4 @@ def validate_config():
 if __name__ == "__main__":
     validate_config()
 
-ANALYSIS_DEBUG_MODE = True  # Cambia a False para producció
+ANALYSIS_DEBUG_MODE = True  # Cambia a False para producción
