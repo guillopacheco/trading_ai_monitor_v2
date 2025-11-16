@@ -212,12 +212,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🧠 /analizar
 # ================================================================
 async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Analiza un par solicitado desde Telegram y responde con resumen técnico."""
+    """Ejecuta un análisis técnico manual desde Telegram."""
     try:
         if not context.args:
-            # Se usa update.message.reply_text directamente para evitar problemas de await
             await update.message.reply_text(
-                "Uso: `/analizar <PAR>` — Ejemplo: `/analizar ZECUSDT`",
+                "Uso: `/analizar <PAR>` — Ejemplo: `/analizar BTCUSDT`",
                 parse_mode="Markdown"
             )
             return
@@ -225,25 +224,20 @@ async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol = context.args[0].upper().replace("/", "").replace("-", "")
         direction_hint = None
 
+        # Si el usuario pasa dirección opcional
         if len(context.args) > 1:
-            dir_candidate = context.args[1].lower()
-            if dir_candidate in ["long", "short"]:
-                direction_hint = dir_candidate
+            d = context.args[1].lower()
+            if d in ["long", "short"]:
+                direction_hint = d
 
-        # 🔍 Ejecutar análisis
+        # 🔍 Análisis técnico avanzado
+        from trend_system_final import analyze_and_format
         result, report = analyze_and_format(symbol, direction_hint=direction_hint)
 
-        # ✅ Intentar enviar usando notifier.send_message si es síncrono, de lo contrario usar Telegram directamente
-        try:
-            send_message(report)  # compatible con tu versión actual (síncrona)
-        except TypeError:
-            # Si espera parsemode en vez de parse_mode
-            send_message(report, parsemode="Markdown")
-        except Exception:
-            # En caso de que sea async en versiones nuevas
-            await update.message.reply_text(report, parse_mode="Markdown")
+        # Enviar resultado
+        send_message(report)
 
-        logger.info(f"📊 Análisis enviado para {symbol}: {result['recommendation']}")
+        logger.info(f"📊 /analizar enviado para {symbol}: {result['recommendation']}")
 
     except Exception as e:
         logger.error(f"❌ Error en /analizar: {e}")

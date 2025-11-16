@@ -10,7 +10,6 @@ import logging
 import asyncio
 import sys
 from datetime import datetime
-
 from database import init_database
 from config import SIMULATION_MODE
 from telegram_reader import start_telegram_reader  # Debe internamente llamar a process_signal
@@ -18,6 +17,7 @@ from command_bot import start_command_bot
 from operation_tracker import monitor_open_positions
 from signal_reactivation_sync import auto_reactivation_loop
 from position_reversal_monitor import monitor_reversals  # 👈 importar el módulo
+from signal_reactivation_sync import auto_reactivation_loop
 
 
 LOG_FILE = "trading_ai_monitor.log"
