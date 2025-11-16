@@ -18,6 +18,8 @@ from operation_tracker import monitor_open_positions
 from signal_reactivation_sync import auto_reactivation_loop
 from position_reversal_monitor import monitor_reversals  # 👈 importar el módulo
 from signal_reactivation_sync import auto_reactivation_loop
+from logger_config import setup_logging
+setup_logging()
 
 
 LOG_FILE = "trading_ai_monitor.log"
