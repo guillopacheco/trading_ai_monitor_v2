@@ -122,6 +122,9 @@ REVIEW_INTERVAL_NORMAL = 900   # 15 minutos
 REVIEW_INTERVAL_HIGH_VOL = 300  # 5 minutos
 MAX_WAIT_TIME = 24 * SECONDS_IN_HOUR
 EXTENDED_MONITORING_TIMEOUT = 72 * SECONDS_IN_HOUR
+# Cada cuántos minutos revisar señales para reactivación
+SIGNAL_RECHECK_INTERVAL_MINUTES = int(os.getenv("SIGNAL_RECHECK_INTERVAL_MINUTES", 15))
+
 
 # ================================================================
 # 📈 Condiciones de vigilancia extendida

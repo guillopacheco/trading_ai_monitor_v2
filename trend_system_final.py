@@ -34,6 +34,39 @@ from config import DEFAULT_TIMEFRAMES, ANALYSIS_DEBUG_MODE
 
 logger = logging.getLogger("trend_system_final")
 
+# ================================================================
+# 🔧 Umbrales dinámicos (agresivo / conservador)
+# ================================================================
+def _get_thresholds() -> dict:
+    """
+    Devuelve los umbrales dinámicos para:
+    - confirmación de señal
+    - reactivación de señal
+    - uso interno
+
+    Se basa en config.ANALYSIS_MODE:
+        - "conservative"
+        - "aggressive"
+    """
+
+    from config import ANALYSIS_MODE
+
+    mode = (ANALYSIS_MODE or "conservative").lower()
+
+    if mode == "aggressive":
+        # Modo agresivo: señales se confirman antes
+        return {
+            "confirm": 70.0,      # match para confirmar señal en el análisis principal
+            "reactivation": 70.0, # match para reactivación automática
+            "internal": 60.0,     # umbral para módulos internos
+        }
+
+    # Modo conservador (por defecto)
+    return {
+        "confirm": 80.0,
+        "reactivation": 80.0,
+        "internal": 70.0,
+    }
 
 # ================================================================
 # 🔧 Utilidades de temporalidades
@@ -417,12 +450,16 @@ def analyze_trend_core(
         # 🧮 Recomendación base
         # ============================================================
         if direction_hint:
-            if match_ratio >= 80:
+            th = _get_thresholds()
+            needed = th.get("confirm", 80.0)
+
+            if match_ratio >= needed:
                 recommendation = f"✅ Señal confirmada ({match_ratio:.1f}% de coincidencia con la tendencia)."
-            elif 60 <= match_ratio < 80:
+            elif match_ratio >= needed - 20:
                 recommendation = f"🟡 Señal parcialmente confirmada ({match_ratio:.1f}% de coincidencia)."
             else:
                 recommendation = f"⚠️ Esperar mejor entrada ({match_ratio:.1f}% de coincidencia)."
+
         else:
             # Sin dirección propuesta, lectura descriptiva
             if major_trend == "Alcista":
