@@ -77,6 +77,7 @@ def notify_operation_alert(symbol, direction, roi, pnl, loss_level, volatility, 
         f"📊 *Nivel de pérdida:* {loss_level}%\n"
         f"🌡️ *Volatilidad:* {volatility.upper()}\n\n"
         f"📌 *Sugerencia técnica:* {suggestion}"
+        f"🧮 PnL: {pnl:.4f} USDT"
     )
     _post(text)
 
