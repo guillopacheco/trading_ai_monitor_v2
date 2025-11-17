@@ -15,7 +15,7 @@ from typing import Optional, Dict, Any
 
 from notifier import send_message
 from trend_system_final import analyze_and_format
-from database import save_signal
+from database import save_signal, execute_query, fetch_all, fetch_one
 
 logger = logging.getLogger("signal_manager")
 
@@ -170,3 +170,42 @@ async def process_signal(signal_message: str):
             send_message,
             f"⚠️ Ocurrió un error procesando la señal: {e}"
         )
+
+# ================================================================
+# 📦 FUNCIONES PARA REACTIVACIÓN DE SEÑALES
+# ================================================================
+
+def get_pending_signals_for_reactivation():
+    """
+    Devuelve todas las señales que NO han sido reactivadas y cuya
+    recomendación quedó como:
+        - "⚠️ Esperar mejor entrada"
+        - "🟡 Señal parcialmente confirmada"
+        - "DESCARTAR"
+    """
+    query = """
+        SELECT id, pair AS symbol, direction, leverage, entry, recommendation
+        FROM signals
+        WHERE reactivated = 0
+        AND (
+            LOWER(recommendation) LIKE '%esperar%'
+            OR LOWER(recommendation) LIKE '%parcialmente%'
+            OR LOWER(recommendation) LIKE '%descartar%'
+        )
+        ORDER BY id DESC;
+    """
+    return fetch_all(query)
+
+
+def mark_signal_reactivated(signal_id: int):
+    """
+    Marca una señal como reactivada.
+    """
+    query = """
+        UPDATE signals
+        SET reactivated = 1,
+            reactivated_at = CURRENT_TIMESTAMP
+        WHERE id = ?;
+    """
+    execute_query(query, (signal_id,))
+

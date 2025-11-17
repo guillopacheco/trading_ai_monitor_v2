@@ -24,8 +24,8 @@ from signal_manager_db import (
     mark_signal_reactivated,
 )
 
-logger = logging.getLogger("signal_reactivation_sync")
 
+logger = logging.getLogger("signal_reactivation_sync")
 
 # =====================================================================
 # 🔐 Reglas avanzadas de seguridad (anti-reversal)
