@@ -221,3 +221,16 @@ async def reactivation_loop():
 # =====================================================================
 def get_reactivation_status():
     return reactivation_status.copy()
+
+# =====================================================================
+# 🚀 Wrapper compatible con main.py
+# =====================================================================
+async def auto_reactivation_loop(interval_seconds: int = None):
+    """
+    Wrapper para mantener compatibilidad con main.py.
+    Ignora interval_seconds, ya que SIGNAL_RECHECK_INTERVAL_MINUTES
+    se gestiona dentro del loop.
+    """
+    await reactivation_loop()
+
+
