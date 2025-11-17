@@ -1,21 +1,22 @@
 [Unit]
-Description=Trading AI Monitor - Monitoreo de Operaciones Abiertas
+Description=Trading AI Monitor (Bybit + Telegram)
 After=network.target
 
 [Service]
-WorkingDirectory=/home/usuario/trading_ai_monitor_v2
-ExecStart=/home/usuario/trading_ai_monitor_v2/venv/bin/python3 /home/usuario/trading_ai_monitor_v2/main.py --mode monitor
-
-Environment="PYTHONUNBUFFERED=1"
+User=root
+WorkingDirectory=/root/trading_ai_monitor_v2
+ExecStart=/root/trading_ai_monitor_v2/venv/bin/python /root/trading_ai_monitor_v2/main.py
 
 Restart=always
-RestartSec=10
+RestartSec=5
 
-StandardOutput=append:/home/usuario/trading_ai_monitor_v2/logs/monitor.log
-StandardError=append:/home/usuario/trading_ai_monitor_v2/logs/monitor_error.log
+# Logs del bot irán a journalctl
+StandardOutput=journal
+StandardError=journal
 
-User=usuario
-Group=usuario
+# Ambiente
+Environment="PYTHONUNBUFFERED=1"
+Environment="TZ=America/Bogota"
 
 [Install]
 WantedBy=multi-user.target

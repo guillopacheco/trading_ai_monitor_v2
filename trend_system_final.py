@@ -189,8 +189,7 @@ def analyze_trend_core(
     Devuelve un dict estructurado para consumo interno.
     """
     try:
-        intervals = _normalize_timeframes()  # ["1m", "5m", "15m"]
-        tech_multi = get_technical_data(symbol, intervals=intervals)
+        tech_multi = get_technical_data(symbol, intervals=None)
 
         if not tech_multi:
             logger.warning(f"⚠️ No se encontraron datos técnicos para {symbol}")
