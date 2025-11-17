@@ -64,6 +64,22 @@ APP_MODE = os.getenv("APP_MODE", "ANALYSIS")  # ANALYSIS o TRADING
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DATABASE_PATH = "data/trading_signals.db"
 
+# =========================
+# 🎚 Sensibilidad del sistema de análisis
+# =========================
+# Opciones:
+#   - "aggressive"  → entra antes, reacciona más rápido, más señales.
+#   - "balanced"    → punto medio.
+#   - "conservative"→ exige mayor alineación, menos señales pero más filtradas.
+ANALYSIS_MODE = "balanced"  # "aggressive" | "balanced" | "conservative"
+
+# Número mínimo de velas por temporalidad para considerar los datos "sólidos"
+MIN_BARS_STRONG_TF = 120
+
+# Filtro de mechas largas (para marcar entornos “sucios” o manipulados)
+WICK_FILTER_ENABLED = True
+WICK_RATIO_THRESHOLD = 2.5  # cuanto mayor, más exigente (2.0–3.0 razonable)
+
 # ================================================================
 # ⚙️ Configuración de apalancamiento y riesgo
 # ================================================================

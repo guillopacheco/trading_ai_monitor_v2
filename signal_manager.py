@@ -1,10 +1,12 @@
-# signal_manager.py — Procesador de señales del canal
-# ---------------------------------------------------
-# - Limpia y extrae datos básicos de la señal (par, dirección, apalancamiento)
-# - Ejecuta el análisis avanzado con trend_system_final.analyze_and_format
-# - Envía resumen a Telegram
-# - Guarda el resultado en la base de datos (signals)
-# ---------------------------------------------------
+"""
+signal_manager.py — Procesador de señales del canal
+---------------------------------------------------
+- Limpia y extrae datos básicos de la señal (par, dirección, apalancamiento)
+- Ejecuta el análisis avanzado con trend_system_final
+- Envía reporte unificado a Telegram
+- Guarda resultados en la base de datos
+---------------------------------------------------
+"""
 
 import re
 import logging
@@ -19,71 +21,64 @@ logger = logging.getLogger("signal_manager")
 
 
 # ================================================================
-# 🧠 Limpieza y extracción de señales
+# 🧼 Limpieza de texto
 # ================================================================
 def clean_signal_text(text: str) -> str:
     """
-    Elimina emojis y caracteres raros para facilitar regex.
-    Conserva letras, números, /, -, _, ., espacios y saltos de línea.
+    Elimina emojis y caracteres no deseados.
+    Conserva letras, números, ., -, /, _ y espacios.
     """
-    return re.sub(r"[^\w\s/.\-]+", "", text)
+    return re.sub(r"[^\w\s/.\-]+", "", text or "")
 
 
+# ================================================================
+# 🔍 Extracción de datos de una señal
+# ================================================================
 def extract_basic_details(message: str) -> Optional[Dict[str, Any]]:
     """
-    Extrae información básica de una señal de futuros, por ejemplo:
+    Extrae los datos esenciales de una señal del canal:
+      - par (ATOMUSDT)
+      - dirección (long/short)
+      - leverage
+      - entry
+      - take profits []
 
-      🔥 #AT/USDT (Short📉, x20) 🔥
-      Entry - 0.3053
-      Take-Profit:
-      🥉 0.2992 (40% of profit)
-      🥈 0.2961 (60% of profit)
-      🥇 0.2931 (80% of profit)
-      🚀 0.29 (100% of profit)
-
-    Devuelve:
-      {
-        "pair": "ATUSDT",
-        "direction": "short",
-        "leverage": 20,
-        "entry": 0.3053,
-        "take_profits": [0.2992, 0.2961, 0.2931, 0.29],
-      }
+    Retorna dict o None si falla.
     """
     try:
-        raw = message or ""
-        upper_raw = raw.upper()
+        if not message:
+            return None
 
-        # Versión limpia para evitar que emojis rompan regex de #PAR/USDT
-        cleaned = clean_signal_text(upper_raw)
+        raw = message.strip()
+        cleaned = clean_signal_text(raw).upper()
 
-        # Par: #PIPPIN/USDT, PIPPIN-USDT, PIPPINUSDT
-        pair_match = re.search(r"#?([A-Z0-9]+)[/\\-]?USDT", cleaned)
+        # Detectar par (#TRUTH/USDT, TRUTH-USDT, TRUTHUSDT)
+        pair_match = re.search(r"#?([A-Z0-9]+)[/\-]?USDT", cleaned)
         direction_match = re.search(r"(LONG|SHORT)", cleaned)
         leverage_match = re.search(r"[xX](\d+)", cleaned)
 
         if not pair_match or not direction_match:
-            logger.warning(f"⚠️ Señal no reconocida o incompleta: {message}")
+            logger.warning(f"⚠️ No se pudo extraer par o dirección: {raw}")
             return None
 
         pair = f"{pair_match.group(1)}USDT"
         direction = direction_match.group(1).lower()
         leverage = int(leverage_match.group(1)) if leverage_match else 20
 
-        # Entry (usamos el mensaje original para conservar decimales exactos)
-        entry_match = re.search(r"Entry\s*[-:]\s*([0-9]*\.?[0-9]+)", raw, re.IGNORECASE)
+        # Entry
+        entry_match = re.search(r"ENTRY\s*[-:]\s*([0-9]*\.?[0-9]+)", raw, re.IGNORECASE)
         entry = float(entry_match.group(1)) if entry_match else None
 
-        # Take Profits: números decimales después de "Take-Profit"
-        take_profits: list[float] = []
-        tp_block = re.search(r"Take-Profit\s*:?(.*)", raw, re.IGNORECASE | re.DOTALL)
+        # Take profits
+        take_profits = []
+        tp_block = re.search(r"TAKE\-?PROFIT\s*:?(.*)", raw, re.IGNORECASE | re.DOTALL)
         if tp_block:
-            block_text = tp_block.group(1)
-            for num in re.findall(r"([0-9]*\.[0-9]+)", block_text):
+            block = tp_block.group(1)
+            for num in re.findall(r"([0-9]*\.[0-9]+)", block):
                 try:
                     take_profits.append(float(num))
                 except ValueError:
-                    continue
+                    pass
 
         details = {
             "pair": pair,
@@ -94,9 +89,8 @@ def extract_basic_details(message: str) -> Optional[Dict[str, Any]]:
         }
 
         logger.info(
-            f"🧩 Señal parseada: {details['pair']} "
-            f"({details['direction'].upper()} x{details['leverage']}) "
-            f"Entry={details['entry']} TP={details['take_profits']}"
+            f"🧩 Señal parseada: {pair} ({direction.upper()} x{leverage}) "
+            f"Entry={entry} TP={take_profits}"
         )
 
         return details
@@ -107,49 +101,53 @@ def extract_basic_details(message: str) -> Optional[Dict[str, Any]]:
 
 
 # ================================================================
-# 📊 Procesamiento de señales
+# 📊 Procesador principal
 # ================================================================
 async def process_signal(signal_message: str):
     """
-    Analiza una señal recibida desde Telegram y envía una recomendación.
+    Procesa una señal recibida desde Telegram:
 
-    Flujo:
-      1. Extrae par / dirección / apalancamiento / entry / TPs
-      2. Llama a trend_system_final.analyze_and_format(...)
-      3. Envía el reporte a Telegram
-      4. Guarda el resultado en la base de datos (tabla signals)
+      1. Extrae datos (par, dirección, apalancamiento…)
+      2. Llama a trend_system_final.analyze_and_format
+      3. Envía análisis a Telegram
+      4. Guarda señal + análisis en la base de datos
 
-    NOTA:
-      - La lógica de "pendiente / descartar / confirmar" se basa en el texto
-        de `recommendation` devuelto por trend_system_final.
-      - El módulo signal_reactivation_sync revisa esas recomendaciones para
-        decidir si una señal puede reactivarse después.
+    La decisión final (confirmada / esperar / parcial)
+    proviene del motor trend_system_final.
     """
     try:
         details = extract_basic_details(signal_message)
+
         if not details:
             await asyncio.to_thread(
                 send_message,
-                "⚠️ No se pudo interpretar la señal recibida. Revisa el formato o el canal.",
+                "⚠️ No se pudo interpretar la señal recibida. Verifica el formato."
             )
             return
 
         pair = details["pair"]
         direction = details["direction"]
         leverage = details["leverage"]
-        entry = details.get("entry")
-        take_profits = details.get("take_profits", [])
+        entry = details["entry"]
+        take_profits = details["take_profits"]
 
-        logger.info(f"📊 Analizando señal: {pair} ({direction.upper()} x{leverage})")
+        logger.info(f"📊 Procesando señal: {pair} ({direction.upper()} x{leverage})")
 
-        # 🔍 Análisis técnico avanzado (motor unificado)
-        result, report = analyze_and_format(pair, direction_hint=direction)
+        # ============================================================
+        # 🔍 1. Análisis técnico completo (motor unificado)
+        # ============================================================
+        result, report_message = analyze_and_format(pair, direction_hint=direction)
 
-        # 📤 Enviar el reporte al usuario (sin bloquear el loop principal)
-        await asyncio.to_thread(send_message, report)
+        # ============================================================
+        # 📤 2. Enviar mensaje al usuario
+        # (sin bloquear el loop principal)
+        # ============================================================
+        await asyncio.to_thread(send_message, report_message)
 
-        # 💾 Guardar en DB
-        signal_record = {
+        # ============================================================
+        # 💾 3. Guardar en DB
+        # ============================================================
+        record = {
             "pair": pair,
             "direction": direction,
             "leverage": leverage,
@@ -158,18 +156,17 @@ async def process_signal(signal_message: str):
             "match_ratio": result.get("match_ratio", 0.0),
             "recommendation": result.get("recommendation", "Sin datos"),
         }
-        await save_signal(signal_record)
+
+        await save_signal(record)
 
         logger.info(
-            f"💾 Señal procesada y guardada: {pair} "
-            f"({direction.upper()} x{leverage}) — "
-            f"match={result.get('match_ratio', 0.0):.2f}% | "
-            f"rec='{result.get('recommendation', '')}'"
+            f"💾 Señal guardada: {pair} — match={result.get('match_ratio', 0.0):.1f}% "
+            f"| rec='{result.get('recommendation')}'"
         )
 
     except Exception as e:
         logger.error(f"❌ Error procesando señal: {e}")
         await asyncio.to_thread(
             send_message,
-            f"⚠️ Error analizando la señal: {e}",
+            f"⚠️ Ocurrió un error procesando la señal: {e}"
         )

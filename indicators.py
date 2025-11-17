@@ -198,12 +198,29 @@ def get_technical_data(symbol: str, intervals=None):
                 df["mfi"] = np.nan
 
             last = df.iloc[-1]
+            bars_count = len(df)
+
+            # 🔍 Cuerpo y mechas de la última vela
+            try:
+                o = float(last["open"])
+                h = float(last["high"])
+                l = float(last["low"])
+                c = float(last["close"])
+
+                body = abs(c - o)
+                upper_wick = max(0.0, h - max(o, c))
+                lower_wick = max(0.0, min(o, c) - l)
+                total_wick = upper_wick + lower_wick
+                wick_ratio = float(total_wick / (body + 1e-8))
+            except Exception:
+                wick_ratio = 0.0
+
             trend = "bullish" if last["ema_short"] > last["ema_long"] else "bearish"
 
-            # Divergencias clásicas
+            # 🔍 Enriquecimiento con divergencias simples (legacy)
             divs = enrich_with_divergences(df)
 
-            # Divergencias avanzadas
+            # 🆕 Divergencias avanzadas "tipo TradingView"
             smart_divs = detect_smart_divergences(df)
 
             data[tf] = {
@@ -217,9 +234,17 @@ def get_technical_data(symbol: str, intervals=None):
                 "bb_width": float(last["bb_width"]),
                 "volume": float(last["volume"]),
                 "trend": trend,
+
+                # 🧮 Calidad y estructura de vela
+                "bars": int(bars_count),
+                "wick_ratio": float(wick_ratio),
+
+                # Divergencias legacy
                 "macd_div": divs["macd_divergence"],
                 "rsi_div": divs["rsi_divergence"],
                 "alerts": divs["divergence_alerts"],
+
+                # 🆕 Campos de divergencias avanzadas
                 "smart_divergences": smart_divs,
                 "smart_rsi_div": smart_divs["divergences"]["rsi"]["type"],
                 "smart_macd_div": smart_divs["divergences"]["macd"]["type"],
