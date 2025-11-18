@@ -30,7 +30,7 @@ from config import (
 
 from database import save_signal
 from notifier import send_message
-from technical_brain import analyze_signal_entry
+from technical_brain import analyze_for_entry
 
 logger = logging.getLogger("telegram_reader")
 
@@ -131,7 +131,7 @@ async def process_signal(parsed: dict):
     )
 
     # 2) Análisis técnico inicial usando technical_brain
-    analysis = analyze_signal_entry(
+    analysis = analyze_for_entry(
         symbol=symbol,
         direction=direction,
         entry_price=entry,
