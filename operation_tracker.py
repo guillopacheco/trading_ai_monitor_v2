@@ -6,9 +6,10 @@ Monitor inteligente de operaciones abiertas en Bybit.
 Funciones:
 ✔ Lee posiciones abiertas desde bybit_client.get_open_positions()
 ✔ Calcula ROI y PnL real
-✔ Detecta pérdidas críticas por niveles
-✔ Obtiene análisis técnico rápido en 5m–15m–1h
-✔ Genera recomendación contextual inteligente
+✔ Detecta niveles de pérdida (−3, −5, −10, −20, −30, −50, −70)
+✔ Obtiene ATR real y clasifica volatilidad (BAJA / MEDIA / ALTA)
+✔ Integra trend_system_final para análisis profundo
+✔ Genera recomendación inteligente basada en divergencias + tendencia
 ✔ Envía alerta mediante notifier.notify_operation_alert()
 
 Este módulo NO toca la base de datos.
@@ -22,12 +23,13 @@ from typing import Dict, Any
 from bybit_client import get_open_positions
 from indicators import get_technical_data
 from notifier import notify_operation_alert
+from trend_system_final import analyze_and_format
 
 logger = logging.getLogger("operation_tracker")
 
 
 # ============================================================
-# 🔢 Cálculo de ROI y niveles de pérdida
+# 🔣 Cálculo ROI y niveles de pérdida
 # ============================================================
 
 LOSS_LEVELS = [-3, -5, -10, -20, -30, -50, -70]
@@ -53,62 +55,80 @@ def compute_loss_level(roi: float) -> int | None:
     return None
 
 
+# ============================================================
+# 🔥 Clasificación de volatilidad usando ATR relativo
+# ============================================================
+
+def classify_volatility(atr_rel: float) -> str:
+    if atr_rel < 0.005:
+        return "BAJA"
+    if atr_rel < 0.015:
+        return "MEDIA"
+    return "ALTA"
+
 
 # ============================================================
-# 🎯 Generador de recomendación
+# 🧠 Nueva generación de recomendaciones (motor moderno)
 # ============================================================
 
-def build_suggestion(direction: str, tech: Dict[str, Any], roi: float) -> str:
+def build_suggestion(symbol: str, direction: str) -> str:
     """
-    Genera recomendación en lenguaje natural:
-    - Revisar
-    - Cerrar
-    - Revertir
+    Genera recomendación basada en trend_system_final.
+    Devuelve un texto breve y claro para las alertas automáticas.
     """
 
-    trend_5m = (tech.get("5m", {}).get("trend") or "").lower()
-    trend_15m = (tech.get("15m", {}).get("trend") or "").lower()
-    trend_1h = (tech.get("1h", {}).get("trend") or "").lower()
+    try:
+        result, _ = analyze_and_format(symbol, direction_hint=direction)
 
-    # Estado técnico
-    short_tf = f"{trend_5m} / {trend_15m}"
-    big_tf = trend_1h
+        match_ratio = result.get("match_ratio", 0)
+        major = (result.get("major_trend") or "").lower()
+        smart = (result.get("smart_bias") or "").lower()
+        divs = result.get("divergences", {})
 
-    # Caso fuerte: todo contra la operación
-    if direction == "long" and ("bear" in short_tf or "bear" in big_tf):
-        if roi <= -20:
-            return "Cerrar o revertir inmediatamente (tendencia fuertemente en contra)"
-        return "Tendencia desfavorable: evaluar cierre"
+        # Divergencias fuertes
+        has_bear = any("bear" in (x or "").lower() for x in divs.values()) or "bearish" in smart
+        has_bull = any("bull" in (x or "").lower() for x in divs.values()) or "bullish" in smart
 
-    if direction == "short" and ("bull" in short_tf or "bull" in big_tf):
-        if roi <= -20:
-            return "Cerrar o revertir inmediatamente (tendencia fuertemente en contra)"
-        return "Tendencia desfavorable: evaluar cierre"
+        # Tendencia mayor
+        if direction == "long" and "bajista" in major:
+            return "⚠️ Tendencia mayor en contra — considerar cierre"
 
-    # Caso neutro
-    if abs(roi) < 5:
-        return "Movimiento neutro, continuar monitoreando"
+        if direction == "short" and "alcista" in major:
+            return "⚠️ Tendencia mayor en contra — considerar cierre"
 
-    # Caso favorable
-    if roi > 5:
-        return "Operación saludable, mantener"
+        # Divergencias peligrosas
+        if direction == "long" and has_bear:
+            return "⚠️ Divergencia bajista — riesgo elevado"
 
-    return "Evaluación estándar"
+        if direction == "short" and has_bull:
+            return "⚠️ Divergencia alcista — riesgo elevado"
+
+        # Match técnico
+        if match_ratio >= 70:
+            return "🟢 Señal técnica fuerte — mantener"
+
+        if match_ratio >= 50:
+            return "🟡 Señal ambigua — monitorear"
+
+        return "🔴 Señal técnica débil — evaluar cierre"
+
+    except Exception as e:
+        return f"⚠️ Error técnico al generar recomendación ({e})"
 
 
 # ============================================================
-# 🚨 Monitor de operaciones
+# 🚨 MONITOR PRINCIPAL
 # ============================================================
 
 def monitor_open_positions():
     """
-    MONITOR PRINCIPAL
-    Llamado por main.py como tarea periódica en segundo plano.
+    Monitor principal.
+    Llamado por main.py como tarea en segundo plano (to_thread).
 
-    Este módulo NO es async porque main lo ejecuta usando to_thread().
+    Este módulo NO es async.
     """
 
-    logger.info("📡 Iniciando evaluación de operaciones activas...")
+    logger.info("📡 Revisando operaciones abiertas...")
 
     positions = get_open_positions()
     if not positions:
@@ -132,7 +152,7 @@ def monitor_open_positions():
                 logger.warning(f"⚠️ Entrada inválida para posición: {pos}")
                 continue
 
-            # 1) ROI
+            # 1) ROI real
             roi = compute_roi(entry, mark, leverage, direction)
             loss_level = compute_loss_level(roi)
 
@@ -145,11 +165,13 @@ def monitor_open_positions():
             if loss_level is None:
                 continue
 
-            # 2) Técnicos multi-TF
-            tech = get_technical_data(symbol, intervals=["5m", "15m", "1h"])
+            # 2) Técnicos rápidos para volatilidad
+            tech = get_technical_data(symbol, intervals=["5m"])
+            atr_rel = tech.get("5m", {}).get("atr_rel", 0) or 0
+            volatility = classify_volatility(atr_rel)
 
-            # 3) Recomendación
-            suggestion = build_suggestion(direction, tech, roi)
+            # 3) Recomendación avanzada (trend_system_final)
+            suggestion = build_suggestion(symbol, direction)
 
             # 4) Enviar alerta al usuario
             notify_operation_alert(
@@ -158,10 +180,9 @@ def monitor_open_positions():
                 roi=roi,
                 pnl=pnl,
                 loss_level=loss_level,
-                volatility="N/A",
+                volatility=volatility,
                 suggestion=suggestion
             )
 
         except Exception as e:
             logger.error(f"❌ Error evaluando operación {pos}: {e}")
-

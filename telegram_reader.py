@@ -1,22 +1,20 @@
 """
 telegram_reader.py
 ------------------------------------------------------------
-Lector de señales desde el canal VIP (Telethon).
+Lector oficial de señales del canal VIP usando Telethon.
 
 Funciones:
-✔ Detecta señales tipo:
-    🔥 #TRUTH/USDT (Long📈, x20)
-    Entry - 0.03223
-    🥉 0.03287
-    🥈 0.03320
-    🥇 0.03352
-    🚀 0.03384
+✔ Detecta mensajes de señales (GIGGLEUSDT, LONG, entry, TPs, leverage)
+✔ Los guarda en la base de datos moderna
+✔ Ejecuta el análisis técnico inicial
+✔ Notifica al usuario con el reporte técnico
+✔ Deja la señal en estado “pending” para reactivación
 
-✔ Parseo robusto tolerante a variaciones.
-✔ Guarda señal en DB nueva (tabla signals).
-✔ Ejecuta análisis técnico inicial con trend_system_final.
-✔ Envía reporte automático al usuario.
-
+Requiere:
+- config.TG_API_ID
+- config.TG_API_HASH
+- config.TG_SESSION
+- config.TG_CHANNEL_SOURCE
 ------------------------------------------------------------
 """
 
@@ -28,87 +26,71 @@ from telethon import events
 from telethon.sync import TelegramClient
 
 from config import (
-    API_ID,
-    API_HASH,
-    TELEGRAM_PHONE,
-    TELEGRAM_CHANNEL_ID,
-    TELEGRAM_USER_ID,
+    TG_API_ID,
+    TG_API_HASH,
+    TG_SESSION,
+    TG_CHANNEL_SOURCE,
 )
-from database import save_signal
-from notifier import send_message
+
+from signal_manager_db import save_new_signal
 from trend_system_final import analyze_and_format
+from notifier import send_message
+
 
 logger = logging.getLogger("telegram_reader")
 
 
 # ============================================================
-# 🔍 Regex para detección de señales del canal
+# 🔍 REGEX robusto para parsear señales
 # ============================================================
 
-SIGNAL_HEADER = re.compile(
-    r"#([A-Z0-9]+\/USDT)\s*\((Long|Short)[^)]*\)",
+HEADER = re.compile(
+    r"#([A-Z0-9]+\/USDT)\s*\((Long|Short).*?x(\d+)\)",
     re.IGNORECASE
 )
 
-ENTRY_REGEX = re.compile(
-    r"Entry\s*[-:]\s*([0-9]*\.?[0-9]+)", re.IGNORECASE
-)
+ENTRY = re.compile(r"Entry\s*[-:]\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 
-TP_REGEX = re.compile(
+TP = re.compile(
     r"TP\d?\s*[:\-]\s*([0-9]*\.?[0-9]+)|🥉\s*([0-9]*\.?[0-9]+)|🥈\s*([0-9]*\.?[0-9]+)|🥇\s*([0-9]*\.?[0-9]+)|🚀\s*([0-9]*\.?[0-9]+)"
 )
 
-LEV_REGEX = re.compile(
-    r"x(\d+)", re.IGNORECASE
-)
-
 
 # ============================================================
-# 📥 Función principal: parsear señal
+# 🧩 Parseo de señal
 # ============================================================
 
 def parse_signal(text: str):
-    """
-    Extrae:
-    - symbol
-    - direction
-    - leverage
-    - entry_price
-    - take_profits (lista TP1–TP4)
-    """
-    header = SIGNAL_HEADER.search(text)
+    header = HEADER.search(text)
     if not header:
         return None
 
-    symbol = header.group(1).replace("/", "")
+    raw_symbol = header.group(1)
     direction = header.group(2).lower()
+    leverage = int(header.group(3))
 
-    # Leverage
-    lev_match = LEV_REGEX.search(text)
-    leverage = int(lev_match.group(1)) if lev_match else 20
+    symbol = raw_symbol.replace("/", "").upper()
 
     # Entry
-    entry_match = ENTRY_REGEX.search(text)
-    if not entry_match:
+    m_entry = ENTRY.search(text)
+    if not m_entry:
         return None
 
-    entry_price = float(entry_match.group(1))
+    entry_price = float(m_entry.group(1))
 
     # TPs
     tps = []
-    for match in TP_REGEX.findall(text):
-        # match = tuple like ('0.0328','',...,'')
-        for group in match:
-            if group:
-                tps.append(float(group))
+    for t in TP.findall(text):
+        for v in t:
+            if v:
+                tps.append(float(v))
 
-    # Limitar a 4 TP
     tps = tps[:4]
     while len(tps) < 4:
         tps.append(None)
 
-    result = {
-        "symbol": symbol.upper(),
+    return {
+        "symbol": symbol,
         "direction": direction,
         "leverage": leverage,
         "entry_price": entry_price,
@@ -119,49 +101,46 @@ def parse_signal(text: str):
         "raw": text,
     }
 
-    return result
-
-
 
 # ============================================================
-# 💾 Guardar señal + análisis técnico
+# 💾 Guardar señal + análisis inicial
 # ============================================================
 
 def process_signal(parsed: dict):
-    """
-    Guarda en DB y ejecuta análisis inicial.
-    """
     symbol = parsed["symbol"]
     direction = parsed["direction"]
     leverage = parsed["leverage"]
-    entry = parsed["entry_price"]
 
-    logger.info(f"📥 Nueva señal capturada: {symbol} ({direction}) x{leverage}")
+    logger.info(f"📥 Señal capturada: {symbol} ({direction.upper()}) x{leverage}")
 
-    # 1) Guardar en DB
-    save_signal(
+    # 1) Guardar señal en DB principal
+    signal_id = save_new_signal(
         symbol=symbol,
         direction=direction,
-        entry_price=entry,
+        leverage=leverage,
+        entry_price=parsed["entry_price"],
         tp1=parsed["tp1"],
         tp2=parsed["tp2"],
         tp3=parsed["tp3"],
         tp4=parsed["tp4"],
-        leverage=leverage,
         original_message=parsed["raw"]
     )
 
     # 2) Ejecutar análisis técnico inicial
-    result, formatted = analyze_and_format(symbol, direction_hint=direction)
+    result, report = analyze_and_format(
+        symbol,
+        direction_hint=direction
+    )
 
-    # 3) Notificar por Telegram
+    # 3) Enviar mensaje al usuario
     send_message(
         f"📥 *Nueva señal detectada: {symbol}*\n"
-        f"📈 Dirección: *{direction.upper()}* x{leverage}\n"
-        f"💵 Entry: {entry}\n"
-        f"\n"
-        f"{formatted}"
+        f"📌 Dirección: *{direction.upper()}* x{leverage}\n"
+        f"💵 Entry: {parsed['entry_price']}\n\n"
+        f"{report}"
     )
+
+    return signal_id
 
 
 # ============================================================
@@ -170,7 +149,7 @@ def process_signal(parsed: dict):
 
 def attach_listeners(client: TelegramClient):
 
-    @client.on(events.NewMessage(chats=[TELEGRAM_CHANNEL_ID]))
+    @client.on(events.NewMessage(chats=[TG_CHANNEL_SOURCE]))
     async def handler(event):
         text = event.message.message
 
@@ -185,9 +164,19 @@ def attach_listeners(client: TelegramClient):
 
 
 # ============================================================
-# 🚀 Inicializar lector
+# 🚀 Iniciar lector
 # ============================================================
 
-def start_telegram_reader(client: TelegramClient):
+async def start_telegram_reader():
+    client = TelegramClient(
+        TG_SESSION,
+        TG_API_ID,
+        TG_API_HASH
+    )
+
+    await client.start()
+
     attach_listeners(client)
-    logger.info("📡 Lector de señales activo y escuchando canal VIP.")
+    logger.info("📡 Lector de señales activo en Telethon.")
+
+    await client.run_until_disconnected()

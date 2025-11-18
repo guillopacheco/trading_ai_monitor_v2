@@ -63,8 +63,11 @@ def notify_analysis_result(symbol, direction, leverage, match_ratio, recommendat
 # ================================================================
 # ⚠️ Notificación de operación en riesgo (AHORA CON PnL)
 # ================================================================
-async def notify_operation_alert(symbol, direction, roi, pnl, loss_level, volatility, suggestion):
-
+def notify_operation_alert(symbol, direction, roi, pnl, loss_level, volatility, suggestion):
+    """
+    Alerta crítica sobre operación abierta (SINCRONA).
+    Incluye PnL en USDT y ROI, para tomar decisiones reales.
+    """
     msg = (
         f"⚠️ *Alerta de operación: {symbol}*\n"
         f"📌 Dirección: *{direction.upper()}*\n"
@@ -74,9 +77,7 @@ async def notify_operation_alert(symbol, direction, roi, pnl, loss_level, volati
         f"🌡️ Volatilidad: {volatility}\n"
         f"🧠 Recomendación: {suggestion}"
     )
-
-    return await asyncio.to_thread(_post, msg)
-
+    _post(msg)
 
 # ================================================================
 # 🎯 Notificación de mensajes TP/profit del canal de señales
