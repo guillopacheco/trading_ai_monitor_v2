@@ -1,207 +1,159 @@
+"""
+database.py
+----------------------------------------------------------------
+Módulo unificado para manejo de base de datos SQLite.
+Compatible con toda la arquitectura moderna del proyecto.
+
+Tablas incluidas:
+- signals
+- signal_analysis_log
+- positions (futura expansión)
+----------------------------------------------------------------
+"""
+
 import sqlite3
 import logging
-from datetime import datetime, timedelta
-import asyncio
+from datetime import datetime
+import os
 
 logger = logging.getLogger("database")
 
 DB_PATH = "trading_ai_monitor.db"
 
+
 # ================================================================
-# 🧱 Inicialización de la base de datos
+# 🔧 Conexión segura
+# ================================================================
+def get_connection():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+
+# ================================================================
+# 🏗️ Inicializar base de datos
 # ================================================================
 def init_database():
-    """Crea las tablas necesarias si no existen."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        conn = get_connection()
+        cur = conn.cursor()
 
         # Tabla principal de señales
-        cursor.execute("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pair TEXT,
-                direction TEXT,
-                leverage INTEGER,
-                entry REAL,
+                symbol TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                leverage INTEGER DEFAULT 20,
+                entry_price REAL,
                 take_profits TEXT,
+                match_ratio REAL DEFAULT 0,
+                recommendation TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                reactivated_at TEXT,
+                status TEXT DEFAULT 'pending'
+            );
+        """)
+
+        # Historial detallado de análisis
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS signal_analysis_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_id INTEGER,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
                 match_ratio REAL,
                 recommendation TEXT,
-                timestamp TEXT,
-                status TEXT DEFAULT 'pending'
-            )
+                details TEXT,
+                FOREIGN KEY(signal_id) REFERENCES signals(id)
+            );
         """)
 
-        # Tabla para operaciones en curso
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS operations (
+        # Tabla futura (opcional)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT UNIQUE,
-                status TEXT,
-                roi REAL,
-                last_update TEXT
-            )
-        """)
-
-        # Tabla de alertas
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT UNIQUE,
-                last_alert_level INTEGER,
-                last_alert_time TEXT
-            )
+                symbol TEXT,
+                direction TEXT,
+                entry_price REAL,
+                size REAL,
+                leverage INTEGER,
+                opened_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'open'
+            );
         """)
 
         conn.commit()
         conn.close()
+
         logger.info("✅ Base de datos inicializada correctamente con todas las tablas.")
     except Exception as e:
-        logger.error(f"❌ Error al inicializar la base de datos: {e}")
+        logger.error(f"❌ Error inicializando base de datos: {e}")
 
+def save_signal(record: dict):
+    conn = get_connection()
+    cur = conn.cursor()
 
-# ================================================================
-# 💾 Guardar señal nueva
-# ================================================================
-async def save_signal(signal: dict):
-    """Guarda una señal procesada en la base de datos."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+    cur.execute("""
+        INSERT INTO signals (symbol, direction, leverage, entry_price, take_profits, match_ratio, recommendation)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        record.get("symbol"),
+        record.get("direction"),
+        record.get("leverage", 20),
+        record.get("entry_price"),
+        ",".join(map(str, record.get("take_profits", []))),
+        record.get("match_ratio", 0.0),
+        record.get("recommendation")
+    ))
 
-        cursor.execute("""
-            INSERT INTO signals (pair, direction, leverage, entry, take_profits, match_ratio, recommendation, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            signal.get("pair"),
-            signal.get("direction"),
-            signal.get("leverage"),
-            signal.get("entry"),
-            str(signal.get("take_profits")),
-            signal.get("match_ratio"),
-            signal.get("recommendation"),
-            datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        ))
+    conn.commit()
+    conn.close()
 
-        conn.commit()
-        conn.close()
-        logger.info(f"💾 Señal guardada correctamente en la base de datos: {signal.get('pair')}")
-    except Exception as e:
-        logger.error(f"❌ Error guardando señal: {e}")
+def get_pending_signals_for_reactivation():
+    conn = get_connection()
+    cur = conn.cursor()
 
+    cur.execute("""
+        SELECT id, symbol, direction, leverage, entry_price
+        FROM signals
+        WHERE status = 'pending'
+          AND entry_price IS NOT NULL
+    """)
 
-# ================================================================
-# 📜 Obtener señales recientes
-# ================================================================
-def get_signals(limit: int = 10):
-    """Recupera las últimas señales almacenadas."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+    rows = cur.fetchall()
+    conn.close()
 
-        cursor.execute("""
-            SELECT pair, direction, leverage, entry, match_ratio, recommendation, timestamp
-            FROM signals
-            ORDER BY id DESC
-            LIMIT ?
-        """, (limit,))
+    return [
+        {
+            "id": r[0],
+            "symbol": r[1],
+            "direction": r[2],
+            "leverage": r[3],
+            "entry_price": r[4]
+        }
+        for r in rows
+    ]
 
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo señales: {e}")
-        return []
+def mark_signal_reactivated(signal_id: int):
+    conn = get_connection()
+    cur = conn.cursor()
 
+    cur.execute("""
+        UPDATE signals
+        SET status = 'reactivated',
+            reactivated_at = ?
+        WHERE id = ?
+    """, (datetime.utcnow().isoformat(), signal_id))
 
-# ================================================================
-# 🧹 Borrar registros antiguos
-# ================================================================
-def clear_old_records(days: int = 30):
-    """Elimina señales más antiguas que X días."""
-    try:
-        cutoff = datetime.utcnow() - timedelta(days=days)
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+    conn.commit()
+    conn.close()
 
-        cursor.execute("DELETE FROM signals WHERE timestamp < ?", (cutoff.strftime("%Y-%m-%d %H:%M:%S"),))
-        conn.commit()
-        deleted = cursor.rowcount
-        conn.close()
-        logger.info(f"🧹 {deleted} registros antiguos eliminados correctamente.")
-    except Exception as e:
-        logger.error(f"❌ Error al eliminar registros antiguos: {e}")
+def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, details: str = ""):
+    conn = get_connection()
+    cur = conn.cursor()
 
+    cur.execute("""
+        INSERT INTO signal_analysis_log (signal_id, match_ratio, recommendation, details)
+        VALUES (?, ?, ?, ?)
+    """, (signal_id, match_ratio, recommendation, details))
 
-# ================================================================
-# 📊 Actualizar estado de operación
-# ================================================================
-def update_operation_status(symbol: str, status: str, roi: float):
-    """Actualiza el estado y ROI actual de una operación abierta."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO operations (symbol, status, roi, last_update)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(symbol) DO UPDATE SET
-                status = excluded.status,
-                roi = excluded.roi,
-                last_update = excluded.last_update
-        """, (
-            symbol,
-            status,
-            roi,
-            datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        ))
-
-        conn.commit()
-        conn.close()
-        logger.info(f"💾 Operación actualizada: {symbol} -> {status} ({roi:.2f}%)")
-    except Exception as e:
-        logger.error(f"❌ Error actualizando operación {symbol}: {e}")
-
-
-# ================================================================
-# 🚨 Obtener registro de alerta
-# ================================================================
-def get_alert_record(symbol: str):
-    """Obtiene el último nivel de alerta emitido para una operación."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT * FROM alerts WHERE symbol = ?", (symbol,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo alerta de {symbol}: {e}")
-        return None
-
-
-# ================================================================
-# 🚨 Actualizar alerta
-# ================================================================
-def update_alert_record(symbol: str, level: int, timestamp: str):
-    """Actualiza o inserta el registro de alerta más reciente."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO alerts (symbol, last_alert_level, last_alert_time)
-            VALUES (?, ?, ?)
-            ON CONFLICT(symbol) DO UPDATE SET
-                last_alert_level = excluded.last_alert_level,
-                last_alert_time = excluded.last_alert_time
-        """, (symbol, level, timestamp))
-
-        conn.commit()
-        conn.close()
-        logger.info(f"🔔 Alerta actualizada para {symbol} nivel {level}")
-    except Exception as e:
-        logger.error(f"❌ Error actualizando alerta de {symbol}: {e}")
+    conn.commit()
+    conn.close()

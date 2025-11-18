@@ -19,11 +19,11 @@ from trend_system_final import analyze_and_format, _get_thresholds
 from notifier import send_message
 from config import SIGNAL_RECHECK_INTERVAL_MINUTES
 
-# 🔄 Nuevo import correcto
-from signal_manager import (
+from signal_manager_db import (
     get_pending_signals_for_reactivation,
     mark_signal_reactivated,
 )
+
 
 logger = logging.getLogger("signal_reactivation_sync")
 
