@@ -1,27 +1,28 @@
 """
-position_reversal_monitor.py — Optimizado (2025/11)
+position_reversal_monitor.py — versión final integrada
 ------------------------------------------------------------
-Monitor de reversiones técnicas basado en:
-✔ Análisis multi–TF real (5m, 15m, 1h, 4h)
-✔ Divergencias inteligentes (RSI, MACD, Smart Divergence)
-✔ Tendencia mayor (trend_system_final)
-✔ ATR y clasificación de volatilidad
-✔ Confirmación basada en match técnico global
-✔ Alertas profesionales con recomendación inteligente
+Monitor especializado en detección de reversiones peligrosas
+en posiciones abiertas, apoyado completamente en:
 
-Se integra con:
-- main.py  → bucle periódico
-- command_bot.py → /reversion (modo run_once)
+    technical_brain.analyze_for_reversal()
+
+Funciones:
+✔ Lee posiciones desde bybit_client.get_open_positions()
+✔ Evalúa cambio porcentual real (sin apalancamiento)
+✔ Usa el motor técnico para determinar si hay reversión
+✔ Envía alerta si detecta:
+    • Divergencias peligrosas
+    • Giro fuerte de tendencia contra la operación
+    • Señal explícita del motor: allowed = False
+
+Este módulo NO toca la base de datos.
 ------------------------------------------------------------
 """
 
 import asyncio
 import logging
-from typing import Dict, Any
-
 from bybit_client import get_open_positions
-from indicators import get_technical_data
-from trend_system_final import analyze_and_format
+from technical_brain import analyze_for_reversal
 from notifier import send_message
 
 logger = logging.getLogger("position_reversal_monitor")
@@ -31,12 +32,14 @@ logger = logging.getLogger("position_reversal_monitor")
 # 🔢 Cambio porcentual sin apalancamiento
 # ============================================================
 
-def _compute_price_change(entry: float, mark: float, direction: str) -> float:
-    """Retorna variación % sin apalancamiento."""
+def _calculate_price_change(entry: float, mark: float, direction: str) -> float:
+    """
+    Devuelve el cambio porcentual SIN apalancamiento.
+    """
     if entry <= 0:
         return 0.0
 
-    change = ((mark - entry) / entry) * 100
+    change = ((mark - entry) / entry) * 100.0
     if direction == "short":
         change *= -1
 
@@ -44,90 +47,36 @@ def _compute_price_change(entry: float, mark: float, direction: str) -> float:
 
 
 # ============================================================
-# 🔥 Clasificación de volatilidad usando ATR relativo
-# ============================================================
-
-def classify_volatility(atr_rel: float) -> str:
-    if atr_rel < 0.005:
-        return "BAJA"
-    if atr_rel < 0.015:
-        return "MEDIA"
-    return "ALTA"
-
-
-# ============================================================
-# 🧠 Detección avanzada de reversión (motor moderno)
-# ============================================================
-
-def detect_advanced_reversal(symbol: str, direction: str) -> Dict[str, Any]:
-    """
-    Usa el motor completo trend_system_final para:
-    ✔ divergencias fuertes
-    ✔ tendencia mayor (1h–4h)
-    ✔ smart bias
-    ✔ match técnico global
-    """
-
-    result, formatted = analyze_and_format(symbol, direction_hint=direction)
-
-    divs = result.get("divergences", {})
-    smart = (result.get("smart_bias") or "").lower()
-    match_ratio = result.get("match_ratio", 0)
-    major = (result.get("major_trend") or "").lower()
-
-    # divergencias peligrosas
-    bear_signal = any("bear" in (v or "").lower() for v in divs.values())
-    bull_signal = any("bull" in (v or "").lower() for v in divs.values())
-
-    if "bearish" in smart:
-        bear_signal = True
-    if "bullish" in smart:
-        bull_signal = True
-
-    # reversión fuerte por tendencia mayor
-    major_flip = False
-    if direction == "long" and "bajista" in major:
-        major_flip = True
-    if direction == "short" and "alcista" in major:
-        major_flip = True
-
-    # condición de reversión real
-    advanced_reversal = (
-        bear_signal if direction == "long" else bull_signal
-    ) or major_flip
-
-    return {
-        "reversal": advanced_reversal,
-        "divergences": divs,
-        "smart": smart,
-        "major_trend": major,
-        "match_ratio": match_ratio,
-        "formatted": formatted,
-    }
-
-
-# ============================================================
-# 🚨 Monitor principal de reversiones
+# 🚨 Monitor principal
 # ============================================================
 
 async def monitor_reversals(interval_seconds: int = 600, run_once: bool = False):
-    logger.info("🚨 Iniciando monitor avanzado de reversiones...")
+    """
+    Revisa las posiciones abiertas para detectar reversiones técnicas peligrosas.
+
+    Lógica:
+    ✔ Solo analiza posiciones con pérdida mayor a -3% (sin apalancamiento)
+    ✔ Llama a technical_brain.analyze_for_reversal()
+    ✔ Si allowed=False → envía alerta de reversión
+    """
+
+    logger.info("🚨 Iniciando monitor de reversiones de posiciones...")
 
     while True:
         try:
             positions = get_open_positions()
 
             if not positions:
-                logger.info("📭 No hay posiciones abiertas.")
+                logger.info("📭 No hay posiciones abiertas para analizar.")
                 if run_once:
                     break
                 await asyncio.sleep(interval_seconds)
                 continue
 
-            checked, alerts = 0, 0
+            reviewed = 0
+            alerts = 0
 
             for pos in positions:
-
                 try:
                     symbol = pos.get("symbol")
                     side = (pos.get("side") or "").lower()
@@ -136,69 +85,80 @@ async def monitor_reversals(interval_seconds: int = 600, run_once: bool = False)
                     entry = float(pos.get("entryPrice") or 0)
                     mark = float(pos.get("markPrice") or entry)
                     lev = int(float(pos.get("leverage") or 20))
+                    pnl = float(pos.get("unrealisedPnl") or 0)
 
                     if not symbol or entry <= 0:
+                        logger.warning(f"⚠️ Datos inválidos en posición: {pos}")
                         continue
 
-                    checked += 1
+                    reviewed += 1
 
-                    price_change = _compute_price_change(entry, mark, direction)
+                    # Cambio sin apalancamiento
+                    price_change = _calculate_price_change(entry, mark, direction)
 
-                    # Solo revisar posiciones con pérdida > -3%
+                    # Solo investigar si hay pérdida relevante
                     if price_change > -3:
                         continue
 
                     logger.info(
-                        f"🔎 Revisando reversión en {symbol} — {direction.upper()} x{lev} "
-                        f"(cambio {price_change:.2f}%)"
+                        f"🔎 Revisando {symbol} ({direction.upper()} x{lev}) | "
+                        f"Entry={entry:.6f} Mark={mark:.6f} Change={price_change:.2f}%"
                     )
 
-                    # ATR / volatilidad
-                    tech = get_technical_data(symbol, intervals=["5m"])
-                    atr_rel = tech.get("5m", {}).get("atr_rel", 0) or 0
-                    volatility = classify_volatility(atr_rel)
+                    # ===============================
+                    # 🔍 Análisis técnico completo
+                    # ===============================
+                    analysis = analyze_for_reversal(
+                        symbol=symbol,
+                        direction=direction,
+                        entry_price=entry,
+                        mark_price=mark,
+                        leverage=lev,
+                        roi=0  # el motor no depende del ROI aquí
+                    )
 
-                    # Análisis profundo (motor completo)
-                    adv = detect_advanced_reversal(symbol, direction)
-
-                    if not adv["reversal"]:
+                    # Si allowed=True → no hay reversión crítica
+                    if analysis["allowed"]:
                         continue
 
                     alerts += 1
 
-                    divs = adv["divergences"]
-                    active_divs = ", ".join(
-                        f"{k}: {v}"
-                        for k, v in divs.items()
-                        if v and v not in ["Ninguna", "None"]
-                    ) or "Ninguna"
+                    # ===============================
+                    # 📡 Preparar mensaje final
+                    # ===============================
+                    msg = [
+                        f"🚨 *Reversión crítica detectada en {symbol}*",
+                        f"🔹 Dirección original: *{direction.upper()}* x{lev}",
+                        f"💰 Cambio aprox.: {price_change:.2f}%",
+                        "",
+                        "📊 *Tendencias:*",
+                        f"• 5m: {analysis['trend_multi']['5m']}",
+                        f"• 15m: {analysis['trend_multi']['15m']}",
+                        f"• 1h: {analysis['trend_multi']['1h']}",
+                        "",
+                        "🧪 *Divergencias:*",
+                        f"• RSI: {analysis['divergences']['RSI']}",
+                        f"• MACD: {analysis['divergences']['MACD']}",
+                        "",
+                        f"🌡️ ATR: {analysis['atr']}",
+                        f"🔎 Sesgo corto: {analysis['short_bias']}",
+                        "",
+                        f"🧠 *Recomendación:* {analysis['suggestion']}",
+                        "",
+                        "📌 Se recomienda revisar la operación inmediatamente."
+                    ]
 
-                    # Construcción del mensaje
-                    msg = (
-                        f"🚨 *Reversión técnica detectada en {symbol}*\n"
-                        f"📉 Dirección original: *{direction.upper()}* (x{lev})\n"
-                        f"💰 Pérdida sin apalancamiento: {price_change:.2f}%\n"
-                        f"🌡️ Volatilidad: {volatility}\n"
-                        f"🧪 Divergencias: {active_divs}\n"
-                        f"📊 Tendencia mayor: {adv['major_trend'].upper() or 'N/A'}\n"
-                        f"⚙️ Match técnico global: {adv['match_ratio']:.1f}%\n"
-                        f"\n"
-                        f"📌 *Recomendación:* Riesgo elevado. Revisar posición inmediatamente.\n"
-                        f"\n"
-                        f"{adv['formatted']}"
-                    )
-
-                    await asyncio.to_thread(send_message, msg)
+                    await asyncio.to_thread(send_message, "\n".join(msg))
 
                 except Exception as e:
-                    logger.error(f"❌ Error analizando posición: {e}")
+                    logger.error(f"❌ Error procesando posición: {e}")
 
             logger.info(
-                f"✅ Reversion monitor: {checked} posiciones revisadas, {alerts} alertas emitidas."
+                f"✅ Reversion monitor: {reviewed} revisadas — {alerts} alertas enviadas."
             )
 
         except Exception as e:
-            logger.error(f"❌ Error en monitor_reversals(): {e}")
+            logger.error(f"❌ Error general en monitor_reversals(): {e}")
 
         if run_once:
             break

@@ -2,9 +2,9 @@
 command_bot.py — Bot de control del Trading AI Monitor
 -------------------------------------------------------
 - Procesa comandos como /analizar, /estado, /historial, etc.
-- Conecta con trend_system_final para análisis manual
-- Controla monitoreo de posiciones y reactivaciones
-- Totalmente alineado con el nuevo ecosistema
+- Usa technical_brain para análisis manual
+- Controla monitoreo de operaciones y reactivaciones
+-------------------------------------------------------
 """
 
 import logging
@@ -16,18 +16,18 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes
 )
 
-from trend_system_final import analyze_and_format
+from technical_brain import analyze_symbol, format_analysis_for_telegram
 from database import get_signals, clear_old_records
 from notifier import send_message
 from operation_tracker import monitor_open_positions
 from position_reversal_monitor import monitor_reversals
+from signal_reactivation_sync import get_reactivation_status, run_reactivation_cycle
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
 
 logger = logging.getLogger("command_bot")
 
-
 # ------------------------------------------------------------
-# Estado global del monitoreo
+# Estado global del monitoreo de posiciones
 # ------------------------------------------------------------
 active_monitoring = {"running": False, "task": None}
 
@@ -43,8 +43,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /analizar BTCUSDT → Análisis técnico manual\n"
         "• /reactivacion → Forzar revisión de señales pendientes\n"
         "• /reversion → Analizar reversiones en operaciones abiertas\n"
-        "• /historial → Últimos análisis registrados\n"
-        "• /reanudar → Activar monitoreo\n"
+        "• /historial → Últimas señales registradas\n"
+        "• /reanudar → Activar monitoreo de operaciones\n"
         "• /detener → Detener monitoreo\n"
         "• /limpiar → Borrar señales antiguas\n"
         "• /config → Mostrar configuración actual\n"
@@ -57,8 +57,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🧭 /estado
 # ============================================================
 async def estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from signal_reactivation_sync import get_reactivation_status
-
     status = "🟢 Activo" if active_monitoring["running"] else "🔴 Inactivo"
     sim = "🧪 SIMULACIÓN" if SIMULATION_MODE else "💹 REAL"
 
@@ -66,6 +64,7 @@ async def estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     re_running = "🟢 Activado" if re_state.get("running") else "⚪ Inactivo"
     re_last = re_state.get("last_run", "Nunca")
     re_count = re_state.get("monitored_signals", 0)
+    re_total = re_state.get("reactivated_count", 0)
 
     msg = (
         f"📊 *Estado del sistema*\n"
@@ -75,7 +74,8 @@ async def estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"♻️ *Reactivación automática*\n"
         f"• Estado: {re_running}\n"
         f"• Último ciclo: {re_last}\n"
-        f"• Señales vigiladas: {re_count}"
+        f"• Señales vigiladas en último ciclo: {re_count}\n"
+        f"• Total reactivadas: {re_total}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -121,44 +121,29 @@ async def detener(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ♻️ /reactivacion — Fuerza revisión manual
+# ♻️ /reactivacion — Fuerza revisión manual (una pasada)
 # ============================================================
 async def reactivacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from signal_reactivation_sync import check_reactivation
-    signals = get_signals(limit=50)
+    await update.message.reply_text("♻️ Revisando señales pendientes para posible reactivación...")
 
-    await update.message.reply_text("♻️ Revisando señales pendientes...")
-
-    revisadas = 0
-    reactivadas = 0
-
-    for s in signals:
-        rec = s.get("recommendation", "").lower()
-        if "esperar" in rec or "descartar" in rec:
-            revisadas += 1
-            r = check_reactivation(
-                s["pair"],
-                s["direction"],
-                s["leverage"],
-                s.get("entry")
-            )
-            if r and r.get("status") == "reactivada":
-                reactivadas += 1
-
-    msg = (
-        f"♻️ *Revisión completada*\n"
-        f"• Señales revisadas: {revisadas}\n"
-        f"• Reactivadas: {reactivadas}\n"
-        f"• Hora: {datetime.now():%Y-%m-%d %H:%M:%S}"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    try:
+        stats = await run_reactivation_cycle()
+        msg = (
+            f"♻️ *Revisión completada*\n"
+            f"• Señales revisadas: {stats.get('checked', 0)}\n"
+            f"• Reactivadas en este ciclo: {stats.get('reactivated', 0)}\n"
+            f"• Hora: {datetime.now():%Y-%m-%d %H:%M:%S}"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"❌ Error en /reactivacion: {e}")
+        await update.message.reply_text(f"❌ Error en reactivación: {e}")
 
 
 # ============================================================
 # 🔍 /analizar <par> [long|short]
 # ============================================================
 async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if not context.args:
         await update.message.reply_text(
             "Uso correcto:\n`/analizar BTCUSDT`\n`/analizar BTCUSDT long`",
@@ -175,8 +160,10 @@ async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             direction_hint = d
 
     try:
-        result, report = analyze_and_format(symbol, direction_hint=direction_hint)
+        result = analyze_symbol(symbol, direction_hint=direction_hint)
+        report = format_analysis_for_telegram(result)
         await asyncio.to_thread(send_message, report)
+        await update.message.reply_text("✅ Análisis enviado al canal privado.", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"❌ Error en /analizar: {e}")
         await update.message.reply_text(f"❌ Error: {e}")
@@ -186,11 +173,12 @@ async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🔄 /reversion
 # ============================================================
 async def reversion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 Buscando señales de reversión...")
+    await update.message.reply_text("🔍 Buscando señales de reversión en posiciones abiertas...")
     try:
         await monitor_reversals(run_once=True)
-        await update.message.reply_text("✅ Revisión completada.")
+        await update.message.reply_text("✅ Revisión de reversiones completada.")
     except Exception as e:
+        logger.error(f"❌ Error en /reversion: {e}")
         await update.message.reply_text(f"❌ Error: {e}")
 
 
@@ -207,10 +195,17 @@ async def historial(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "📜 *Últimas señales:*\n\n"
 
     for s in signals:
+        symbol = s.get("symbol") or s.get("pair", "N/A")
+        direction = (s.get("direction") or "").upper()
+        lev = s.get("leverage", 20)
+        match_ratio = float(s.get("match_ratio", 0.0) or 0.0)
+        rec = s.get("recommendation", "") or "Sin recomendación"
+        created = s.get("created_at") or s.get("timestamp", "")
+
         msg += (
-            f"• {s['pair']} ({s['direction'].upper()} x{s['leverage']})\n"
-            f"  ➤ {s['recommendation']} ({s['match_ratio']*100:.1f}%)\n"
-            f"  🕒 {s.get('timestamp','')}\n\n"
+            f"• {symbol} ({direction} x{lev})\n"
+            f"  ➤ {rec} ({match_ratio:.1f}%)\n"
+            f"  🕒 {created}\n\n"
         )
 
     await update.message.reply_text(msg, parse_mode="Markdown")
@@ -227,7 +222,7 @@ async def limpiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 # ⚙️ /config
 # ============================================================
-async def config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sim = "🧪 Simulación" if SIMULATION_MODE else "💹 Real"
     msg = (
         "⚙️ *Configuración Actual:*\n"
@@ -258,27 +253,27 @@ async def start_command_bot():
         app.add_handler(CommandHandler("detener", detener))
         app.add_handler(CommandHandler("historial", historial))
         app.add_handler(CommandHandler("limpiar", limpiar))
-        app.add_handler(CommandHandler("config", config))
+        app.add_handler(CommandHandler("config", config_cmd))
         app.add_handler(CommandHandler("help", start))
         app.add_handler(CommandHandler("analizar", cmd_analizar))
         app.add_handler(CommandHandler("reactivacion", reactivacion))
         app.add_handler(CommandHandler("reversion", reversion))
 
-        # Activar menú de comandos
+        # Activar menú de comandos (si se puede)
         try:
             await app.bot.set_my_commands([
                 ("analizar", "Analiza un par (ej: /analizar BTCUSDT)"),
                 ("estado", "Ver estado del sistema"),
-                ("historial", "Últimos análisis"),
+                ("historial", "Últimas señales"),
                 ("reactivacion", "Revisar señales en espera"),
                 ("reversion", "Buscar reversiones técnicas"),
                 ("reanudar", "Activar monitoreo"),
                 ("detener", "Detener monitoreo"),
-                ("limit_ar", "Limpiar señales antiguas"),
+                ("limpiar", "Limpiar señales antiguas"),
                 ("config", "Mostrar configuración"),
                 ("help", "Ayuda general")
             ])
-        except:
+        except Exception:
             pass
 
         await app.initialize()
