@@ -26,7 +26,7 @@ import math
 from typing import Dict, Any, List, Tuple
 
 from indicators import get_technical_data
-from smart_divergences import detect_smart_divergence
+from smart_divergences import detect_smart_divergences
 from divergence_detector import detect_divergences
 
 logger = logging.getLogger("technical_brain")
@@ -151,7 +151,7 @@ def analyze_market(symbol: str, direction_hint: str | None = None) -> Dict[str, 
 
     # Divergencias
     raw_divs = detect_divergences(symbol, tech)
-    smart = detect_smart_divergence(symbol, tech)
+    smart = detect_smart_divergences(symbol, tech)
 
     # ATR / volatilidad
     atr, atr_rel, vol_label = _atr_volatility(tech, symbol)
