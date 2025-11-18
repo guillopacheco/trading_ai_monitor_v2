@@ -157,3 +157,54 @@ def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, d
 
     conn.commit()
     conn.close()
+
+# ============================================================
+# 📄 Obtener todas las señales (para /historial)
+# ============================================================
+def get_signals(limit: int = 50) -> list:
+    """
+    Devuelve las señales más recientes desde la tabla signals.
+    Usada por /historial en command_bot.py
+    """
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, pair, direction, leverage, entry,
+                   take_profits, match_ratio, recommendation,
+                   timestamp, status
+            FROM signals
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
+        rows = c.fetchall()
+        conn.close()
+
+        return rows
+
+    except Exception as e:
+        logger.error(f"❌ Error en get_signals: {e}")
+        return []
+
+
+# ============================================================
+# 🧹 Limpieza automática de registros viejos
+# ============================================================
+def clear_old_records(days: int = 30):
+    """
+    Elimina señales con más de N días.
+    Usado por command_bot.py en /limpiar o de forma automática.
+    """
+
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        c = conn.cursor()
+        c.execute(f"""
+            DELETE FROM signals
+            WHERE julianday('now') - julianday(timestamp) > ?
+        """, (days,))
+        conn.commit()
+        conn.close()
+        logger.info(f"🧹 Limpieza completada: señales con más de {days} días eliminadas.")
+    except Exception as e:
+        logger.error(f"❌ Error en clear_old_records: {e}")
