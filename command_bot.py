@@ -16,7 +16,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes
 )
 
-from technical_brain import analyze_market, format_analysis_for_telegram
+from technical_brain import analyze_market, format_market_report
 from database import get_signals, clear_old_records
 from notifier import send_message
 from operation_tracker import monitor_open_positions
@@ -161,7 +161,7 @@ async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         result = analyze_market(symbol, direction_hint=direction_hint)
-        report = format_analysis_for_telegram(result)
+        report = format_market_report(result)
         await asyncio.to_thread(send_message, report)
         await update.message.reply_text("✅ Análisis enviado al canal privado.", parse_mode="Markdown")
     except Exception as e:
