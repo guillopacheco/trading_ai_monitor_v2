@@ -1,174 +1,151 @@
 """
-signal_manager.py — Procesador de señales del canal
----------------------------------------------------
-- Limpia y extrae datos básicos de la señal (par, dirección, apalancamiento)
-- Ejecuta el análisis avanzado con trend_system_final
-- Envía reporte unificado a Telegram
-- Guarda resultados en la base de datos
----------------------------------------------------
+signal_manager_db.py
+------------------------------------------------------------
+Capa de acceso a base de datos para señales + reactivación.
+
+Compatible con la estructura actual:
+
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pair TEXT,
+    direction TEXT,
+    leverage INTEGER,
+    entry_price REAL,
+    take_profits TEXT,
+    match_ratio REAL,
+    recommendation TEXT,
+    timestamp TEXT,
+    status TEXT DEFAULT 'pending',
+    reactivated INTEGER DEFAULT 0
+
+------------------------------------------------------------
 """
 
-import re
+import sqlite3
 import logging
-import asyncio
-from typing import Optional, Dict, Any
+from typing import List, Dict, Any
 
-from notifier import send_message
-from trend_system_final import analyze_and_format
-from database import save_signal, execute_query, fetch_all, fetch_one
+from config import DATABASE_PATH
 
-logger = logging.getLogger("signal_manager")
+logger = logging.getLogger("signal_manager_db")
 
 
-# ================================================================
-# 🧼 Limpieza de texto
-# ================================================================
-def clean_signal_text(text: str) -> str:
-    """
-    Elimina emojis y caracteres no deseados.
-    Conserva letras, números, ., -, /, _ y espacios.
-    """
-    return re.sub(r"[^\w\s/.\-]+", "", text or "")
+# ============================================================
+# 🔌 Conexión básica
+# ============================================================
+def _connect():
+    return sqlite3.connect(DATABASE_PATH)
 
 
-# ================================================================
-# 🔍 Extracción de datos de una señal
-# ================================================================
-def extract_basic_details(message: str) -> Optional[Dict[str, Any]]:
-    """
-    Extrae los datos esenciales de una señal del canal:
-      - par (ATOMUSDT)
-      - dirección (long/short)
-      - leverage
-      - entry
-      - take profits []
-
-    Retorna dict o None si falla.
-    """
+# ============================================================
+# 📥 Guardar señal nueva
+# ============================================================
+def save_signal_db(signal: Dict[str, Any]):
+    """Guardar una señal nueva en la tabla signals."""
     try:
-        if not message:
-            return None
+        conn = _connect()
+        cur = conn.cursor()
 
-        raw = message.strip()
-        cleaned = clean_signal_text(raw).upper()
-
-        # Detectar par (#TRUTH/USDT, TRUTH-USDT, TRUTHUSDT)
-        pair_match = re.search(r"#?([A-Z0-9]+)[/\-]?USDT", cleaned)
-        direction_match = re.search(r"(LONG|SHORT)", cleaned)
-        leverage_match = re.search(r"[xX](\d+)", cleaned)
-
-        if not pair_match or not direction_match:
-            logger.warning(f"⚠️ No se pudo extraer par o dirección: {raw}")
-            return None
-
-        pair = f"{pair_match.group(1)}USDT"
-        direction = direction_match.group(1).lower()
-        leverage = int(leverage_match.group(1)) if leverage_match else 20
-
-        # Entry
-        entry_match = re.search(r"ENTRY\s*[-:]\s*([0-9]*\.?[0-9]+)", raw, re.IGNORECASE)
-        entry = float(entry_match.group(1)) if entry_match else None
-
-        # Take profits
-        take_profits = []
-        tp_block = re.search(r"TAKE\-?PROFIT\s*:?(.*)", raw, re.IGNORECASE | re.DOTALL)
-        if tp_block:
-            block = tp_block.group(1)
-            for num in re.findall(r"([0-9]*\.[0-9]+)", block):
-                try:
-                    take_profits.append(float(num))
-                except ValueError:
-                    pass
-
-        details = {
-            "pair": pair,
-            "direction": direction,
-            "leverage": leverage,
-            "entry": entry,
-            "take_profits": take_profits,
-        }
-
-        logger.info(
-            f"🧩 Señal parseada: {pair} ({direction.upper()} x{leverage}) "
-            f"Entry={entry} TP={take_profits}"
-        )
-
-        return details
-
-    except Exception as e:
-        logger.error(f"❌ Error extrayendo datos de señal: {e}")
-        return None
-
-
-# ================================================================
-# 📊 Procesador principal
-# ================================================================
-async def process_signal(signal_message: str):
-    """
-    Procesa una señal recibida desde Telegram:
-
-      1. Extrae datos (par, dirección, apalancamiento…)
-      2. Llama a trend_system_final.analyze_and_format
-      3. Envía análisis a Telegram
-      4. Guarda señal + análisis en la base de datos
-
-    La decisión final (confirmada / esperar / parcial)
-    proviene del motor trend_system_final.
-    """
-    try:
-        details = extract_basic_details(signal_message)
-
-        if not details:
-            await asyncio.to_thread(
-                send_message,
-                "⚠️ No se pudo interpretar la señal recibida. Verifica el formato."
+        cur.execute(
+            """
+            INSERT INTO signals (
+                pair, direction, leverage, entry_price,
+                take_profits, match_ratio, recommendation,
+                timestamp, status, reactivated
             )
-            return
-
-        pair = details["pair"]
-        direction = details["direction"]
-        leverage = details["leverage"]
-        entry = details["entry"]
-        take_profits = details["take_profits"]
-
-        logger.info(f"📊 Procesando señal: {pair} ({direction.upper()} x{leverage})")
-
-        # ============================================================
-        # 🔍 1. Análisis técnico completo (motor unificado)
-        # ============================================================
-        result, report_message = analyze_and_format(pair, direction_hint=direction)
-
-        # ============================================================
-        # 📤 2. Enviar mensaje al usuario
-        # (sin bloquear el loop principal)
-        # ============================================================
-        await asyncio.to_thread(send_message, report_message)
-
-        # ============================================================
-        # 💾 3. Guardar en DB
-        # ============================================================
-        record = {
-            "pair": pair,
-            "direction": direction,
-            "leverage": leverage,
-            "entry": entry,
-            "take_profits": take_profits,
-            "match_ratio": result.get("match_ratio", 0.0),
-            "recommendation": result.get("recommendation", "Sin datos"),
-        }
-
-        await save_signal(record)
-
-        logger.info(
-            f"💾 Señal guardada: {pair} — match={result.get('match_ratio', 0.0):.1f}% "
-            f"| rec='{result.get('recommendation')}'"
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                signal["pair"],
+                signal["direction"],
+                signal.get("leverage", 20),
+                signal["entry_price"],
+                signal.get("take_profits", ""),
+                signal.get("match_ratio", 0.0),
+                signal.get("recommendation", ""),
+                signal.get("timestamp"),
+                signal.get("status", "pending"),
+                signal.get("reactivated", 0),
+            ),
         )
+
+        conn.commit()
+        conn.close()
+        logger.info(f"💾 Señal guardada en DB: {signal['pair']}")
 
     except Exception as e:
-        logger.error(f"❌ Error procesando señal: {e}")
-        await asyncio.to_thread(
-            send_message,
-            f"⚠️ Ocurrió un error procesando la señal: {e}"
+        logger.error(f"❌ Error guardando señal: {e}")
+
+
+# ============================================================
+# 📤 Obtener señales pendientes para reactivación
+# ============================================================
+def get_pending_signals_for_reactivation() -> List[Dict[str, Any]]:
+    """Devuelve señales con status='pending' y reactivated=0."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT 
+                id, pair, direction, leverage, entry_price,
+                take_profits, match_ratio, recommendation,
+                timestamp, status, reactivated
+            FROM signals
+            WHERE status='pending'
+              AND reactivated=0
+            ORDER BY timestamp DESC
+            """
         )
 
+        rows = cur.fetchall()
+        conn.close()
 
+        results = []
+        for r in rows:
+            results.append({
+                "id": r[0],
+                "symbol": r[1],
+                "direction": r[2],
+                "leverage": r[3],
+                "entry_price": r[4],
+                "take_profits": r[5],
+                "match_ratio": r[6],
+                "recommendation": r[7],
+                "timestamp": r[8],
+                "status": r[9],
+                "reactivated": r[10],
+            })
+
+        return results
+
+    except Exception as e:
+        logger.error(f"❌ Error leyendo señales pendientes para reactivación: {e}")
+        return []
+
+
+# ============================================================
+# 🔁 Marcar señal como reactivada
+# ============================================================
+def mark_signal_reactivated(signal_id: int):
+    """Actualiza el estado de una señal como reactivada."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            UPDATE signals
+            SET reactivated=1,
+                status='reactivated'
+            WHERE id=?
+            """,
+            (signal_id,),
+        )
+
+        conn.commit()
+        conn.close()
+        logger.info(f"♻️ Señal marcada como reactivada (ID={signal_id})")
+
+    except Exception as e:
+        logger.error(f"❌ Error marcando señal reactivada: {e}")

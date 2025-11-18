@@ -1,104 +1,193 @@
-# telegram_reader.py (versión corregida y sincronizada)
-import asyncio
-import logging
+"""
+telegram_reader.py
+------------------------------------------------------------
+Lector de señales desde el canal VIP (Telethon).
+
+Funciones:
+✔ Detecta señales tipo:
+    🔥 #TRUTH/USDT (Long📈, x20)
+    Entry - 0.03223
+    🥉 0.03287
+    🥈 0.03320
+    🥇 0.03352
+    🚀 0.03384
+
+✔ Parseo robusto tolerante a variaciones.
+✔ Guarda señal en DB nueva (tabla signals).
+✔ Ejecuta análisis técnico inicial con trend_system_final.
+✔ Envía reporte automático al usuario.
+
+------------------------------------------------------------
+"""
+
 import re
-from telethon import TelegramClient, events
+import logging
+from datetime import datetime
+
+from telethon import events
+from telethon.sync import TelegramClient
+
 from config import (
-    TELEGRAM_API_ID,
-    TELEGRAM_API_HASH,
+    API_ID,
+    API_HASH,
     TELEGRAM_PHONE,
-    TELEGRAM_SESSION,
-    TELEGRAM_SIGNAL_CHANNEL_ID,
+    TELEGRAM_CHANNEL_ID,
+    TELEGRAM_USER_ID,
 )
-from notifier import send_message, notify_profit_update
+from database import save_signal
+from notifier import send_message
+from trend_system_final import analyze_and_format
 
 logger = logging.getLogger("telegram_reader")
 
-# ---------------------------
-# Parsers
-# ---------------------------
 
-PAIR_RE = re.compile(r"#?([A-Z0-9]+)\s*/\s*([A-Z]{3,5})")
-DIR_RE = re.compile(r"\b(Long|Short)\b", re.IGNORECASE)
-LEV_RE = re.compile(r"x\s?(\d{1,3})")
-ENTRY_RE = re.compile(r"(?:Entry\s*[-:]?\s*)([0-9]*\.?[0-9]+)", re.IGNORECASE)
+# ============================================================
+# 🔍 Regex para detección de señales del canal
+# ============================================================
 
-PROFIT_UPDATE_RE = re.compile(
-    r"^#?[A-Z0-9]+/USDT.*?(?:Price\s*[-:]\s*[0-9]*\.?[0-9]+).*?(?:Profit\s*[-:]\s*\d+%)",
-    re.IGNORECASE | re.DOTALL,
+SIGNAL_HEADER = re.compile(
+    r"#([A-Z0-9]+\/USDT)\s*\((Long|Short)[^)]*\)",
+    re.IGNORECASE
+)
+
+ENTRY_REGEX = re.compile(
+    r"Entry\s*[-:]\s*([0-9]*\.?[0-9]+)", re.IGNORECASE
+)
+
+TP_REGEX = re.compile(
+    r"TP\d?\s*[:\-]\s*([0-9]*\.?[0-9]+)|🥉\s*([0-9]*\.?[0-9]+)|🥈\s*([0-9]*\.?[0-9]+)|🥇\s*([0-9]*\.?[0-9]+)|🚀\s*([0-9]*\.?[0-9]+)"
+)
+
+LEV_REGEX = re.compile(
+    r"x(\d+)", re.IGNORECASE
 )
 
 
-def parse_signal_text(text: str):
-    """Devuelve dict con {pair, direction, entry, leverage} o None si no es señal válida."""
-    if PROFIT_UPDATE_RE.search(text):
-        return {"type": "profit_update"}
+# ============================================================
+# 📥 Función principal: parsear señal
+# ============================================================
 
-    m_pair = PAIR_RE.search(text)
-    m_dir = DIR_RE.search(text)
-    m_lev = LEV_RE.search(text)
-    m_ent = ENTRY_RE.search(text)
-
-    if not (m_pair and m_dir and m_ent):
+def parse_signal(text: str):
+    """
+    Extrae:
+    - symbol
+    - direction
+    - leverage
+    - entry_price
+    - take_profits (lista TP1–TP4)
+    """
+    header = SIGNAL_HEADER.search(text)
+    if not header:
         return None
 
-    base, quote = m_pair.group(1), m_pair.group(2)
-    direction = m_dir.group(1).lower()
-    entry = float(m_ent.group(1))
-    leverage = int(m_lev.group(1)) if m_lev else 0
+    symbol = header.group(1).replace("/", "")
+    direction = header.group(2).lower()
 
-    return {
-        "type": "signal",
-        "pair": f"{base}{quote}".upper(),
+    # Leverage
+    lev_match = LEV_REGEX.search(text)
+    leverage = int(lev_match.group(1)) if lev_match else 20
+
+    # Entry
+    entry_match = ENTRY_REGEX.search(text)
+    if not entry_match:
+        return None
+
+    entry_price = float(entry_match.group(1))
+
+    # TPs
+    tps = []
+    for match in TP_REGEX.findall(text):
+        # match = tuple like ('0.0328','',...,'')
+        for group in match:
+            if group:
+                tps.append(float(group))
+
+    # Limitar a 4 TP
+    tps = tps[:4]
+    while len(tps) < 4:
+        tps.append(None)
+
+    result = {
+        "symbol": symbol.upper(),
         "direction": direction,
-        "entry": entry,
         "leverage": leverage,
+        "entry_price": entry_price,
+        "tp1": tps[0],
+        "tp2": tps[1],
+        "tp3": tps[2],
+        "tp4": tps[3],
+        "raw": text,
     }
 
-# ---------------------------
-# Runner
-# ---------------------------
+    return result
 
-async def start_telegram_reader():
-    """Inicia el lector de señales y lanza análisis automático."""
-    from signal_manager import process_signal  # import diferido (evita bucles)
 
-    chat_id = int(str(TELEGRAM_SIGNAL_CHANNEL_ID).replace(" ", ""))
 
-    logger.info("📡 TelegramSignalReader iniciado en modo escucha...")
+# ============================================================
+# 💾 Guardar señal + análisis técnico
+# ============================================================
 
-    client = TelegramClient(TELEGRAM_SESSION, TELEGRAM_API_ID, TELEGRAM_API_HASH)
-    await client.start(phone=TELEGRAM_PHONE)
+def process_signal(parsed: dict):
+    """
+    Guarda en DB y ejecuta análisis inicial.
+    """
+    symbol = parsed["symbol"]
+    direction = parsed["direction"]
+    leverage = parsed["leverage"]
+    entry = parsed["entry_price"]
 
-    me = await client.get_me()
-    logger.info(f"✅ Conectado como {me.first_name} ({me.id})")
+    logger.info(f"📥 Nueva señal capturada: {symbol} ({direction}) x{leverage}")
 
-    @client.on(events.NewMessage(chats=chat_id))
+    # 1) Guardar en DB
+    save_signal(
+        symbol=symbol,
+        direction=direction,
+        entry_price=entry,
+        tp1=parsed["tp1"],
+        tp2=parsed["tp2"],
+        tp3=parsed["tp3"],
+        tp4=parsed["tp4"],
+        leverage=leverage,
+        original_message=parsed["raw"]
+    )
+
+    # 2) Ejecutar análisis técnico inicial
+    result, formatted = analyze_and_format(symbol, direction_hint=direction)
+
+    # 3) Notificar por Telegram
+    send_message(
+        f"📥 *Nueva señal detectada: {symbol}*\n"
+        f"📈 Dirección: *{direction.upper()}* x{leverage}\n"
+        f"💵 Entry: {entry}\n"
+        f"\n"
+        f"{formatted}"
+    )
+
+
+# ============================================================
+# 👂 Listener de Telethon
+# ============================================================
+
+def attach_listeners(client: TelegramClient):
+
+    @client.on(events.NewMessage(chats=[TELEGRAM_CHANNEL_ID]))
     async def handler(event):
+        text = event.message.message
+
+        parsed = parse_signal(text)
+        if not parsed:
+            return
+
         try:
-            text = (event.message.message or "").strip()
-            if not text:
-                return
-
-            logger.info(f"📥 Señal recibida ({event.message.date}):\n{text[:120]}{'...' if len(text)>120 else ''}")
-
-            parsed = parse_signal_text(text)
-            if not parsed:
-                logger.debug("ℹ️ Mensaje ignorado (no coincide con formato de señal).")
-                return
-
-            if parsed.get("type") == "profit_update":
-                # ✅ Sin await porque notify_profit_update() es síncrono
-                asyncio.to_thread(notify_profit_update, text)
-                return
-
-            # 🧠 Procesar señal válida en segundo plano
-            logger.info(f"🧠 Lanzando análisis automático para {parsed['pair']} ({parsed['direction'].upper()} x{parsed['leverage']})")
-            asyncio.create_task(process_signal(text))
-
+            process_signal(parsed)
         except Exception as e:
-            logger.error(f"❌ Error en handler de señales: {e}")
-            # ✅ sin await
-            asyncio.to_thread(send_message, f"⚠️ Error leyendo una señal: {e}")
+            logger.error(f"❌ Error procesando señal: {e}")
 
-    await client.run_until_disconnected()
+
+# ============================================================
+# 🚀 Inicializar lector
+# ============================================================
+
+def start_telegram_reader(client: TelegramClient):
+    attach_listeners(client)
+    logger.info("📡 Lector de señales activo y escuchando canal VIP.")

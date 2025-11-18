@@ -62,7 +62,8 @@ BYBIT_CATEGORY = "linear"
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "true").lower() == "true"
 APP_MODE = os.getenv("APP_MODE", "ANALYSIS")  # ANALYSIS o TRADING
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-DATABASE_PATH = "data/trading_signals.db"
+DATABASE_PATH = "trading_ai_monitor.db"
+
 
 # =========================
 # 🎚 Sensibilidad del sistema de análisis
