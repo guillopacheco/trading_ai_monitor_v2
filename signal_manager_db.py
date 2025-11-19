@@ -1,32 +1,40 @@
 """
-signal_manager_db.py
+signal_manager_db.py — versión definitiva
 ------------------------------------------------------------
-Capa de acceso a la base de datos:
+Gestión de la tabla `signals` unificada y compatible con:
 
-- Guardar señales
-- Leer señales pendientes
-- Marcar reactivaciones
+✔ telegram_reader (guarda señales)
+✔ technical_brain (análisis técnico inicial y reactivaciones)
+✔ signal_reactivation_sync (lectura/modificación)
+✔ command_bot (/historial)
+✔ main.py
 
-Compatible con la tabla `signals` FINAL:
+Tabla FINAL esperada:
 
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol TEXT NOT NULL,
     direction TEXT NOT NULL,
     leverage INTEGER DEFAULT 20,
     entry_price REAL,
-    take_profits TEXT,
-    match_ratio REAL DEFAULT 0,
-    recommendation TEXT,
+    tp1 REAL,
+    tp2 REAL,
+    tp3 REAL,
+    tp4 REAL,
+    original_message TEXT,
+    allowed INTEGER DEFAULT 0,
+    overall_trend TEXT,
+    suggestion TEXT,
+    score REAL DEFAULT 0,
+    status TEXT DEFAULT 'pending',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    reactivated_at TEXT,
-    status TEXT DEFAULT 'pending'
+    reactivated_at TEXT
 ------------------------------------------------------------
 """
 
 import sqlite3
 import logging
-from typing import List, Dict, Any
 from datetime import datetime
+from typing import List, Dict, Any
 
 from config import DATABASE_PATH
 
@@ -37,32 +45,48 @@ logger = logging.getLogger("signal_manager_db")
 # 🔌 Conexión segura
 # ============================================================
 def _connect():
-    return sqlite3.connect(DATABASE_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+    return sqlite3.connect(
+        DATABASE_PATH,
+        detect_types=sqlite3.PARSE_DECLTYPES,
+        check_same_thread=False
+    )
 
 
 # ============================================================
 # ➕ Guardar nueva señal
 # ============================================================
-def save_signal(symbol: str, direction: str, leverage: int, entry_price: float,
-                take_profits: str, match_ratio: float, recommendation: str):
-
+def save_signal(
+    symbol: str,
+    direction: str,
+    leverage: int,
+    entry_price: float,
+    tp1: float,
+    tp2: float,
+    tp3: float,
+    tp4: float,
+    original_message: str,
+):
     try:
         conn = _connect()
         cur = conn.cursor()
 
         cur.execute("""
             INSERT INTO signals (
-                symbol, direction, leverage, entry_price,
-                take_profits, match_ratio, recommendation, status
+                symbol, direction, leverage,
+                entry_price, tp1, tp2, tp3, tp4,
+                original_message,
+                status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-        """, (symbol, direction, leverage, entry_price,
-              take_profits, match_ratio, recommendation))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        """, (
+            symbol, direction, leverage,
+            entry_price, tp1, tp2, tp3, tp4,
+            original_message
+        ))
 
         conn.commit()
         conn.close()
-
-        logger.info(f"💾 Señal guardada: {symbol} {direction} entry={entry_price}")
+        logger.info(f"💾 Señal guardada en DB: {symbol} ({direction}) entry={entry_price}")
 
     except Exception as e:
         logger.error(f"❌ Error guardando señal: {e}")
@@ -71,13 +95,7 @@ def save_signal(symbol: str, direction: str, leverage: int, entry_price: float,
 # ============================================================
 # 🟡 Señales pendientes de reactivación
 # ============================================================
-def get_pending_signals_for_reactivation():
-    """
-    Devuelve señales donde:
-    - status = 'pending'
-    - reactivated_at IS NULL
-    """
-
+def get_pending_signals_for_reactivation() -> List[Dict[str, Any]]:
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -85,45 +103,43 @@ def get_pending_signals_for_reactivation():
         cur.execute("""
             SELECT 
                 id, symbol, direction, leverage,
-                entry_price, take_profits, match_ratio,
-                recommendation, created_at
+                entry_price, tp1, tp2, tp3, tp4,
+                original_message, created_at
             FROM signals
-            WHERE status = 'pending' AND reactivated_at IS NULL
+            WHERE status='pending' AND reactivated_at IS NULL
             ORDER BY id DESC
         """)
 
         rows = cur.fetchall()
         conn.close()
 
-        signals = []
+        result = []
         for r in rows:
-            signals.append({
+            result.append({
                 "id": r[0],
                 "symbol": r[1],
                 "direction": r[2],
                 "leverage": r[3],
                 "entry_price": r[4],
-                "take_profits": r[5],
-                "match_ratio": r[6],
-                "recommendation": r[7],
-                "created_at": r[8],
+                "tp1": r[5],
+                "tp2": r[6],
+                "tp3": r[7],
+                "tp4": r[8],
+                "original_message": r[9],
+                "created_at": r[10],
             })
 
-        return signals
+        return result
 
     except Exception as e:
-        logger.error(f"❌ Error leyendo señales pendientes: {e}")
+        logger.error(f"❌ Error obteniendo señales pendientes: {e}")
         return []
 
 
 # ============================================================
-# ♻️ Marcar señal como reactivada
+# ♻️ Marcar como reactivada
 # ============================================================
 def mark_signal_reactivated(signal_id: int):
-    """
-    Setea reactivated_at = NOW() y status = 'reactivated'
-    """
-
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -131,14 +147,58 @@ def mark_signal_reactivated(signal_id: int):
         cur.execute("""
             UPDATE signals
             SET status='reactivated',
-                reactivated_at = ?
-            WHERE id = ?
+                reactivated_at=?
+            WHERE id=?
         """, (datetime.utcnow().isoformat(), signal_id))
 
         conn.commit()
         conn.close()
-
-        logger.info(f"♻️ Señal marcada como reactivada (id={signal_id})")
+        logger.info(f"♻️ Señal reactivada en DB (id={signal_id})")
 
     except Exception as e:
-        logger.error(f"❌ Error actualizando reactivación: {e}")
+        logger.error(f"❌ Error marcando señal reactivada: {e}")
+
+
+# ============================================================
+# 📜 Obtener historial
+# ============================================================
+def get_signals(limit: int = 20):
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, symbol, direction, leverage,
+                   entry_price, tp1, tp2, tp3, tp4,
+                   suggestion, score, status, created_at
+            FROM signals
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
+
+        rows = cur.fetchall()
+        conn.close()
+
+        result = []
+        for r in rows:
+            result.append({
+                "id": r[0],
+                "symbol": r[1],
+                "direction": r[2],
+                "leverage": r[3],
+                "entry_price": r[4],
+                "tp1": r[5],
+                "tp2": r[6],
+                "tp3": r[7],
+                "tp4": r[8],
+                "suggestion": r[9],
+                "score": r[10],
+                "status": r[11],
+                "created_at": r[12],
+            })
+
+        return result
+
+    except Exception as e:
+        logger.error(f"❌ Error en get_signals(): {e}")
+        return []
