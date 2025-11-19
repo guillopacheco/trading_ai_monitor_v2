@@ -19,7 +19,7 @@ TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE")
 TELEGRAM_SESSION = os.getenv("TELEGRAM_SESSION", "trading_ai_monitor")
 
 # Canal VIP donde llegan las señales
-TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_SIGNAL_CHANNEL_ID", "0"))
+TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_CHANNEL_ID", "0"))
 
 # Bot privador (para enviar análisis, alertas, /estado, etc.)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -140,7 +140,7 @@ def validate_config():
     if not API_HASH: missing.append("TELEGRAM_API_HASH")
     if not TELEGRAM_BOT_TOKEN: missing.append("TELEGRAM_BOT_TOKEN")
     if not TELEGRAM_USER_ID: missing.append("TELEGRAM_USER_ID")
-    if not TELEGRAM_CHANNEL_ID: missing.append("TELEGRAM_SIGNAL_CHANNEL_ID")
+    if not TELEGRAM_CHANNEL_ID: missing.append("TELEGRAM_CHANNEL_ID")
 
     if missing:
         raise ValueError(f"⚠️ VARIABLES FALTANTES: {', '.join(missing)}")

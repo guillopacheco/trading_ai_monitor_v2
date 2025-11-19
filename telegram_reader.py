@@ -18,8 +18,8 @@ import asyncio
 from telethon import events, TelegramClient
 
 from config import (
-    TELEGRAM_API_ID,
-    TELEGRAM_API_HASH,
+    API_ID,
+    API_HASH,
     TELEGRAM_PHONE,
     TELEGRAM_SESSION,
     TELEGRAM_CHANNEL_ID,
