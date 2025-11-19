@@ -1,11 +1,18 @@
 """
-main.py — Orquestador
-- Inicializa DB
-- Lanza lector de Telegram (telegram_reader.start_telegram_reader)
-- Lanza bot de comandos (command_bot.start_command_bot)
-- Lanza monitor de posiciones (operation_tracker.monitor_open_positions)
-- Lanza monitor de reversiones (position_reversal_monitor.monitor_reversals)
-- Lanza reactivación automática de señales (signal_reactivation_sync.auto_reactivation_loop)
+main.py — Orquestador FINAL (versión integrada 2025-11)
+------------------------------------------------------------
+Inicializa y ejecuta TODOS los módulos del sistema:
+
+✔ Base de datos
+✔ Cliente de Telethon
+✔ Lector de señales (telegram_reader)
+✔ Bot de comandos (command_bot)
+✔ Monitor de operaciones (operation_tracker)
+✔ Monitor de reversiones (position_reversal_monitor)
+✔ Reactivación automática de señales (signal_reactivation_sync)
+
+Todo corriendo en asyncio sin bloqueos.
+------------------------------------------------------------
 """
 
 import logging
@@ -13,8 +20,15 @@ import asyncio
 import sys
 from datetime import datetime
 
+from telethon import TelegramClient
+from config import (
+    API_ID,
+    API_HASH,
+    TELEGRAM_PHONE,
+    SIMULATION_MODE,
+)
+
 from database import init_database
-from config import SIMULATION_MODE
 from telegram_reader import start_telegram_reader
 from command_bot import start_command_bot
 from operation_tracker import monitor_open_positions
@@ -22,77 +36,102 @@ from position_reversal_monitor import monitor_reversals
 from signal_reactivation_sync import auto_reactivation_loop
 from logger_config import setup_logging
 
+
+# ============================================================
+# 📘 Configuración de logging
+# ============================================================
 setup_logging()
-
-LOG_FILE = "trading_ai_monitor.log"
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()],
-)
-
 logger = logging.getLogger("__main__")
 
 
+# ============================================================
+# 🌐 Cliente de Telethon (lector de señales)
+# ============================================================
+def init_telegram_client():
+    """
+    Inicializa un cliente de Telethon y realiza la autenticación
+    si es necesario.
+    """
+    client = TelegramClient("monitor_session", API_ID, API_HASH)
+
+    client.connect()
+
+    if not client.is_user_authorized():
+        logger.warning("📲 Autenticación de Telegram requerida. Enviando código...")
+        client.send_code_request(TELEGRAM_PHONE)
+        code = input("🔐 Ingrese el código enviado por Telegram: ")
+        client.sign_in(TELEGRAM_PHONE, code)
+
+    return client
+
+
+# ============================================================
+# 🧠 Bucle independiente de monitoreo recurrente
+# ============================================================
+async def loop_positions(interval_seconds=60):
+    """
+    Monitor de operaciones abiertas cada 60s.
+    (operation_tracker trabaja en to_thread).
+    """
+    while True:
+        try:
+            await asyncio.to_thread(monitor_open_positions)
+        except Exception as e:
+            logger.error(f"❌ Error en loop_positions: {e}")
+        await asyncio.sleep(interval_seconds)
+
+
+# ============================================================
+# 🚀 Orquestador principal
+# ============================================================
 async def main():
     logger.info(f"🚀 Iniciando Trading AI Monitor (modo simulación: {SIMULATION_MODE})")
+
+    # 1) Base de datos
     init_database()
 
-    mode = "signals"
-    if len(sys.argv) > 2 and sys.argv[1] == "--mode":
-        mode = sys.argv[2]
+    # 2) Lector de Telethon
+    telegram_client = init_telegram_client()
 
-    tasks = []
+    # 3) Iniciar listener de señales
+    start_telegram_reader(telegram_client)
 
-    # Lector de Telegram (señales)
-    if mode == "signals":
-        tasks.append(asyncio.create_task(start_telegram_reader()))
+    # 4) Iniciar bot de comandos (async)
+    bot_task = asyncio.create_task(start_command_bot())
 
-    # Bot de comandos
-    tasks.append(asyncio.create_task(start_command_bot()))
+    # 5) Iniciar monitor de posiciones cada 60s
+    positions_task = asyncio.create_task(loop_positions(60))
 
-    # Monitor de posiciones (sincronamente, dentro de to_thread desde command_bot /reanudar)
-    # Aquí mantenemos una evaluación periódica simple cada 60s
-    async def loop_positions():
-        while True:
-            try:
-                await asyncio.to_thread(monitor_open_positions)
-            except Exception as e:
-                logger.error(f"❌ Error en monitor_open_positions (loop): {e}")
-            await asyncio.sleep(60)
+    # 6) Monitor de reversiones (cada 5 min)
+    reversals_task = asyncio.create_task(monitor_reversals(interval_seconds=300))
 
-    tasks.append(asyncio.create_task(loop_positions()))
+    # 7) Reactivación automática de señales (cada 15 min)
+    reactivation_task = asyncio.create_task(auto_reactivation_loop())
 
-    # 🧠 Monitor de posibles reversiones técnicas (cada 5 min)
-    tasks.append(asyncio.create_task(monitor_reversals(interval_seconds=300)))
+    logger.info("🧠 Tareas principales iniciadas.")
+    logger.info("📡 Conectando cliente de Telegram...")
 
-    # ♻️ Reactivación automática de señales
+    # 8) Iniciar Telethon (bloquea, pero compatible con asyncio)
     try:
-        asyncio.create_task(auto_reactivation_loop(900))  # cada 15 min (interno)
-        logger.info("♻️ Reactivación automática de señales habilitada (intervalo: 15 min).")
-    except Exception as e:
-        logger.error(f"❌ No se pudo iniciar el módulo de reactivación automática: {e}")
-
-    try:
-        while True:
-            await asyncio.sleep(300)
-            logger.info(f"⏳ Sistema activo — {datetime.now():%Y-%m-%d %H:%M:%S}")
-    except asyncio.CancelledError:
-        logger.warning("🛑 Bucle principal cancelado.")
-    except Exception as e:
-        logger.error(f"❌ Error crítico en main(): {e}")
+        telegram_client.run_until_disconnected()
     finally:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
-        logger.info("🧹 Tareas limpiadas. Finalizando sistema.")
+        logger.warning("🛑 Cliente de Telegram desconectado. Cerrando sistema...")
+
+        # Cancelar tareas activas
+        for task in [bot_task, positions_task, reversals_task, reactivation_task]:
+            if not task.done():
+                task.cancel()
+
+        logger.info("🧹 Sistema finalizado limpiamente.")
 
 
+# ============================================================
+# 🔧 Entrada principal
+# ============================================================
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.warning("🛑 Ejecución detenida manualmente.")
     except Exception as e:
-        logger.error(f"❌ Error fatal en ejecución: {e}")
+        logger.error(f"❌ Error fatal: {e}")
