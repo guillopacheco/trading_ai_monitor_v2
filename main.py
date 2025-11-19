@@ -11,13 +11,12 @@ Inicializa y ejecuta TODOS los módulos del sistema:
 ✔ Monitor de reversiones (position_reversal_monitor)
 ✔ Reactivación automática de señales (signal_reactivation_sync)
 
-Todo bajo un diseño estable usando asyncio.
+Todo estable bajo asyncio + Telethon async.
 ------------------------------------------------------------
 """
 
 import logging
 import asyncio
-from datetime import datetime
 
 from telethon import TelegramClient
 
@@ -47,14 +46,15 @@ logger = logging.getLogger("MAIN")
 
 
 # ============================================================
-# 🌐 Cliente de Telethon (lector de señales)
+# 🌐 Cliente de Telethon (lector de señales) — ASYNC
 # ============================================================
 
-def init_telegram_client() -> TelegramClient:
+async def init_telegram_client() -> TelegramClient:
     """
-    Crea el cliente Telethon con la sesión configurada en .env
-    y autentica si es necesario.
+    Inicializa el cliente Telethon de forma 100% async.
+    Maneja autenticación si la sesión no está todavía autorizada.
     """
+
     logger.info("📡 Inicializando cliente de Telethon...")
 
     client = TelegramClient(
@@ -62,13 +62,16 @@ def init_telegram_client() -> TelegramClient:
         API_ID,
         API_HASH
     )
-    client.connect()
 
-    if not client.is_user_authorized():
+    # 🔹 Telethon moderno requiere await en connect()
+    await client.connect()
+
+    # 🔹 Verificar autorización
+    if not await client.is_user_authorized():
         logger.warning("📲 Autenticación requerida — enviando código...")
-        client.send_code_request(TELEGRAM_PHONE)
+        await client.send_code_request(TELEGRAM_PHONE)
         code = input("🔐 Ingrese el código enviado por Telegram: ")
-        client.sign_in(TELEGRAM_PHONE, code)
+        await client.sign_in(TELEGRAM_PHONE, code)
 
     return client
 
@@ -78,9 +81,6 @@ def init_telegram_client() -> TelegramClient:
 # ============================================================
 
 async def loop_positions(interval_seconds: int = 60):
-    """
-    Revisa las posiciones abiertas cada X segundos.
-    """
     logger.info("📡 Monitor de posiciones iniciado (loop_positions).")
 
     while True:
@@ -97,9 +97,6 @@ async def loop_positions(interval_seconds: int = 60):
 # ============================================================
 
 async def loop_reversals(interval_seconds: int = 300):
-    """
-    Monitor de reversiones profundas.
-    """
     logger.info("🔍 Monitor de reversiones iniciado (loop_reversals).")
 
     while True:
@@ -122,32 +119,32 @@ async def main():
     init_database()
     logger.info("🗄 Base de datos inicializada.")
 
-    # 2) Cliente de Telethon
-    telegram_client = init_telegram_client()
+    # 2) Cliente Telethon completamente async
+    telegram_client = await init_telegram_client()
 
-    # 3) Lector del canal VIP
+    # 3) Activar listener del canal VIP
     start_telegram_reader(telegram_client)
     logger.info("📩 Lector de señales activado.")
 
-    # 4) Bot de comandos
+    # 4) Bot de comandos (async)
     bot_task = asyncio.create_task(start_command_bot())
     logger.info("🤖 Bot de comandos iniciado.")
 
-    # 5) Loop de monitoreo de posiciones
+    # 5) Monitoreo de posiciones (loop cada 60s)
     positions_task = asyncio.create_task(loop_positions(60))
 
-    # 6) Loop de detección de reversiones
+    # 6) Monitoreo de reversiones (cada 5 min)
     reversals_task = asyncio.create_task(loop_reversals(300))
 
-    # 7) Loop de reactivación automática
+    # 7) Reactivación automática de señales
     reactivation_task = asyncio.create_task(auto_reactivation_loop())
 
     logger.info("🧠 Tareas principales en ejecución.")
-    logger.info("📡 Ejecutando cliente de Telegram...")
+    logger.info("📡 Ejecutando cliente de Telegram (run_until_disconnected)...")
 
-    # 8) Telethon mantiene el proceso vivo
+    # 8) Telethon mantiene la ejecución (async)
     try:
-        telegram_client.run_until_disconnected()
+        await telegram_client.run_until_disconnected()
 
     finally:
         logger.warning("🛑 Cliente de Telegram desconectado. Finalizando sistema...")
