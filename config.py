@@ -13,8 +13,8 @@ load_dotenv()
 # ================================================================
 # 📂 TELEGRAM — API de usuario (Telethon) y BOT
 # ================================================================
-API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
-API_HASH = os.getenv("TELEGRAM_API_HASH")
+API_ID = int(os.getenv("API_ID", "0"))
+API_HASH = os.getenv("API_HASH")
 TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE")
 TELEGRAM_SESSION = os.getenv("TELEGRAM_SESSION", "trading_ai_monitor")
 
