@@ -22,289 +22,234 @@ EL RESTO DEL SISTEMA SOLO LLAMA:
 """
 
 import logging
-import math
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List
+from statistics import mean
 
-from indicators import get_technical_data
+from bybit_client import get_ohlcv_data
 from smart_divergences import detect_smart_divergences
-from divergence_detector import detect_divergences
 
 logger = logging.getLogger("technical_brain")
 
 
 # ============================================================
-# 🔧 CONFIGURACIÓN GLOBAL DEL MOTOR
+# 🔧 Utilidades
 # ============================================================
 
-TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
-
-MAJOR_TF = ["1h", "4h"]
-MID_TF = ["15m", "30m"]
-LOW_TF = ["1m", "3m", "5m"]
-
-THRESHOLDS = {
-    "entry_min_match": 70,
-    "reactivation_min_match": 80,
-    "reversal_loss_trigger": -3,
-}
-
-
-# ============================================================
-# 🔍 DETECCIÓN DE TENDENCIA GLOBAL
-# ============================================================
-
-def _extract_trend(tech: Dict[str, Any]) -> str:
-    """
-    Produce un veredicto de tendencia global usando 1h+4h.
-    """
-    votes = []
-
-    for tf in MAJOR_TF:
-        trend = tech.get(tf, {}).get("trend", "").lower()
-
-        if "bull" in trend or "alcista" in trend:
-            votes.append("bull")
-        elif "bear" in trend or "bajista" in trend:
-            votes.append("bear")
-
-    if votes.count("bull") > votes.count("bear"):
-        return "alcista"
-    if votes.count("bear") > votes.count("bull"):
-        return "bajista"
-    return "neutral"
-
-
-# ============================================================
-# 📊 ATR & VOLATILIDAD
-# ============================================================
-
-def _atr_volatility(tech: Dict[str, Any], symbol: str) -> Tuple[float, float, str]:
-    """
-    ATR relativo = ATR / precio.
-    Devuelve:
-    - atr
-    - atr_relativo
-    - etiqueta de volatilidad
-    """
+def safe_float(x):
     try:
-        base = tech["1m"]
-        atr = base.get("atr", 0)
-        price = base.get("close", 0)
-        if not atr or not price:
-            return 0, 0, "DESCONOCIDA"
+        return float(x)
+    except:
+        return None
 
-        relative = atr / price
 
-        if relative > 0.015:
-            label = "MUY ALTA"
-        elif relative > 0.01:
-            label = "ALTA"
-        elif relative > 0.005:
-            label = "MEDIA"
-        else:
-            label = "BAJA"
-
-        return atr, relative, label
-
-    except Exception:
-        return 0, 0, "DESCONOCIDA"
+TF_LIST = ["5m", "15m", "30m", "1h", "4h", "1d"]
 
 
 # ============================================================
-# 🎯 MATCH TÉCNICO
+# 📌 Análisis técnico base por temporalidad
 # ============================================================
 
-def _calc_match_ratio(direction: str, tech: Dict[str, Any]) -> float:
+def compute_trend(df):
     """
-    Calcula coincidencia técnica en porcentaje.
+    Determina tendencia usando:
+    - EMA200
+    - Pendiente de precio
     """
-    score = 0
-    total = 6  # 1m–3m–5m–15m–30m–1h consideran
 
-    for tf in ["1m", "3m", "5m", "15m", "30m", "1h"]:
-        trend = tech.get(tf, {}).get("trend", "").lower()
-        if direction == "long" and ("bull" in trend or "alcista" in trend):
-            score += 1
-        if direction == "short" and ("bear" in trend or "bajista" in trend):
-            score += 1
+    if df is None or len(df) < 50:
+        return "unknown"
 
-    return (score / total) * 100
+    try:
+        df["ema"] = df["close"].ewm(span=200, adjust=False).mean()
+
+        last = df.iloc[-1]
+        prev = df.iloc[-10]
+
+        slope = last["close"] - prev["close"]
+        candle_bias = "bullish" if last["close"] > last["open"] else "bearish"
+
+        if last["close"] > last["ema"] and slope > 0:
+            return "bullish"
+
+        if last["close"] < last["ema"] and slope < 0:
+            return "bearish"
+
+        return candle_bias
+
+    except Exception as e:
+        logger.error(f"compute_trend error: {e}")
+        return "unknown"
 
 
 # ============================================================
-# 🧠 ANALIZADOR CENTRAL
+# 📌 Análisis multi–TF completo
 # ============================================================
 
-def analyze_market(symbol: str, direction_hint: str | None = None) -> Dict[str, Any]:
+def analyze_market(symbol: str, direction_hint: str = None) -> Dict[str, Any]:
     """
-    Obtiene:
-    ✓ tech multi-TF
-    ✓ divergencias
-    ✓ ATR & volatilidad
-    ✓ tendencia global
-    ✓ match técnico
-    ✓ reporte formateado
+    Análisis técnico unificado para TODOS los módulos:
+    - Tendencias por TF
+    - Divergencias inteligentes
+    - Señal de entrada sugerida
     """
-    tech = get_technical_data(symbol, intervals=TIMEFRAMES)
-    if not tech:
-        raise ValueError(f"Sin datos técnicos para {symbol}")
 
-    # Divergencias
-    raw_divs = detect_divergences(symbol, tech)
-    smart = detect_smart_divergences(symbol, tech)
-
-    # ATR / volatilidad
-    atr, atr_rel, vol_label = _atr_volatility(tech, symbol)
-
-    # Tendencia global
-    global_trend = _extract_trend(tech)
-
-    # Match técnico
-    if direction_hint:
-        match = _calc_match_ratio(direction_hint.lower(), tech)
-    else:
-        match = 0
-
-    formatted = _format_report(symbol, tech, raw_divs, smart, global_trend, atr, atr_rel, vol_label, match)
-
-    return {
+    result = {
         "symbol": symbol,
-        "tech": tech,
         "direction_hint": direction_hint,
-        "divergences": raw_divs,
-        "smart_divergence": smart,
-        "atr": atr,
-        "atr_relative": atr_rel,
-        "volatility": vol_label,
-        "major_trend": global_trend,
-        "match_ratio": match,
-        "report": formatted,
+        "by_tf": {},
+        "divergences": {},
+        "overall_trend": "unknown",
+        "entry_ok": False,
+        "match_ratio": 0.0,
+        "summary": ""
     }
 
+    # ------------------------------------
+    # 1. Recolectar OHLCV y calcular tendencias
+    # ------------------------------------
+    for tf in TF_LIST:
+        df = get_ohlcv_data(symbol, tf, 400)
+        if df is None or df.empty:
+            continue
 
-# ============================================================
-# 📄 GENERADOR DE REPORTE
-# ============================================================
+        trend = compute_trend(df)
 
-def _format_report(symbol, tech, raw_divs, smart, major, atr, atr_rel, vol, match):
-    lines = [
-        f"📊 *Análisis técnico de {symbol}*",
-        "",
-        f"🌐 Tendencia Global (1h–4h): *{major.upper()}*",
-        f"⚡ Volatilidad: *{vol}* (ATR={atr:.6f} | rel={atr_rel:.4f})",
-        "",
-        "📈 *Tendencias:*",
-    ]
+        result["by_tf"][tf] = {
+            "trend": trend,
+            "close": safe_float(df["close"].iloc[-1])
+        }
 
-    for tf in ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]:
-        trend = tech.get(tf, {}).get("trend", "N/A")
-        lines.append(f"• {tf}: {trend}")
+    if not result["by_tf"]:
+        result["summary"] = "No hay suficientes datos para análisis."
+        return result
 
-    lines.append("")
-    lines.append("🔍 *Divergencias:*")
-    lines.append(f"• RSI: {raw_divs.get('RSI', 'N/A')}")
-    lines.append(f"• MACD: {raw_divs.get('MACD', 'N/A')}")
-    lines.append(f"• Smart: {smart}")
+    # ------------------------------------
+    # 2. Divergencias inteligentes (RSI/MACD/Volumen)
+    # ------------------------------------
+    try:
+        divs = detect_smart_divergences(symbol, result["by_tf"])
+        result["divergences"] = divs
+    except Exception as e:
+        logger.error(f"detect_smart_divergences error: {e}")
+        result["divergences"] = {}
 
-    if match:
-        lines.append("")
-        lines.append(f"🎯 *Match técnico:* {match:.1f}%")
+    # ------------------------------------
+    # 3. Tendencia global (pesada por TF mayores)
+    # ------------------------------------
+    trends = []
+    weights = {"5m": 1, "15m": 2, "30m": 3, "1h": 4, "4h": 5, "1d": 6}
 
-    return "\n".join(lines)
+    for tf, info in result["by_tf"].items():
+        t = info["trend"]
+        if t == "bullish":
+            trends.append(weights[tf])
+        elif t == "bearish":
+            trends.append(-weights[tf])
 
+    if trends:
+        avg = mean(trends)
+        if avg > 1: 
+            result["overall_trend"] = "bullish"
+        elif avg < -1:
+            result["overall_trend"] = "bearish"
+        else:
+            result["overall_trend"] = "neutral"
 
-# ============================================================
-# 🎯 MODO DE ENTRADA
-# ============================================================
-
-def analyze_for_entry(symbol: str, direction: str) -> Dict[str, Any]:
-    r = analyze_market(symbol, direction_hint=direction)
-
-    allowed = r["match_ratio"] >= THRESHOLDS["entry_min_match"] and r["major_trend"] != "neutral"
-
-    r["allowed"] = allowed
-    return r
-
-
-# ============================================================
-# ♻️ MODO DE REACTIVACIÓN
-# ============================================================
-
-def analyze_for_reactivation(symbol: str, direction: str, entry_price: float) -> Dict[str, Any]:
-    r = analyze_market(symbol, direction_hint=direction)
-
-    if r["match_ratio"] < THRESHOLDS["reactivation_min_match"]:
-        r["allowed"] = False
-        r["reason"] = "Match técnico insuficiente"
-        return r
-
-    if direction == "long" and r["major_trend"] == "bajista":
-        r["allowed"] = False
-        r["reason"] = "Tendencia mayor en contra"
-        return r
-
-    if direction == "short" and r["major_trend"] == "alcista":
-        r["allowed"] = False
-        r["reason"] = "Tendencia mayor en contra"
-        return r
-
-    r["allowed"] = True
-    r["reason"] = "Condiciones óptimas"
-    return r
-
-
-# ============================================================
-# 🚨 MODO REVERSIÓN
-# ============================================================
-
-def analyze_for_reversal(symbol: str, direction: str, price_change_pct: float) -> Dict[str, Any]:
-    """
-    price_change_pct = cambio SIN apalancamiento
-    """
-    r = analyze_market(symbol, direction_hint=direction)
-
-    if price_change_pct > THRESHOLDS["reversal_loss_trigger"]:
-        r["alert"] = False
-        r["reason"] = "Pérdida insuficiente"
-        return r
-
-    # Divergencias fuertes siempre alertan
-    divs = r["divergences"]
-    smart = r["smart_divergence"]
-
-    div_block = (
-        ("bear" in smart.lower() and direction == "long") or
-        ("bull" in smart.lower() and direction == "short")
-    )
-
-    trend_flip = (
-        direction == "long" and r["major_trend"] == "bajista"
-    ) or (
-        direction == "short" and r["major_trend"] == "alcista"
-    )
-
-    if div_block or trend_flip:
-        r["alert"] = True
-        r["reason"] = "Divergencias o tendencia mayor en contra"
+    # ------------------------------------
+    # 4. Señal de entrada sugerida
+    # ------------------------------------
+    if direction_hint:
+        if direction_hint == "long" and result["overall_trend"] == "bullish":
+            result["entry_ok"] = True
+            result["match_ratio"] = 85
+        elif direction_hint == "short" and result["overall_trend"] == "bearish":
+            result["entry_ok"] = True
+            result["match_ratio"] = 85
+        else:
+            result["entry_ok"] = False
+            result["match_ratio"] = 40
     else:
-        r["alert"] = False
-        r["reason"] = "Condiciones sin riesgo extremo"
+        # sugerencia automática
+        if result["overall_trend"] == "bullish":
+            result["entry_ok"] = True
+            result["match_ratio"] = 70
+        elif result["overall_trend"] == "bearish":
+            result["entry_ok"] = True
+            result["match_ratio"] = 70
 
-    return r
+    # ------------------------------------
+    # 5. Resumen
+    # ------------------------------------
+    result["summary"] = build_summary(result)
+
+    return result
 
 
 # ============================================================
-# 🚀 ESCANEO RÁPIDO
+# 📌 Analizar entrada específica
 # ============================================================
 
-def quick_tf_scan(symbol: str) -> Dict[str, Any]:
-    tech = get_technical_data(symbol, intervals=["5m", "15m", "1h"])
-    if not tech:
-        raise ValueError("Sin datos técnicos")
+def analyze_for_entry(symbol: str, direction_hint: str):
+    """
+    Análisis especial para señales del canal (post-parseo).
+    """
+    res = analyze_market(symbol, direction_hint)
+    return res
 
-    return {
-        "symbol": symbol,
-        "trend_5m": tech["5m"]["trend"],
-        "trend_15m": tech["15m"]["trend"],
-        "trend_1h": tech["1h"]["trend"],
-    }
+
+# ============================================================
+# 📌 Formato Telegram
+# ============================================================
+
+def format_market_report(result: Dict[str, Any]) -> str:
+    symbol = result["symbol"]
+    trend = result["overall_trend"]
+    divs = result["divergences"]
+    match_ratio = result["match_ratio"]
+
+    tf_lines = []
+    for tf in ["5m", "15m", "30m", "1h", "4h", "1d"]:
+        if tf in result["by_tf"]:
+            t = result["by_tf"][tf]["trend"]
+            tf_lines.append(f"• {tf}: {t.upper()}")
+
+    div_lines = []
+    for k, v in divs.items():
+        if v and v not in ("None", "Ninguna"):
+            div_lines.append(f"{k}: {v}")
+
+    div_text = ", ".join(div_lines) if div_lines else "Ninguna"
+
+    return (
+        f"📊 *Análisis de {symbol}*\n"
+        f"📌 Tendencia global: *{trend.upper()}*\n"
+        f"🎯 Match técnico: *{match_ratio:.1f}%*\n\n"
+        f"📈 Tendencias por temporalidad:\n" +
+        "\n".join(tf_lines) +
+        "\n\n"
+        f"🧪 Divergencias: {div_text}\n\n"
+        f"📌 Resumen:\n{result['summary']}"
+    )
+
+
+# ============================================================
+# 📌 Construcción del resumen inteligente
+# ============================================================
+
+def build_summary(result: Dict[str, Any]) -> str:
+    trend = result["overall_trend"]
+    entry_ok = result["entry_ok"]
+    hint = result["direction_hint"]
+
+    if hint:
+        if entry_ok:
+            return f"Señal compatible con la tendencia global → {hint.upper()} recomendado."
+        else:
+            return f"La señal {hint.upper()} va contra la tendencia global."
+
+    if trend == "bullish":
+        return "Mercado con sesgo alcista, buscar LONG."
+    elif trend == "bearish":
+        return "Mercado con sesgo bajista, buscar SHORT."
+    else:
+        return "Mercado lateral / neutral."
