@@ -1,13 +1,14 @@
 """
-signal_reactivation_sync.py — versión final integrada con technical_brain
+signal_reactivation_sync.py — versión final integrada con trend_system_final
 ---------------------------------------------------------------------------
-Reactiva señales cuando el mercado vuelve a alinear la tendencia con la señal original.
+Reactiva señales cuando el mercado vuelve a alinearse con la señal original.
 
 Criterio moderno de reactivación:
-✔ allowed == True (motor técnico confirma coherencia)
-✔ La tendencia mayor coincide con la dirección original
-✔ No hay divergencias peligrosas
---------------------------------------------------------------------------- 
+✔ match_ratio ≥ threshold["reactivation"]
+✔ recomendación positiva del motor técnico
+✔ divergencias no peligrosas
+✔ sesgo smart compatible con la dirección original
+---------------------------------------------------------------------------
 """
 
 import asyncio
@@ -16,17 +17,23 @@ from datetime import datetime
 
 from config import SIGNAL_RECHECK_INTERVAL_MINUTES
 from notifier import send_message
-from technical_brain import analyze_market, format_market_report
-from signal_manager_db import (
+from database import (
     get_pending_signals_for_reactivation,
     mark_signal_reactivated,
+    save_analysis_log,
+)
+
+from trend_system_final import (
+    analyze_and_format,
+    analyze_trend_core,
+    _get_thresholds,
 )
 
 logger = logging.getLogger("signal_reactivation_sync")
 
 
 # ============================================================
-# ⚙️ Estado global para /estado
+# ⚙️ Estado global (para /estado)
 # ============================================================
 
 reactivation_status = {
@@ -36,68 +43,76 @@ reactivation_status = {
     "reactivated_count": 0,
 }
 
+
 # ============================================================
-# 🧠 Nueva lógica de reactivación
+# 🧠 Criterio de reactivación basado en trend_system_final
 # ============================================================
 
 def _can_reactivate(result: dict, original_dir: str) -> tuple[bool, str]:
     """
-    Nuevo criterio basado en Technical Brain:
+    Política moderna de reactivación:
 
-    ✔ allowed == True
-    ✔ overall_trend coincide con dirección original
-    ✔ divergencias NO peligrosas
+    ✔ match_ratio ≥ threshold
+    ✔ divergencias no peligrosas
+    ✔ sesgo smart compatible
+
+    No usamos "allowed" ni "overall_trend" en español.
     """
+    thresholds = _get_thresholds()
+    needed = thresholds.get("reactivation", 80.0)
 
-    # allowed=True → señal técnicamente válida
-    if not result.get("allowed", False):
-        return False, "Motor técnico no confirma entrada (allowed=False)."
+    match_ratio = result.get("match_ratio", 0.0)
+    if match_ratio < needed:
+        return False, f"Match ratio insuficiente ({match_ratio:.1f}% < {needed}%)."
 
-    overall = (result.get("overall_trend") or "").lower()
+    # Divergencias
     divs = result.get("divergences", {})
-    dir_lower = original_dir.lower()
-
-    # Coincidencia con tendencia mayor
-    if dir_lower == "long" and "baj" in overall:
-        return False, "La tendencia mayor sigue siendo BAJISTA."
-    if dir_lower == "short" and "alc" in overall:
-        return False, "La tendencia mayor sigue siendo ALCISTA."
-
-    # Divergencias peligrosas
     rsi = (divs.get("RSI") or "").lower()
     macd = (divs.get("MACD") or "").lower()
 
-    if dir_lower == "long" and ("bear" in rsi or "bear" in macd):
-        return False, "Divergencias bajistas detectadas."
-    if dir_lower == "short" and ("bull" in rsi or "bull" in macd):
-        return False, "Divergencias alcistas detectadas."
+    dir_lower = original_dir.lower()
+
+    # Divergencias contrarias a la dirección
+    if dir_lower == "long":
+        if "baj" in rsi or "baj" in macd or "bear" in rsi or "bear" in macd:
+            return False, "Divergencias bajistas detectadas."
+    else:  # short
+        if "alc" in rsi or "alc" in macd or "bull" in rsi or "bull" in macd:
+            return False, "Divergencias alcistas detectadas."
+
+    # Smart bias
+    smart_bias = result.get("smart_bias", "").lower()
+    if dir_lower == "long" and "bear" in smart_bias:
+        return False, "Smart bias bajista."
+    if dir_lower == "short" and "bull" in smart_bias:
+        return False, "Smart bias alcista."
 
     return True, "Condiciones ideales para reactivar."
 
 
 # ============================================================
-# 📨 Mensaje final
+# 📨 Construcción del mensaje final
 # ============================================================
 
-def _build_reactivation_message(signal: dict, result: dict) -> str:
+def _build_reactivation_message(signal: dict, result: dict, formatted: str) -> str:
     symbol = signal.get("symbol", "N/A")
     direction = signal.get("direction", "long").upper()
-    lev = signal.get("leverage", 20)
     entry = signal.get("entry_price")
+    lev = signal.get("leverage", 20)
     created = signal.get("created_at", "N/A")
 
     header = (
         f"♻️ *Señal reactivada: {symbol}*\n"
         f"📌 Dirección original: *{direction}* x{lev}\n"
-        f"💰 Entry original: {entry}\n"
+        f"💰 Entry original: `{entry}`\n"
         f"🕒 Señal enviada: {created}\n\n"
     )
 
-    return header + format_market_report(result)
+    return header + formatted
 
 
 # ============================================================
-# 🔁 Ciclo de reactivación — UNA PASADA
+# 🔁 Ejecución de un ciclo completo
 # ============================================================
 
 async def run_reactivation_cycle() -> dict:
@@ -115,7 +130,7 @@ async def run_reactivation_cycle() -> dict:
     reactivation_status["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if not signals:
-        logger.info("ℹ️ No hay señales para revisar.")
+        logger.info("ℹ️ No hay señales pendientes para revisar.")
         return stats
 
     for sig in signals:
@@ -124,28 +139,37 @@ async def run_reactivation_cycle() -> dict:
         try:
             symbol = sig["symbol"]
             direction = sig["direction"]
-            lev = int(sig.get("leverage", 20))
 
-            logger.info(f"🔎 Revisando {symbol} ({direction} x{lev})…")
+            logger.info(f"🔎 Revisando {symbol} ({direction})…")
 
-            # 1) Reanálisis técnico completo
-            result = analyze_market(symbol, direction_hint=direction)
+            # 1) Análisis técnico completo (sin formato)
+            result = analyze_trend_core(symbol, direction_hint=direction)
 
-            # 2) Decidir reactivación
+            # 2) Criterio de reactivación
             allowed, reason = _can_reactivate(result, direction)
-
             if not allowed:
                 logger.info(f"⏳ {symbol}: descartada — {reason}")
                 continue
 
-            # 3) Marcar en DB
+            # 3) Generar análisis formateado para Telegram
+            _, formatted = analyze_and_format(symbol, direction_hint=direction)
+
+            # 4) Guardar análisis en el log
+            save_analysis_log(
+                signal_id=sig["id"],
+                match_ratio=result.get("match_ratio", 0.0),
+                recommendation=result.get("recommendation", ""),
+                details=f"Reactivación automática\n{formatted}",
+            )
+
+            # 5) Marcar en BD
             mark_signal_reactivated(sig["id"])
             stats["reactivated"] += 1
             reactivation_status["reactivated_count"] += 1
 
-            # 4) Enviar mensaje
-            msg = _build_reactivation_message(sig, result)
-            await send_message(msg)
+            # 6) Enviar mensaje al usuario (to_thread por ser sync)
+            msg = _build_reactivation_message(sig, result, formatted)
+            await asyncio.to_thread(send_message, msg)
 
             logger.info(f"🟢 {symbol} reactivada correctamente.")
 
@@ -156,7 +180,7 @@ async def run_reactivation_cycle() -> dict:
 
 
 # ============================================================
-# 🔁 Bucle automático
+# 🔁 Bucle automático continuo
 # ============================================================
 
 async def reactivation_loop():
@@ -175,7 +199,7 @@ async def reactivation_loop():
 
 
 # ============================================================
-# API para /estado y compatibilidad
+# API pública
 # ============================================================
 
 def get_reactivation_status():

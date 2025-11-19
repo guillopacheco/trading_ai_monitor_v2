@@ -1,42 +1,37 @@
 """
-operation_tracker.py — versión final unificada con technical_brain
--------------------------------------------------------------------
+operation_tracker.py — versión final integrada con trend_system_final
+--------------------------------------------------------------------
 Monitor inteligente de operaciones abiertas en Bybit.
 
-Funciones:
-✔ Usa analyze_market() para obtener tendencias multi-TF
-✔ Detecta pérdidas críticas por niveles
-✔ Calcula ROI real y PnL
-✔ Genera recomendación inteligente
-✔ Envía alerta mediante notifier.notify_operation_alert()
+Funciones principales:
+✔ Obtiene operaciones abiertas desde bybit_client.get_open_positions()
+✔ Calcula ROI real con helpers.calculate_roi()
+✔ Evalúa pérdida, tendencia y sesgo smart
+✔ Produce recomendaciones claras: mantener / cerrar / revertir
+✔ Envía alertas automáticas vía notifier.send_message()
+
+Compatible con modo REAL y SIMULACIÓN.
+--------------------------------------------------------------------
 """
 
 import logging
+import asyncio
 from typing import Dict, Any
 
 from bybit_client import get_open_positions
-from notifier import notify_operation_alert
-from technical_brain import analyze_market
+from notifier import send_message
+from helpers import calculate_roi
+from trend_system_final import analyze_trend_core, _get_thresholds
 
 logger = logging.getLogger("operation_tracker")
 
-# ============================================================
-# 🔢 Cálculo ROI y niveles de pérdida
-# ============================================================
-
+# Niveles de pérdida considerados críticos
 LOSS_LEVELS = [-3, -5, -10, -20, -30, -50, -70]
 
 
-def compute_roi(entry: float, mark: float, leverage: int, direction: str) -> float:
-    if entry <= 0:
-        return 0.0
-
-    roi = ((mark - entry) / entry) * 100
-    if direction == "short":
-        roi *= -1
-
-    return roi * leverage
-
+# ============================================================
+# 🔢 Detección del nivel de pérdida
+# ============================================================
 
 def compute_loss_level(roi: float) -> int | None:
     for lvl in LOSS_LEVELS:
@@ -46,55 +41,79 @@ def compute_loss_level(roi: float) -> int | None:
 
 
 # ============================================================
-# 🧠 Recomendación inteligente
+# 🧠 Recomendación basada en trend_system_final
 # ============================================================
 
-def build_suggestion(direction: str, analysis: Dict[str, Any], roi: float) -> str:
+def build_recommendation(direction: str, analysis: Dict[str, Any], roi: float) -> str:
     """
-    Usa analyze_market() para decidir la recomendación:
-    - Cerrar
-    - Revertir
-    - Mantener
+    Usa el análisis unificado (trend_system_final) para producir
+    una recomendación clara y coherente.
     """
 
-    global_trend = analysis.get("overall_trend", "neutral")
-    entry_ok = analysis.get("entry_ok", False)
+    match_ratio = analysis.get("match_ratio", 0.0)
+    major_trend = analysis.get("major_trend", "").lower()
+    smart_bias = analysis.get("smart_bias", "").lower()
+    recommendation = analysis.get("recommendation", "")
+    thresholds = _get_thresholds()
+    internal_threshold = thresholds.get("internal", 55.0)
 
-    # Fuerte pérdida → decisiones duras
+    dir_lower = direction.lower()
+
+    # 1. Pérdidas grandes → acciones duras
     if roi <= -20:
-        if (direction == "long" and global_trend == "bearish") or \
-           (direction == "short" and global_trend == "bullish"):
-            return "Cerrar o revertir inmediatamente (tendencia muy desfavorable)"
+        # Tendencia mayor en contra = cierre o reversión inmediata
+        if (dir_lower == "long" and "bear" in major_trend) or \
+           (dir_lower == "short" and "bull" in major_trend):
+            return "❌ Tendencia mayor en contra + pérdida elevada: cerrar o revertir."
 
-    # Tendencia opuesta
-    if (direction == "long" and global_trend == "bearish") or \
-       (direction == "short" and global_trend == "bullish"):
-        return "Tendencia desfavorable: evaluar cierre"
+        # Smart bias en contra
+        if (dir_lower == "long" and "bear" in smart_bias) or \
+           (dir_lower == "short" and "bull" in smart_bias):
+            return "⚠️ Smart bias adverso: alta probabilidad de continuación en contra."
 
-    if entry_ok and roi > 0:
-        return "Operación saludable, mantener"
+    # 2. Si la señal está técnicamente revalidada (match alto)
+    if match_ratio >= internal_threshold:
+        if roi > 0:
+            return "🟢 Operación saludable, mantener."
+        return "🟡 Señal técnica coherente, pero pérdida moderada: vigilar."
 
-    if abs(roi) < 5:
-        return "Movimiento neutro, continuar monitoreando"
+    # 3. Sesgo en contra
+    if (dir_lower == "long" and "bear" in smart_bias) or \
+       (dir_lower == "short" and "bull" in smart_bias):
+        return "⚠️ Smart bias desfavorable: evaluar cierre."
 
-    return "Evaluación estándar"
+    # 4. Recomendación técnica del motor
+    if recommendation:
+        return recommendation
+
+    # 5. Caso estable
+    if -5 < roi < 5:
+        return "⏳ Movimiento neutro, continuar monitoreando."
+
+    return "📊 Evaluación estándar basada en condiciones actuales."
 
 
 # ============================================================
-# 🚨 Monitor principal
+# 🚨 Monitor principal de operaciones
 # ============================================================
 
-def monitor_open_positions():
-    logger.info("📡 Iniciando evaluación de operaciones activas...")
+async def monitor_open_positions():
+    """
+    Revisa todas las posiciones abiertas en Bybit y genera alertas
+    cuando la tendencia o la pérdida justifican una acción.
+    """
+
+    logger.info("📡 Iniciando evaluación de operaciones abiertas…")
 
     positions = get_open_positions()
+
     if not positions:
         logger.info("📭 No hay posiciones abiertas.")
         return
 
     for pos in positions:
         try:
-            symbol = pos.get("symbol", "").upper()
+            symbol = (pos.get("symbol") or "").upper()
             side = (pos.get("side") or "").lower()
             direction = "long" if side == "buy" else "short"
 
@@ -104,35 +123,52 @@ def monitor_open_positions():
             lev = int(float(pos.get("leverage") or 20))
 
             if entry <= 0:
-                logger.warning(f"⚠️ Entrada inválida para posición: {pos}")
+                logger.warning(f"⚠️ Entrada inválida: {pos}")
                 continue
 
-            roi = compute_roi(entry, mark, lev, direction)
-            loss_level = compute_loss_level(roi)
+            # ROI real (with leverage)
+            roi = calculate_roi(
+                entry_price=entry,
+                current_price=mark,
+                direction=direction,
+                leverage=lev,
+            )
 
             logger.info(
                 f"🔎 {symbol} | {direction.upper()} x{lev} | ROI={roi:.2f}% | Entry={entry} Mark={mark}"
             )
 
+            loss_level = compute_loss_level(roi)
             if loss_level is None:
-                continue  # operación saludable
+                # Operación sin pérdidas críticas
+                continue
 
-            # Obtener análisis unificado
-            analysis = analyze_market(symbol, direction_hint=direction)
+            # =======================================================
+            # 🔍 Análisis técnico profundo via trend_system_final
+            # =======================================================
+            analysis = analyze_trend_core(symbol, direction_hint=direction)
 
-            # Recomendación final
-            suggestion = build_suggestion(direction, analysis, roi)
+            # =======================================================
+            # 🎯 Recomendación final
+            # =======================================================
+            suggestion = build_recommendation(direction, analysis, roi)
 
-            # Enviar alerta
-            notify_operation_alert(
-                symbol=symbol,
-                direction=direction,
-                roi=roi,
-                pnl=pnl,
-                loss_level=loss_level,
-                volatility=analysis.get("overall_trend", "N/A"),
-                suggestion=suggestion
+            # =======================================================
+            # 📩 Notificación al usuario
+            # =======================================================
+            alert_msg = (
+                f"🚨 *Alerta de operación: {symbol}*\n"
+                f"📌 Dirección: *{direction.upper()}* x{lev}\n"
+                f"💵 ROI: `{roi:.2f}%`\n"
+                f"💰 PnL: `{pnl}`\n"
+                f"📉 Nivel de pérdida: {loss_level}%\n"
+                f"📊 Match técnico: {analysis.get('match_ratio', 0):.1f}%\n"
+                f"🧭 Tendencia mayor: {analysis.get('major_trend')}\n"
+                f"🔮 Sesgo smart: {analysis.get('smart_bias')}\n"
+                f"🧠 *Recomendación:* {suggestion}"
             )
+
+            await asyncio.to_thread(send_message, alert_msg)
 
         except Exception as e:
             logger.error(f"❌ Error evaluando operación {pos}: {e}")

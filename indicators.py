@@ -9,11 +9,11 @@ import pandas as pd
 import numpy as np
 import pandas_ta as ta
 import logging
+
 from bybit_client import get_ohlcv_data
 from smart_divergences import detect_smart_divergences
 
 logger = logging.getLogger("indicators")
-
 
 # ================================================================
 # 🧠 Selección inteligente de temporalidades
@@ -21,7 +21,7 @@ logger = logging.getLogger("indicators")
 PREFERRED_INTERVALS = ["4h", "1h", "30m", "15m", "5m", "3m", "1m"]
 
 
-def _is_valid_df(df):
+def _is_valid_df(df: pd.DataFrame) -> bool:
     """Evalúa si un dataframe tiene suficiente calidad."""
     if df is None or df.empty:
         return False
@@ -30,20 +30,36 @@ def _is_valid_df(df):
     return True
 
 
-def select_best_intervals(symbol: str, n=3):
+def _tf_to_bybit_interval(tf: str) -> str:
+    """
+    Convierte '1m','3m','5m','15m','30m','60m','1h','4h' a
+    intervalos válidos para Bybit v5:
+    - minutos → "1","3","5","15","30","60","120","240", etc.
+    """
+    tf = tf.strip().lower()
+    if tf.endswith("m"):
+        # minutos directos
+        return str(int(tf.replace("m", "")))
+    if tf.endswith("h"):
+        hours = int(tf.replace("h", ""))
+        return str(hours * 60)  # 1h=60, 4h=240
+    # fallback (asumir minutos)
+    return tf
+
+
+def select_best_intervals(symbol: str, n: int = 3):
     """
     Selecciona las mejores temporalidades disponibles, priorizando:
     1) estabilidad de tendencia
     2) coherencia interna
     3) suficiente número de velas
     """
-
-    valid = []
+    valid: list[str] = []
 
     for tf in PREFERRED_INTERVALS:
         try:
-            tf_numerical = tf.replace("m", "").replace("h", "")
-            df = get_ohlcv_data(symbol, interval=tf_numerical)
+            interval = _tf_to_bybit_interval(tf)
+            df = get_ohlcv_data(symbol, interval=interval)
 
             if _is_valid_df(df):
                 valid.append(tf)
@@ -160,17 +176,17 @@ def get_technical_data(symbol: str, intervals=None):
     """
     Calcula indicadores técnicos para múltiples temporalidades.
     Si intervals=None → selecciona automáticamente las mejores.
+    intervals debe ser tipo: ["1m","5m","15m","1h","4h",...]
     """
-    # 🧠 Selección automática si no vienen intervalos
     if intervals is None:
         intervals = select_best_intervals(symbol)
 
-    data = {}
+    data: dict[str, dict] = {}
 
     for tf in intervals:
         try:
-            raw_tf = tf.replace("m", "").replace("h", "")
-            df = get_ohlcv_data(symbol, interval=raw_tf)
+            interval = _tf_to_bybit_interval(tf)
+            df = get_ohlcv_data(symbol, interval=interval)
 
             if not _validate_df(df, symbol, tf):
                 continue
@@ -182,11 +198,15 @@ def get_technical_data(symbol: str, intervals=None):
 
             macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
             if isinstance(macd, pd.DataFrame):
-                df["macd"], df["macd_signal"], df["macd_hist"] = macd.iloc[:, 0], macd.iloc[:, 1], macd.iloc[:, 2]
+                df["macd"] = macd.iloc[:, 0]
+                df["macd_signal"] = macd.iloc[:, 1]
+                df["macd_hist"] = macd.iloc[:, 2]
 
             bb = ta.bbands(df["close"], length=20)
             if isinstance(bb, pd.DataFrame):
-                df["bb_upper"], df["bb_mid"], df["bb_lower"] = bb.iloc[:, 0], bb.iloc[:, 1], bb.iloc[:, 2]
+                df["bb_upper"] = bb.iloc[:, 0]
+                df["bb_mid"] = bb.iloc[:, 1]
+                df["bb_lower"] = bb.iloc[:, 2]
 
             df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
             df["atr_rel"] = df["atr"] / df["close"]
@@ -194,7 +214,7 @@ def get_technical_data(symbol: str, intervals=None):
 
             try:
                 df["mfi"] = ta.mfi(df["high"], df["low"], df["close"], df["volume"], length=14)
-            except:
+            except Exception:
                 df["mfi"] = np.nan
 
             last = df.iloc[-1]
@@ -217,10 +237,10 @@ def get_technical_data(symbol: str, intervals=None):
 
             trend = "bullish" if last["ema_short"] > last["ema_long"] else "bearish"
 
-            # 🔍 Enriquecimiento con divergencias simples (legacy)
+            # Divergencias simples (legacy)
             divs = enrich_with_divergences(df)
 
-            # 🆕 Divergencias avanzadas "tipo TradingView"
+            # Divergencias avanzadas ("smart")
             smart_divs = detect_smart_divergences(df)
 
             data[tf] = {
@@ -228,23 +248,20 @@ def get_technical_data(symbol: str, intervals=None):
                 "ema_short": float(last["ema_short"]),
                 "ema_long": float(last["ema_long"]),
                 "rsi": float(last["rsi"]),
-                "macd": float(last["macd"]),
-                "macd_hist": float(last["macd_hist"]),
+                "macd": float(last.get("macd", 0.0)),
+                "macd_hist": float(last.get("macd_hist", 0.0)),
                 "atr_rel": float(last["atr_rel"]),
                 "bb_width": float(last["bb_width"]),
                 "volume": float(last["volume"]),
                 "trend": trend,
 
-                # 🧮 Calidad y estructura de vela
                 "bars": int(bars_count),
                 "wick_ratio": float(wick_ratio),
 
-                # Divergencias legacy
                 "macd_div": divs["macd_divergence"],
                 "rsi_div": divs["rsi_divergence"],
                 "alerts": divs["divergence_alerts"],
 
-                # 🆕 Campos de divergencias avanzadas
                 "smart_divergences": smart_divs,
                 "smart_rsi_div": smart_divs["divergences"]["rsi"]["type"],
                 "smart_macd_div": smart_divs["divergences"]["macd"]["type"],

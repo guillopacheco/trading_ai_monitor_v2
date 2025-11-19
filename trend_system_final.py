@@ -13,7 +13,7 @@ Características clave:
 - Selección AUTOMÁTICA de las 3 mejores temporalidades para apalancamiento x20
 - Cálculo de tendencia por TF (Alcista / Bajista / Lateral)
 - Cálculo de tendencia mayor + coherencia
-- Uso opcional de divergence_detector.detect_divergences()
+- Uso de divergence_detector.detect_divergences()
 - Uso de smart_bias / smart_confidence provenientes de indicators.py
 - Match técnico vs dirección de la señal (long/short)
 - Recomendación textual coherente con el resto de módulos
@@ -25,7 +25,6 @@ Características clave:
 
 import logging
 from typing import Optional, Tuple, Dict, Any, List
-
 from collections import Counter
 
 from indicators import get_technical_data
@@ -33,6 +32,7 @@ from divergence_detector import detect_divergences
 from config import DEFAULT_TIMEFRAMES, ANALYSIS_DEBUG_MODE
 
 logger = logging.getLogger("trend_system_final")
+
 
 # ================================================================
 # 🔧 Umbrales dinámicos (agresivo / conservador)
@@ -47,18 +47,23 @@ def _get_thresholds() -> dict:
     Se basa en config.ANALYSIS_MODE:
         - "conservative"
         - "aggressive"
+        - "balanced" (tratado como intermedio)
     """
-
     from config import ANALYSIS_MODE
 
     mode = (ANALYSIS_MODE or "conservative").lower()
 
     if mode == "aggressive":
-        # Modo agresivo: señales se confirman antes
         return {
-            "confirm": 70.0,      # match para confirmar señal en el análisis principal
-            "reactivation": 70.0, # match para reactivación automática
-            "internal": 60.0,     # umbral para módulos internos
+            "confirm": 70.0,
+            "reactivation": 70.0,
+            "internal": 60.0,
+        }
+    elif mode == "balanced":
+        return {
+            "confirm": 75.0,
+            "reactivation": 75.0,
+            "internal": 65.0,
         }
 
     # Modo conservador (por defecto)
@@ -67,6 +72,7 @@ def _get_thresholds() -> dict:
         "reactivation": 80.0,
         "internal": 70.0,
     }
+
 
 # ================================================================
 # 🔧 Utilidades de temporalidades
@@ -89,7 +95,6 @@ def _normalize_config_timeframes() -> List[str]:
     """
     Convierte DEFAULT_TIMEFRAMES de config.py (por ejemplo ["1", "5", "15"])
     al formato usado por indicators.get_technical_data() (["1m", "5m", "15m"]).
-    Si algo falla, devuelve lista vacía.
     """
     tfs: List[str] = []
     try:
@@ -115,11 +120,9 @@ def _candidate_timeframes() -> List[str]:
     Luego deduplica y ordena por minutos crecientes.
     """
     base = set(_normalize_config_timeframes())
-    # Recomendadas para scalping/futuros x20
     for tf in ["1m", "3m", "5m", "15m", "30m", "60m"]:
         base.add(tf)
 
-    # Orden por minutos (1m,3m,5m,15m,30m,60m,...)
     return sorted(base, key=_tf_to_minutes)
 
 
@@ -128,17 +131,11 @@ def _score_timeframe(tf: str, tech: Dict[str, Any]) -> float:
     Asigna un "score de calidad" a una temporalidad basándose en:
 
     - Horizonte temporal (en minutos)
-      * Preferencia por 5m, 15m, 30m, 60m para x20
-      * 1m recibe menos peso (ruido)
-      * >60m, menor peso por ir demasiado lento
-
-    - Volatilidad (atr_rel):
-      * Preferible 0.005–0.03
-      * Penaliza volatilidad ultra baja o excesiva
+    - Volatilidad relativa (atr_rel)
     """
     minutes = _tf_to_minutes(tf)
 
-    # Peso base según horizonte (ajustado para x20)
+    # Peso base por horizonte
     if minutes <= 1:
         base = 0.4
     elif minutes <= 3:
@@ -152,15 +149,13 @@ def _score_timeframe(tf: str, tech: Dict[str, Any]) -> float:
     elif minutes <= 60:
         base = 1.0
     else:
-        base = 0.6  # temporalidades muy largas pierden relevancia para x20
+        base = 0.6
 
-    # Ajuste por volatilidad relativa (ATR)
     atr_rel = float(tech.get("atr_rel", 0.0) or 0.0)
 
-    # Zona óptima de volatilidad
+    # Zona “saludable” de volatilidad
     if 0.005 <= atr_rel <= 0.03:
         base += 0.2
-    # Volatilidad demasiado baja o demasiado alta → penalización
     elif atr_rel < 0.002 or atr_rel > 0.05:
         base -= 0.3
 
@@ -173,15 +168,12 @@ def _select_best_timeframes(
 ) -> Dict[str, Dict[str, Any]]:
     """
     Recibe el dict completo de indicadores por TF y devuelve solo las
-    `max_tfs` temporalidades con mejor score de calidad.
-
-    Si hay pocas TF disponibles, devuelve todas.
+    `max_tfs` temporalidades con mejor score.
     """
     if not tech_all:
         return {}
 
     if len(tech_all) <= max_tfs:
-        # Ya son pocas → usamos todas
         return dict(sorted(tech_all.items(), key=lambda kv: _tf_to_minutes(kv[0])))
 
     scored = []
@@ -189,19 +181,13 @@ def _select_best_timeframes(
         score = _score_timeframe(tf, tech)
         scored.append((tf, score))
 
-    # Ordenar por score descendente
     scored.sort(key=lambda x: x[1], reverse=True)
-
-    # Elegir top N
     chosen_tfs = [tf for tf, _ in scored[:max_tfs]]
-
-    # Ordenar por minutos para mostrar bonito en el reporte
     chosen_tfs = sorted(chosen_tfs, key=_tf_to_minutes)
 
-    # Log de depuración
     if ANALYSIS_DEBUG_MODE:
-        logger.debug("🎯 Ranking TF: " + " | ".join([f"{tf}:{score:.2f}" for tf, score in scored]))
-        logger.debug(f"✅ TF seleccionadas para análisis: {chosen_tfs}")
+        logger.debug("🎯 Ranking TF: " + " | ".join([f"{tf}:{s:.2f}" for tf, s in scored]))
+        logger.debug(f"✅ TF seleccionadas: {chosen_tfs}")
 
     return {tf: tech_all[tf] for tf in chosen_tfs if tf in tech_all}
 
@@ -211,7 +197,7 @@ def _select_best_timeframes(
 # ================================================================
 def _determine_trend_for_tf(tech: dict) -> str:
     """
-    Determina tendencia textual para una temporalidad específica usando:
+    Determina tendencia textual usando:
     - EMA corta vs EMA larga
     - MACD hist
     - RSI
@@ -230,10 +216,10 @@ def _determine_trend_for_tf(tech: dict) -> str:
 
 
 def _trend_to_bucket(trend: str) -> str:
-    trend = (trend or "").lower()
-    if "alcista" in trend or "bull" in trend:
+    t = (trend or "").lower()
+    if "alcista" in t or "bull" in t:
         return "bull"
-    if "bajista" in trend or "bear" in trend:
+    if "bajista" in t or "bear" in t:
         return "bear"
     return "side"
 
@@ -248,9 +234,9 @@ def _bucket_to_label(bucket: str) -> str:
 
 def _compute_major_trend(trends: Dict[str, str]) -> Tuple[str, float]:
     """
-    A partir de un dict {tf: tendencia}, calcula:
-    - tendencia mayor (Alcista/Bajista/Lateral)
-    - porcentaje de coherencia entre temporalidades
+    A partir de {tf: tendencia}, calcula:
+    - tendencia mayor
+    - porcentaje de coherencia
     """
     if not trends:
         return "Sin datos", 0.0
@@ -261,9 +247,9 @@ def _compute_major_trend(trends: Dict[str, str]) -> Tuple[str, float]:
         buckets[b] += 1
 
     total = sum(buckets.values()) or 1
-    dominant_bucket = max(buckets, key=buckets.get)
-    coherence = (buckets[dominant_bucket] / total) * 100.0
-    label = _bucket_to_label(dominant_bucket)
+    dominant = max(buckets, key=buckets.get)
+    coherence = (buckets[dominant] / total) * 100.0
+    label = _bucket_to_label(dominant)
     return label, coherence
 
 
@@ -272,8 +258,7 @@ def _evaluate_direction_match(
     trends: Dict[str, str]
 ) -> Tuple[float, int, int]:
     """
-    Calcula qué porcentaje de temporalidades coincide con la dirección sugerida
-    (long/short). Si no hay direction_hint, devuelve 0.
+    Calcula el % de TF que coincide con la dirección propuesta.
     """
     if not direction_hint or not trends:
         return 0.0, 0, 0
@@ -282,7 +267,7 @@ def _evaluate_direction_match(
     matches = 0
     total = 0
 
-    for tf, t in trends.items():
+    for _, t in trends.items():
         t_low = (t or "").lower()
         total += 1
         if direction_hint == "long" and "alcista" in t_low:
@@ -299,9 +284,7 @@ def _evaluate_direction_match(
 
 def _classify_confidence(match_ratio: float, smart_conf_avg: float) -> str:
     """
-    Clasifica la confianza combinando:
-    - match_ratio (coincidencia de tendencias con la dirección)
-    - smart_conf_avg (confianza media de divergencias inteligentes)
+    Confianza combinando match_ratio y smart_conf_avg (0–1).
     """
     base = match_ratio / 100.0
     combined = (0.7 * base) + (0.3 * smart_conf_avg)
@@ -316,18 +299,17 @@ def _classify_confidence(match_ratio: float, smart_conf_avg: float) -> str:
 
 def _direction_vs_bias_comment(direction: Optional[str], bias: str) -> Optional[str]:
     """
-    Genera una nota si la dirección sugerida va en contra del bias de divergencias.
-    bias puede ser: 'bullish-reversal', 'bearish-reversal', 'continuation', 'neutral'
+    Comenta si la dirección LONG/SHORT va en contra del bias smart.
     """
     if not direction or not bias or bias == "neutral":
         return None
 
-    direction = direction.lower()
-    bias = bias.lower()
+    d = direction.lower()
+    b = bias.lower()
 
-    if direction == "long" and "bearish" in bias:
+    if d == "long" and "bearish" in b:
         return "⚠️ La dirección LONG va en contra de una posible reversión bajista."
-    if direction == "short" and "bullish" in bias:
+    if d == "short" and "bullish" in b:
         return "⚠️ La dirección SHORT va en contra de una posible reversión alcista."
     return None
 
@@ -340,15 +322,11 @@ def analyze_trend_core(
     direction_hint: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Analiza un símbolo usando:
-
-    - indicadores técnicos de indicators.get_technical_data() sobre un
-      conjunto amplio de temporalidades candidatas
-    - selección automática de las 3 mejores TF para apalancamiento x20
-    - divergencias (divergence_detector.detect_divergences)
-    - bias y confianza smart provenientes de indicators.py
-
-    Devuelve un dict estructurado para consumo interno.
+    Analiza un símbolo con:
+    - datos técnicos multi-TF (indicators.get_technical_data)
+    - selección automática de las mejores TF
+    - divergencias (divergence_detector)
+    - smart_bias / smart_confidence
     """
     try:
         candidates = _candidate_timeframes()
@@ -372,9 +350,7 @@ def analyze_trend_core(
                 "recommendation": "Sin datos técnicos disponibles.",
             }
 
-        # ------------------------------------------------------------
-        # 🎯 Selección automática de las mejores TF
-        # ------------------------------------------------------------
+        # 🎯 Selección automática de TF
         tech_multi = _select_best_timeframes(tech_all, max_tfs=3)
 
         if not tech_multi:
@@ -395,9 +371,7 @@ def analyze_trend_core(
                 "recommendation": "Sin datos técnicos disponibles.",
             }
 
-        # ------------------------------------------------------------
-        # 📊 Determinar tendencia por temporalidad
-        # ------------------------------------------------------------
+        # 📊 Tendencia por TF
         trends: Dict[str, str] = {}
         smart_biases = []
         smart_confidences = []
@@ -405,45 +379,36 @@ def analyze_trend_core(
         for tf, tech in tech_multi.items():
             trend = _determine_trend_for_tf(tech)
             trends[tf] = trend
-            tech["trend"] = trend  # persistimos por si otros módulos lo usan
+            tech["trend"] = trend
 
-            smart_bias = tech.get("smart_bias", "neutral")
-            smart_conf = float(tech.get("smart_confidence", 0.0))
+            sb = tech.get("smart_bias", "neutral")
+            sc = float(tech.get("smart_confidence", 0.0))
 
-            if smart_bias and smart_bias != "neutral":
-                smart_biases.append(smart_bias)
-            if smart_conf > 0:
-                smart_confidences.append(smart_conf)
+            if sb and sb != "neutral":
+                smart_biases.append(sb)
+            if sc > 0:
+                smart_confidences.append(sc)
 
             if ANALYSIS_DEBUG_MODE:
                 logger.debug(
-                    f"{symbol} [{tf}] → EMA10={tech.get('ema_short'):.4f}, "
-                    f"EMA30={tech.get('ema_long'):.4f}, MACD_HIST={tech.get('macd_hist'):.4f}, "
+                    f"{symbol} [{tf}] → EMAshort={tech.get('ema_short'):.4f}, "
+                    f"EMAlong={tech.get('ema_long'):.4f}, MACD_HIST={tech.get('macd_hist'):.4f}, "
                     f"RSI={tech.get('rsi'):.2f} → {trend}"
                 )
 
         major_trend, major_coherence = _compute_major_trend(trends)
 
-        # ------------------------------------------------------------
-        # 📈 Divergencias (desde divergence_detector)
-        # ------------------------------------------------------------
-        # Nota: usamos solo las TF seleccionadas, que son las que realmente
-        # se tienen en cuenta para la decisión de entrada.
+        # 🧪 Divergencias
         divergences = detect_divergences(symbol, tech_multi)
-        # dict esperado: {"RSI": str, "MACD": str, "Volumen": str}
 
-        # ------------------------------------------------------------
-        # 🧭 Bias y confianza smart
-        # ------------------------------------------------------------
+        # 🧬 Smart bias
         dominant_bias = "neutral"
         if smart_biases:
             dominant_bias = Counter(smart_biases).most_common(1)[0][0]
 
         smart_conf_avg = sum(smart_confidences) / len(smart_confidences) if smart_confidences else 0.0
 
-        # ------------------------------------------------------------
-        # 📌 Confirmación vs dirección sugerida
-        # ------------------------------------------------------------
+        # 📌 Match vs dirección sugerida
         match_ratio, match_count, match_total = _evaluate_direction_match(direction_hint, trends)
 
         # ============================================================
@@ -459,9 +424,7 @@ def analyze_trend_core(
                 recommendation = f"🟡 Señal parcialmente confirmada ({match_ratio:.1f}% de coincidencia)."
             else:
                 recommendation = f"⚠️ Esperar mejor entrada ({match_ratio:.1f}% de coincidencia)."
-
         else:
-            # Sin dirección propuesta, lectura descriptiva
             if major_trend == "Alcista":
                 recommendation = "📈 Tendencia mayor alcista. Buscar oportunidades LONG en retrocesos."
             elif major_trend == "Bajista":
@@ -471,17 +434,16 @@ def analyze_trend_core(
             else:
                 recommendation = "ℹ️ Sin suficiente información para una recomendación clara."
 
-        # Si hay divergencias, añadimos aviso
+        # Aviso por divergencias
         div_values = [v for v in divergences.values() if v and v not in ["Ninguna", "None"]]
         if div_values:
             recommendation += " (⚠️ Divergencia técnica detectada.)"
 
-        # Si el bias smart contradice la dirección, añadimos nota
+        # Nota por bias contrario
         bias_note = _direction_vs_bias_comment(direction_hint, dominant_bias)
         if bias_note:
             recommendation += f" {bias_note}"
 
-        # Confianza visual
         confidence_label = _classify_confidence(match_ratio, smart_conf_avg)
 
         return {
@@ -531,10 +493,7 @@ def analyze_and_format(
     - /analizar
     - signal_reactivation_sync
     - operation_tracker
-    - Otros módulos que quieran un reporte listo para Telegram
-
-    Retorna:
-      (resultado_dict, mensaje_formateado_markdown)
+    - Cualquier módulo que quiera texto listo para Telegram
     """
     result = analyze_trend_core(symbol, direction_hint=direction_hint)
 
@@ -550,13 +509,10 @@ def analyze_and_format(
     confidence_label = result.get("confidence_label", "🔴 Baja")
     recommendation = result.get("recommendation", "Sin recomendación.")
 
-    # Línea de tendencias por TF (orden ascendente por minutos)
+    # Bloque de tendencias
     tf_lines = []
-
     for tf in sorted(trends.keys(), key=_tf_to_minutes):
-        tf_label = tf
-        tf_lines.append(f"🔹 *{tf_label}*: {trends[tf]}")
-
+        tf_lines.append(f"🔹 *{tf}*: {trends[tf]}")
     tf_block = "\n".join(tf_lines) if tf_lines else "🔹 Sin datos por temporalidad."
 
     # Divergencias en texto
@@ -570,7 +526,7 @@ def analyze_and_format(
     else:
         div_text = "Ninguna"
 
-    # Sesgo smart (human-readable)
+    # Sesgo smart
     bias_human = {
         "bullish-reversal": "Reversión alcista",
         "bearish-reversal": "Reversión bajista",
@@ -578,7 +534,6 @@ def analyze_and_format(
         "neutral": "Neutral / sin sesgo claro",
     }.get(smart_bias, smart_bias)
 
-    # Dirección en texto (si viene)
     if direction:
         dir_text = direction.upper()
         dir_line = f"🎯 *Dirección sugerida:* {dir_text}\n"
@@ -589,8 +544,8 @@ def analyze_and_format(
 
     message = (
         f"📊 *Análisis de {symbol}*\n"
-        f"{tf_block}\n"
-        f"\n🧭 *Tendencia mayor:* {major_trend} ({major_coherence:.2f}%)\n"
+        f"{tf_block}\n\n"
+        f"🧭 *Tendencia mayor:* {major_trend} ({major_coherence:.2f}%)\n"
         f"{dir_line}"
         f"{match_line}"
         f"🧪 *Divergencias:* {div_text}\n"
