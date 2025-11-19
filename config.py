@@ -1,105 +1,87 @@
 """
-config.py
-------------------------------------------------------------
-Archivo centralizado de configuración global del sistema.
-
-Contiene todas las variables y parámetros operativos usados por:
-- Telegram (cliente y bot)
-- Bybit (API pública y privada)
-- Gestión de riesgo, ROI y apalancamiento
-- Ajustes de indicadores y análisis técnico
-- Modo simulación / testnet
-------------------------------------------------------------
+config.py — versión final integrada
+Lee automáticamente .env y mantiene ABSOLUTAMENTE TODAS
+las configuraciones del sistema antiguo + compatibilidad con módulos nuevos.
 """
 
 import os
 from dotenv import load_dotenv
 
-# ================================================================
-# 📂 Cargar variables de entorno desde .env
-# ================================================================
+# Cargar .env
 load_dotenv()
 
 # ================================================================
-# 🔐 Telegram - Usuario y Bot
+# 📂 TELEGRAM — API de usuario (Telethon) y BOT
 # ================================================================
-TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID")
-TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
+API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
+API_HASH = os.getenv("TELEGRAM_API_HASH")
 TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE")
 TELEGRAM_SESSION = os.getenv("TELEGRAM_SESSION", "trading_ai_monitor")
 
-# Canal desde donde se leen las señales (por ejemplo NeuroTrader)
-TELEGRAM_SIGNAL_CHANNEL_ID = os.getenv("TELEGRAM_SIGNAL_CHANNEL_ID")
+# Canal VIP donde llegan las señales
+TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_SIGNAL_CHANNEL_ID", "0"))
 
-# Bot que envía las notificaciones
+# Bot privador (para enviar análisis, alertas, /estado, etc.)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_USER_ID = os.getenv("TELEGRAM_USER_ID")
+TELEGRAM_USER_ID = int(os.getenv("TELEGRAM_USER_ID", "0"))
+
 
 # ================================================================
-# 💹 Bybit API
+# 💹 BYBIT API
 # ================================================================
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
-
-# Entorno operativo: "real" o "demo"
 BYBIT_ENV = os.getenv("BYBIT_ENV", "real").lower()
 
-# Endpoint según entorno
 if BYBIT_ENV == "demo":
     BYBIT_ENDPOINT = "https://api-demo.bybit.com"
 else:
-    BYBIT_ENDPOINT = "https://api.bybit.com"
+    BYBIT_ENDPOINT = os.getenv("BYBIT_ENDPOINT", "https://api.bybit.com")
 
-# True si deseas usar testnet
 BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
-
-# Categoría de mercado (linear, inverse, spot)
 BYBIT_CATEGORY = "linear"
 
+
 # ================================================================
-# ⚙️ Configuración general
+# ⚙️ GENERAL
 # ================================================================
-SIMULATION_MODE = os.getenv("SIMULATION_MODE", "true").lower() == "true"
-APP_MODE = os.getenv("APP_MODE", "ANALYSIS")  # ANALYSIS o TRADING
+SIMULATION_MODE = os.getenv("SIMULATION_MODE", "false").lower() == "true"
+APP_MODE = os.getenv("APP_MODE", "ANALYSIS")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-DATABASE_PATH = "trading_ai_monitor.db"
+DATABASE_PATH = os.getenv("DATABASE_FILE", "trading_ai_monitor.db")
 
-
-# =========================
-# 🎚 Sensibilidad del sistema de análisis
-# =========================
-# Opciones:
-#   - "aggressive"  → entra antes, reacciona más rápido, más señales.
-#   - "balanced"    → punto medio.
-#   - "conservative"→ exige mayor alineación, menos señales pero más filtradas.
-ANALYSIS_MODE = "balanced"  # "aggressive" | "balanced" | "conservative"
-
-# Número mínimo de velas por temporalidad para considerar los datos "sólidos"
-MIN_BARS_STRONG_TF = 120
-
-# Filtro de mechas largas (para marcar entornos “sucios” o manipulados)
-WICK_FILTER_ENABLED = True
-WICK_RATIO_THRESHOLD = 2.5  # cuanto mayor, más exigente (2.0–3.0 razonable)
 
 # ================================================================
-# ⚙️ Configuración de apalancamiento y riesgo
+# 🎚 Sensibilidad del motor de análisis (technical_brain)
+# ================================================================
+ANALYSIS_MODE = os.getenv("ANALYSIS_MODE", "balanced")  # aggressive | balanced | conservative
+
+MIN_BARS_STRONG_TF = 120
+WICK_FILTER_ENABLED = True
+WICK_RATIO_THRESHOLD = 2.5  # > 2 = velas con mechas largas
+
+
+# ================================================================
+# ⚙️ APALANCAMIENTO Y RIESGO
 # ================================================================
 LEVERAGE = int(os.getenv("LEVERAGE", 20))
 MAX_LEVERAGE = int(os.getenv("MAX_LEVERAGE", 20))
-RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", 0.05))  # 5% por operación
-MAX_POSITION_SIZE = float(os.getenv("MAX_POSITION_SIZE", 0.1))  # 10% del capital
-ACCOUNT_BALANCE = float(os.getenv("ACCOUNT_BALANCE", 1000))  # Balance estimado (USDT)
+RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", 0.05))
+MAX_POSITION_SIZE = float(os.getenv("MAX_POSITION_SIZE", 0.1))
+ACCOUNT_BALANCE = float(os.getenv("ACCOUNT_BALANCE", 1000))
+
 
 # ================================================================
-# 💹 Umbrales de ROI (gestión de pérdidas y ganancias)
+# 💰 UMBRALES DE ROI (gestión de pérdidas)
 # ================================================================
 ROI_REVERSION_THRESHOLD = float(os.getenv("ROI_REVERSION_THRESHOLD", -30))
 ROI_DYNAMIC_STOP_THRESHOLD = float(os.getenv("ROI_DYNAMIC_STOP_THRESHOLD", 60))
 ROI_TAKE_PROFIT_THRESHOLD = float(os.getenv("ROI_TAKE_PROFIT_THRESHOLD", 100))
 ROI_PARTIAL_CLOSE_PERCENT = float(os.getenv("ROI_PARTIAL_CLOSE_PERCENT", 70))
 
+
 # ================================================================
-# 📊 Configuración de análisis técnico
+# 📊 Configuración de indicadores
 # ================================================================
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
@@ -110,25 +92,25 @@ MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 
-# Temporalidades por defecto para el análisis
 DEFAULT_TIMEFRAMES = ["1", "5", "15"]
 
+
 # ================================================================
-# ⏱️ Intervalos de revisión / monitoreo
+# ⏱️ Intervalos
 # ================================================================
 SECONDS_IN_HOUR = 3600
 SECONDS_IN_DAY = 86400
 
-REVIEW_INTERVAL_NORMAL = 900   # 15 minutos
-REVIEW_INTERVAL_HIGH_VOL = 300  # 5 minutos
+REVIEW_INTERVAL_NORMAL = 900      # 15 min
+REVIEW_INTERVAL_HIGH_VOL = 300    # 5 min
 MAX_WAIT_TIME = 24 * SECONDS_IN_HOUR
 EXTENDED_MONITORING_TIMEOUT = 72 * SECONDS_IN_HOUR
-# Cada cuántos minutos revisar señales para reactivación
+
 SIGNAL_RECHECK_INTERVAL_MINUTES = int(os.getenv("SIGNAL_RECHECK_INTERVAL_MINUTES", 15))
 
 
 # ================================================================
-# 📈 Condiciones de vigilancia extendida
+# 📈 Condiciones extendidas
 # ================================================================
 EXTENDED_MONITORING_CONDITIONS = {
     "min_atr_multiplier": 1.3,
@@ -137,8 +119,9 @@ EXTENDED_MONITORING_CONDITIONS = {
     "weekend_extension_hours": 48
 }
 
+
 # ================================================================
-# 🔁 Umbrales de reactivación de señales
+# 🔁 Umbrales de reactivación
 # ================================================================
 REACTIVATION_THRESHOLDS = {
     "confirmation_min_match": 60,
@@ -146,34 +129,27 @@ REACTIVATION_THRESHOLDS = {
     "volatility_increase": 1.2
 }
 
+
 # ================================================================
-# 🧪 Validación opcional al iniciar
+# 🧪 Validación
 # ================================================================
 def validate_config():
-    """Verifica que las variables críticas estén configuradas."""
     missing = []
 
-    if not TELEGRAM_API_ID:
-        missing.append("TELEGRAM_API_ID")
-    if not TELEGRAM_API_HASH:
-        missing.append("TELEGRAM_API_HASH")
-    if not TELEGRAM_BOT_TOKEN:
-        missing.append("TELEGRAM_BOT_TOKEN")
-    if not TELEGRAM_USER_ID:
-        missing.append("TELEGRAM_USER_ID")
-    if not TELEGRAM_SIGNAL_CHANNEL_ID:
-        missing.append("TELEGRAM_SIGNAL_CHANNEL_ID")
+    if not API_ID: missing.append("TELEGRAM_API_ID")
+    if not API_HASH: missing.append("TELEGRAM_API_HASH")
+    if not TELEGRAM_BOT_TOKEN: missing.append("TELEGRAM_BOT_TOKEN")
+    if not TELEGRAM_USER_ID: missing.append("TELEGRAM_USER_ID")
+    if not TELEGRAM_CHANNEL_ID: missing.append("TELEGRAM_SIGNAL_CHANNEL_ID")
 
     if missing:
-        raise ValueError(f"⚠️ Faltan variables críticas en .env: {', '.join(missing)}")
+        raise ValueError(f"⚠️ VARIABLES FALTANTES: {', '.join(missing)}")
 
-    print(f"✅ Configuración validada correctamente. Entorno: {BYBIT_ENV.upper()}")
-    print(f"🌍 Endpoint activo: {BYBIT_ENDPOINT}")
+    print(f"✅ Config validado | Entorno: {BYBIT_ENV.upper()}")
+    print(f"🌍 Endpoint: {BYBIT_ENDPOINT}")
 
-# ================================================================
-# 📌 Ejecución directa para validar entorno
-# ================================================================
+
 if __name__ == "__main__":
     validate_config()
 
-ANALYSIS_DEBUG_MODE = True  # Cambia a False para producción
+ANALYSIS_DEBUG_MODE = True
