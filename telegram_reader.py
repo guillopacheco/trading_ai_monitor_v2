@@ -18,8 +18,7 @@ import re
 import logging
 import asyncio
 from telethon import events, TelegramClient
-
-from config import TELEGRAM_SIGNAL_CHANNEL_ID
+from config import TELEGRAM_CHANNEL_ID
 from helpers import normalize_symbol, normalize_direction
 from database import save_signal
 from notifier import send_message
@@ -185,10 +184,10 @@ async def process_signal(parsed: dict):
 def attach_listeners(client: TelegramClient):
     """
     Registra el listener de nuevas señales sobre el canal VIP
-    definido en TELEGRAM_SIGNAL_CHANNEL_ID (.env/config).
+    definido en TELEGRAM_CHANNEL_ID (.env/config).
     """
 
-    @client.on(events.NewMessage(chats=[TELEGRAM_SIGNAL_CHANNEL_ID]))
+    @client.on(events.NewMessage(chats=[TELEGRAM_CHANNEL_ID]))
     async def handler(event):
         text = event.message.message or ""
         parsed = parse_signal(text)
