@@ -1,95 +1,105 @@
 """
-telegram_reader.py — versión FINAL integrada con trend_system_final
+telegram_reader.py — lector OFICIAL de señales NeuroTrader
 --------------------------------------------------------------------
-Flujo oficial:
-1) Detecta señales en el canal VIP (regex robustas)
-2) Parsea símbolo, dirección, entrada, TPs, leverage
-3) Guarda la señal en DB
-4) Ejecuta análisis trend_system_final.analyze_and_format()
-5) Envía reporte técnico formateado al usuario vía notifier.send_message()
+Flujo:
+1) Detecta señales con regex robustas del canal VIP.
+2) Parsea símbolo, dirección, entry, leverage, TP.
+3) Guarda la señal en DB con database.save_signal().
+4) Llama al motor técnico trend_system_final.analyze_and_format().
+5) Envía reporte técnico al usuario por Telegram (via notifier.send_message).
 
-Este módulo es el lector OFICIAL de señales.
+IMPORTANTE:
+- notifier.send_message es SINCRÓNICO.
+- Aquí SIEMPRE se usa: await asyncio.to_thread(send_message, texto)
 --------------------------------------------------------------------
 """
 
 import re
 import logging
+import asyncio
 from telethon import events, TelegramClient
 
-from config import (
-    TELEGRAM_CHANNEL_ID,
-)
-
+from config import TELEGRAM_SIGNAL_CHANNEL_ID
 from helpers import normalize_symbol, normalize_direction
 from database import save_signal
 from notifier import send_message
 from trend_system_final import analyze_and_format
 
-
 logger = logging.getLogger("telegram_reader")
 
 
 # ============================================================
-# 🔍 Expresiones regulares robustas (Compatibles con tu canal)
+# 🔍 Expresiones regulares robustas
 # ============================================================
-
 HEADER_REGEX = re.compile(
-    r"#([A-Z0-9]+\/USDT)\s*\((Long|Short)",
-    re.IGNORECASE
+    r"#([A-Z0-9]+/USDT)\s*\((Long|Short)[^)]+\)",
+    re.IGNORECASE,
 )
 
 ENTRY_REGEX = re.compile(
     r"(Entry|Entrada)\s*[-:]\s*([0-9]*\.?[0-9]+)",
-    re.IGNORECASE
+    re.IGNORECASE,
 )
 
 LEV_REGEX = re.compile(
-    r"x\s?(\d+)",
-    re.IGNORECASE
+    r"x(\d+)",
+    re.IGNORECASE,
 )
 
 TP_REGEX = re.compile(
     r"(TP\d?|🥉|🥈|🥇|🚀)\s*[:\-]?\s*([0-9]*\.?[0-9]+)",
-    re.IGNORECASE
+    re.IGNORECASE,
 )
 
 
 # ============================================================
-# 🧩 Parser de señales detectadas
+# 🧩 Parser de señales del canal
 # ============================================================
-
 def parse_signal(text: str):
     """
-    Extrae datos de la señal del canal VIP.
-    Retorna dict con la señal o None si no coincide.
+    Intenta extraer:
+      - symbol: 'HEIUSDT', '4USDT', etc. (normalizado)
+      - direction: 'long' / 'short'
+      - entry_price: float
+      - leverage: int
+      - tp: lista de TPs [tp1, tp2, tp3, tp4]
+    Devuelve dict o None si el texto no parece ser una señal válida.
     """
-
     header = HEADER_REGEX.search(text)
     if not header:
         return None
 
-    symbol_raw = header.group(1)          # Ej: GIGGLE/USDT
+    symbol_raw = header.group(1)          # Ej: HEI/USDT
     direction_raw = header.group(2)       # Long / Short
 
     entry_match = ENTRY_REGEX.search(text)
     if not entry_match:
+        logger.debug("📭 Señal ignorada: no se encontró Entry.")
         return None
 
-    entry_price = float(entry_match.group(2))
+    try:
+        entry_price = float(entry_match.group(2))
+    except Exception:
+        logger.debug("📭 Señal ignorada: Entry no numérico.")
+        return None
 
-    # Leverage
     lev_match = LEV_REGEX.search(text)
     leverage = int(lev_match.group(1)) if lev_match else 20
 
-    # TP list
+    # Extraer TPs
     tps = []
     for _, price in TP_REGEX.findall(text):
         if price:
-            tps.append(float(price))
+            try:
+                tps.append(float(price))
+            except Exception:
+                continue
 
-    # Normalizamos a mínimo 4 TP
+    # Normalizar TPs (hasta 4, con None de relleno si faltan)
     while len(tps) < 4:
         tps.append(None)
+    if len(tps) > 4:
+        tps = tps[:4]
 
     symbol = normalize_symbol(symbol_raw)
     direction = normalize_direction(direction_raw)
@@ -99,7 +109,7 @@ def parse_signal(text: str):
         "direction": direction,
         "entry_price": entry_price,
         "leverage": leverage,
-        "tps": tps,
+        "tp": tps,
         "raw": text,
     }
 
@@ -107,74 +117,94 @@ def parse_signal(text: str):
 # ============================================================
 # 💾 Guardar + análisis + notificación
 # ============================================================
-
 async def process_signal(parsed: dict):
+    """
+    Flujo completo para una señal ya parseada:
+    - Log interno
+    - Guardado en DB (tabla signals)
+    - Análisis técnico trend_system_final
+    - Notificación al usuario por Telegram
+    """
     symbol = parsed["symbol"]
     direction = parsed["direction"]
     entry = parsed["entry_price"]
     lev = parsed["leverage"]
-    tps = parsed["tps"]
+    tps = parsed["tp"]
 
     logger.info(f"📥 Nueva señal detectada: {symbol} ({direction}) x{lev}")
 
-    # 1) Guardar señal en BD
-    save_signal({
-        "symbol": symbol,
-        "direction": direction,
-        "entry_price": entry,
-        "take_profits": tps,
-        "leverage": lev,
-        "recommendation": "",
-        "match_ratio": 0.0,
-    })
+    # 1) Guardar señal en BD (valores iniciales básicos)
+    try:
+        save_signal({
+            "symbol": symbol,
+            "direction": direction,
+            "entry_price": entry,
+            "take_profits": tps,
+            "leverage": lev,
+            "recommendation": "",
+            "match_ratio": 0.0,
+        })
+    except Exception as e:
+        logger.error(f"❌ Error guardando señal en DB: {e}")
 
-    # 2) Analizar con trend_system_final
-    result, tech_msg = analyze_and_format(
-        symbol=symbol,
-        direction_hint=direction
-    )
+    # 2) Ejecutar análisis técnico
+    try:
+        result, tech_msg = analyze_and_format(
+            symbol=symbol,
+            direction_hint=direction,
+        )
+    except Exception as e:
+        logger.error(f"❌ Error en análisis técnico para {symbol}: {e}")
+        tech_msg = "❌ Error en el análisis técnico. Revisa logs en el servidor."
 
-    # 3) Mensaje final al usuario
-    msg = (
-        f"📥 *Nueva señal detectada*\n"
-        f"• **{symbol}** ({direction.upper()} x{lev})\n"
-        f"• Entry: `{entry}`\n\n"
-        f"🌀 *Análisis técnico inicial:* \n"
-        f"{tech_msg}\n\n"
-        f"📌 El sistema continuará monitoreando esta señal."
-    )
+    # 3) Construir mensaje final
+    msg_lines = [
+        f"📥 *Nueva señal detectada*: **{symbol}**",
+        f"📈 Dirección: *{direction.upper()}* x{lev}",
+        f"💵 Entry: `{entry}`",
+        "",
+        "🌀 *Análisis técnico inicial:*",
+        tech_msg,
+        "",
+        "📌 El monitor automático seguirá evaluando condiciones óptimas ",
+        "para entrada, reactivación y posibles reversiones.",
+    ]
 
-    # 4) Enviar por Telegram (async)
-    await send_message(msg)
+    final_msg = "\n".join(msg_lines)
+
+    # 4) Enviar por Telegram (notifier.send_message es SINCRÓNICO)
+    try:
+        await asyncio.to_thread(send_message, final_msg)
+    except Exception as e:
+        logger.error(f"❌ Error enviando mensaje de señal: {e}")
 
 
 # ============================================================
 # 👂 Listener de Telethon
 # ============================================================
-
 def attach_listeners(client: TelegramClient):
     """
-    Adjunta el listener al cliente Telethon.
+    Registra el listener de nuevas señales sobre el canal VIP
+    definido en TELEGRAM_SIGNAL_CHANNEL_ID (.env/config).
     """
 
-    @client.on(events.NewMessage(chats=[TELEGRAM_CHANNEL_ID]))
+    @client.on(events.NewMessage(chats=[TELEGRAM_SIGNAL_CHANNEL_ID]))
     async def handler(event):
-        text = event.message.message
-
+        text = event.message.message or ""
         parsed = parse_signal(text)
+
         if not parsed:
-            return
+            return  # Mensaje que no es señal
 
         try:
             await process_signal(parsed)
         except Exception as e:
-            logger.error(f"❌ Error procesando señal: {e}")
+            logger.error(f"❌ Error procesando señal del canal: {e}")
 
 
 # ============================================================
-# 🚀 Activar lector
+# 🚀 Inicializar lector
 # ============================================================
-
 def start_telegram_reader(client: TelegramClient):
     attach_listeners(client)
     logger.info("📡 Lector de señales activo y escuchando canal VIP.")
