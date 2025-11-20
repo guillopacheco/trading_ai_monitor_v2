@@ -24,9 +24,12 @@ from notifier import send_message
 from trend_system_final import analyze_and_format, _get_thresholds
 
 from signal_manager_db import (
-    get_pending_signals,         # ← CORRECTO
-    mark_signal_reactivated,     # ← CORRECTO
+    get_pending_signals_for_reactivation,
+    mark_signal_reactivated,
+    update_signal_match_ratio,
+    save_analysis_log
 )
+
 
 logger = logging.getLogger("signal_reactivation_sync")
 
