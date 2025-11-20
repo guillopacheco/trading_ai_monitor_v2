@@ -47,7 +47,7 @@ def _get_thresholds() -> dict:
     Se basa en config.ANALYSIS_MODE:
         - "conservative"
         - "aggressive"
-        - "balanced" (tratado como intermedio)
+        - "balanced" (intermedio)
     """
     from config import ANALYSIS_MODE
 
@@ -79,13 +79,20 @@ def _get_thresholds() -> dict:
 # ================================================================
 def _tf_to_minutes(tf: str) -> int:
     """
-    Convierte '1m', '3m', '5m', '15m', '30m', '60m' → minutos (int).
+    Convierte:
+      '1m','3m','5m','15m','30m','60m','1h','4h'
+    a minutos (int).
+
     Si no se puede, devuelve 9999 para dejarlo al final.
     """
     try:
         tf = tf.strip().lower()
         if tf.endswith("m"):
             return int(tf.replace("m", ""))
+        if tf.endswith("h"):
+            hours = int(tf.replace("h", ""))
+            return hours * 60
+        # fallback: asumir minutos
         return int(tf)
     except Exception:
         return 9999
@@ -93,14 +100,15 @@ def _tf_to_minutes(tf: str) -> int:
 
 def _normalize_config_timeframes() -> List[str]:
     """
-    Convierte DEFAULT_TIMEFRAMES de config.py (por ejemplo ["1", "5", "15"])
-    al formato usado por indicators.get_technical_data() (["1m", "5m", "15m"]).
+    Convierte DEFAULT_TIMEFRAMES de config.py (["1","5","15"])
+    al formato usado por indicators.get_technical_data()
+    (["1m","5m","15m"]).
     """
     tfs: List[str] = []
     try:
         for tf in DEFAULT_TIMEFRAMES:
             tf_str = str(tf).strip()
-            if tf_str.endswith("m"):
+            if tf_str.endswith("m") or tf_str.endswith("h"):
                 tfs.append(tf_str)
             else:
                 tfs.append(f"{tf_str}m")
@@ -111,11 +119,11 @@ def _normalize_config_timeframes() -> List[str]:
 
 def _candidate_timeframes() -> List[str]:
     """
-    Genera la lista de temporalidades candidatas para el análisis:
+    Genera la lista de temporalidades candidatas:
 
     - Usa DEFAULT_TIMEFRAMES de config.py (si existen)
-    - Añade un set recomendado para apalancamiento x20:
-      ["1m", "3m", "5m", "15m", "30m", "60m"]
+    - Añade set recomendado para x20:
+      ["1m","3m","5m","15m","30m","60m"]
 
     Luego deduplica y ordena por minutos crecientes.
     """
@@ -128,14 +136,14 @@ def _candidate_timeframes() -> List[str]:
 
 def _score_timeframe(tf: str, tech: Dict[str, Any]) -> float:
     """
-    Asigna un "score de calidad" a una temporalidad basándose en:
+    Asigna un "score de calidad" a una TF basándose en:
 
     - Horizonte temporal (en minutos)
     - Volatilidad relativa (atr_rel)
     """
     minutes = _tf_to_minutes(tf)
 
-    # Peso base por horizonte
+    # Peso base por horizonte (ajustado a futuros x20)
     if minutes <= 1:
         base = 0.4
     elif minutes <= 3:
@@ -284,7 +292,7 @@ def _evaluate_direction_match(
 
 def _classify_confidence(match_ratio: float, smart_conf_avg: float) -> str:
     """
-    Confianza combinando match_ratio y smart_conf_avg (0–1).
+    Confianza combinando match_ratio (0–100) y smart_conf_avg (0–1).
     """
     base = match_ratio / 100.0
     combined = (0.7 * base) + (0.3 * smart_conf_avg)
@@ -315,6 +323,77 @@ def _direction_vs_bias_comment(direction: Optional[str], bias: str) -> Optional[
 
 
 # ================================================================
+# 🧪 Evaluación de riesgo por divergencias (nivel alto/medio/bajo)
+# ================================================================
+def _assess_divergence_risk(
+    direction_hint: Optional[str],
+    tech_multi: Dict[str, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Evalúa el riesgo que aportan las divergencias "smart" por TF.
+
+    Reglas:
+    - SOLO se usan las TF que realmente existen en tech_multi.
+    - NO se penaliza si no hay 1h/4h (monedas nuevas).
+    - Se considera "en contra" cuando:
+        LONG  ← divergencia bajista (bearish)
+        SHORT ← divergencia alcista (bullish)
+    - Se ponderan más las TF de 15m–1h+.
+
+    Devuelve:
+      {
+        "level": "none" | "medium" | "high",
+        "reason": str
+      }
+    """
+    if not direction_hint or not tech_multi:
+        return {"level": "none", "reason": ""}
+
+    d = direction_hint.lower()
+
+    high_hits = 0  # divergencias fuertes en >=60m
+    mid_hits = 0   # divergencias significativas en 15m–30m
+
+    for tf, tech in tech_multi.items():
+        minutes = _tf_to_minutes(tf)
+
+        rsi_type = str(tech.get("smart_rsi_div") or "").lower()
+        macd_type = str(tech.get("smart_macd_div") or "").lower()
+        strength = float(tech.get("smart_div_strength", 0.0) or 0.0)
+
+        # ¿Esta divergencia va en contra de la dirección?
+        against = False
+        if d == "long":
+            if "bear" in rsi_type or "bear" in macd_type:
+                against = True
+        elif d == "short":
+            if "bull" in rsi_type or "bull" in macd_type:
+                against = True
+
+        if not against:
+            continue
+
+        # Clasificación por TF y fuerza
+        if minutes >= 60 and strength >= 0.6:
+            high_hits += 1
+        elif 15 <= minutes < 60 and strength >= 0.4:
+            mid_hits += 1
+
+    if high_hits > 0:
+        return {
+            "level": "high",
+            "reason": "Divergencias fuertes en temporalidades mayores (≥1h) en contra de la señal.",
+        }
+    if mid_hits > 0:
+        return {
+            "level": "medium",
+            "reason": "Divergencias relevantes en 15m–30m en contra de la señal.",
+        }
+
+    return {"level": "none", "reason": ""}
+
+
+# ================================================================
 # 🧠 Núcleo de análisis
 # ================================================================
 def analyze_trend_core(
@@ -327,6 +406,8 @@ def analyze_trend_core(
     - selección automática de las mejores TF
     - divergencias (divergence_detector)
     - smart_bias / smart_confidence
+
+    Mantiene una API estable para el resto de módulos.
     """
     try:
         candidates = _candidate_timeframes()
@@ -348,13 +429,14 @@ def analyze_trend_core(
                 "smart_confidence_avg": 0.0,
                 "confidence_label": "🔴 Baja",
                 "recommendation": "Sin datos técnicos disponibles.",
+                "divergence_risk": {"level": "none", "reason": ""},
             }
 
         # 🎯 Selección automática de TF
         tech_multi = _select_best_timeframes(tech_all, max_tfs=3)
 
         if not tech_multi:
-            logger.warning(f"⚠️ No se pudo seleccionar temporalidades válidas para {symbol}")
+            logger.warning(f"⚠️ No se pudieron seleccionar TF válidas para {symbol}")
             return {
                 "symbol": symbol,
                 "trends": {},
@@ -369,9 +451,10 @@ def analyze_trend_core(
                 "smart_confidence_avg": 0.0,
                 "confidence_label": "🔴 Baja",
                 "recommendation": "Sin datos técnicos disponibles.",
+                "divergence_risk": {"level": "none", "reason": ""},
             }
 
-        # 📊 Tendencia por TF
+        # 📊 Tendencia por TF + smart info
         trends: Dict[str, str] = {}
         smart_biases = []
         smart_confidences = []
@@ -390,15 +473,18 @@ def analyze_trend_core(
                 smart_confidences.append(sc)
 
             if ANALYSIS_DEBUG_MODE:
-                logger.debug(
-                    f"{symbol} [{tf}] → EMAshort={tech.get('ema_short'):.4f}, "
-                    f"EMAlong={tech.get('ema_long'):.4f}, MACD_HIST={tech.get('macd_hist'):.4f}, "
-                    f"RSI={tech.get('rsi'):.2f} → {trend}"
-                )
+                try:
+                    logger.debug(
+                        f"{symbol} [{tf}] → EMAshort={tech.get('ema_short'):.4f}, "
+                        f"EMAlong={tech.get('ema_long'):.4f}, MACD_HIST={tech.get('macd_hist'):.4f}, "
+                        f"RSI={tech.get('rsi'):.2f} → {trend}"
+                    )
+                except Exception:
+                    logger.debug(f"{symbol} [{tf}] → trend={trend}")
 
         major_trend, major_coherence = _compute_major_trend(trends)
 
-        # 🧪 Divergencias
+        # 🧪 Divergencias globales (tradicionales)
         divergences = detect_divergences(symbol, tech_multi)
 
         # 🧬 Smart bias
@@ -408,11 +494,11 @@ def analyze_trend_core(
 
         smart_conf_avg = sum(smart_confidences) / len(smart_confidences) if smart_confidences else 0.0
 
-        # 📌 Match vs dirección sugerida
+        # 📌 Match vs dirección sugerida (sin penalización aún)
         match_ratio, match_count, match_total = _evaluate_direction_match(direction_hint, trends)
 
         # ============================================================
-        # 🧮 Recomendación base
+        # 🧮 Recomendación base (antes de aplicar riesgo por divergencias)
         # ============================================================
         if direction_hint:
             th = _get_thresholds()
@@ -434,7 +520,31 @@ def analyze_trend_core(
             else:
                 recommendation = "ℹ️ Sin suficiente información para una recomendación clara."
 
-        # Aviso por divergencias
+        # ============================================================
+        # 🧪 Ajuste por divergencias smart en contra (riesgo alto/medio)
+        # ============================================================
+        divergence_risk = _assess_divergence_risk(direction_hint, tech_multi)
+        risk_level = divergence_risk["level"]
+        risk_reason = divergence_risk["reason"]
+
+        if direction_hint and risk_level != "none":
+            # No modificamos la estructura de salida, solo afinamos texto
+            # y, en caso extremo, bajamos efectividad de la señal.
+            if risk_level == "high":
+                # Capar match_ratio para que no parezca "perfecta"
+                match_ratio = min(match_ratio, 65.0)
+                if "✅ Señal confirmada" in recommendation:
+                    recommendation = (
+                        "⚠️ Señal técnicamente alineada con la tendencia, "
+                        "pero con divergencias FUERTES en temporalidades mayores. "
+                        "Recomiendo NO entrar agresivo; mejor esperar confirmación o retroceso."
+                    )
+                else:
+                    recommendation += f" ⚠️ {risk_reason}"
+            elif risk_level == "medium":
+                recommendation += f" ⚠️ {risk_reason}"
+
+        # Aviso por divergencias clásicas (legacy)
         div_values = [v for v in divergences.values() if v and v not in ["Ninguna", "None"]]
         if div_values:
             recommendation += " (⚠️ Divergencia técnica detectada.)"
@@ -444,6 +554,7 @@ def analyze_trend_core(
         if bias_note:
             recommendation += f" {bias_note}"
 
+        # Confianza final (después de posibles ajustes de match_ratio)
         confidence_label = _classify_confidence(match_ratio, smart_conf_avg)
 
         return {
@@ -460,6 +571,8 @@ def analyze_trend_core(
             "smart_confidence_avg": round(smart_conf_avg, 3),
             "confidence_label": confidence_label,
             "recommendation": recommendation,
+            # Campo nuevo, solo informativo (no rompe nada):
+            "divergence_risk": divergence_risk,
         }
 
     except Exception as e:
@@ -478,6 +591,7 @@ def analyze_trend_core(
             "smart_confidence_avg": 0.0,
             "confidence_label": "🔴 Baja",
             "recommendation": "Error en el análisis técnico.",
+            "divergence_risk": {"level": "none", "reason": ""},
         }
 
 
@@ -508,6 +622,7 @@ def analyze_and_format(
     smart_conf = result.get("smart_confidence_avg", 0.0)
     confidence_label = result.get("confidence_label", "🔴 Baja")
     recommendation = result.get("recommendation", "Sin recomendación.")
+    divergence_risk = result.get("divergence_risk", {"level": "none", "reason": ""})
 
     # Bloque de tendencias
     tf_lines = []
@@ -515,7 +630,7 @@ def analyze_and_format(
         tf_lines.append(f"🔹 *{tf}*: {trends[tf]}")
     tf_block = "\n".join(tf_lines) if tf_lines else "🔹 Sin datos por temporalidad."
 
-    # Divergencias en texto
+    # Divergencias en texto (legacy)
     if divergences:
         div_parts = []
         for k, v in divergences.items():
@@ -542,6 +657,10 @@ def analyze_and_format(
         dir_line = ""
         match_line = ""
 
+    risk_line = ""
+    if divergence_risk.get("level") in ("medium", "high"):
+        risk_line = f"⚠️ *Riesgo por divergencias:* {divergence_risk.get('reason','')}\n"
+
     message = (
         f"📊 *Análisis de {symbol}*\n"
         f"{tf_block}\n\n"
@@ -549,6 +668,7 @@ def analyze_and_format(
         f"{dir_line}"
         f"{match_line}"
         f"🧪 *Divergencias:* {div_text}\n"
+        f"{risk_line}"
         f"🧬 *Sesgo técnico (smart):* {bias_human} (confianza {smart_conf:.2f})\n"
         f"🧮 *Confianza global:* {confidence_label}\n"
         f"\n📌 *Recomendación:* {recommendation}"
