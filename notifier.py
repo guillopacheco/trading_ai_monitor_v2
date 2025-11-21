@@ -1,6 +1,5 @@
 import logging
 import requests
-import asyncio
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
 
 logger = logging.getLogger("notifier")
@@ -9,10 +8,10 @@ API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
 
 # ================================================================
-# 🔧 Envío base
+# 🔧 Envío base (síncrono)
 # ================================================================
 def _post(text: str):
-    """Envío seguro de mensajes a Telegram."""
+    """Envío seguro de mensajes a Telegram (bloqueante)."""
     if SIMULATION_MODE:
         logger.info(f"💬 [SIMULADO] {text}")
         return True
@@ -32,6 +31,7 @@ def _post(text: str):
             },
             timeout=10
         )
+
         if r.status_code == 200:
             logger.info("📨 Mensaje enviado correctamente")
             return True
@@ -45,13 +45,14 @@ def _post(text: str):
 
 
 # ================================================================
-# 📤 Mensajes públicos
+# 📤 Envío público (síncrono compatible con asyncio.to_thread)
 # ================================================================
-async def send_message(text: str):
-    """Envía un mensaje al chat principal usando asyncio.
-    Se integra con el loop async sin bloquearlo."""
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _post, text)
+def send_message(text: str):
+    """
+    Versión SÍNCRONA — diseñada para ejecutarse así:
+        await asyncio.to_thread(send_message, texto)
+    """
+    return _post(text)
 
 
 # ================================================================
@@ -68,7 +69,7 @@ def notify_analysis_result(symbol, direction, leverage, match_ratio, recommendat
 
 
 # ================================================================
-# 🚨 Notificación de alerta de operación (operation_tracker)
+# 🚨 Notificación de alerta de operación
 # ================================================================
 def notify_operation_alert(symbol, direction, roi, pnl, loss_level, volatility, suggestion):
     msg = (
@@ -85,7 +86,7 @@ def notify_operation_alert(symbol, direction, roi, pnl, loss_level, volatility, 
 
 
 # ================================================================
-# 🎯 Notificación de mensajes TP/profit del canal de señales
+# 🎯 Notificación de TP/profit del canal de señales
 # ================================================================
 def notify_profit_update(text_block: str):
     cleaned = text_block[:1000]
