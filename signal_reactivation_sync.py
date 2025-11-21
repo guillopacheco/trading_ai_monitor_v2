@@ -27,16 +27,13 @@ from signal_manager_db import (
     get_pending_signals_for_reactivation,
     mark_signal_reactivated,
     update_signal_match_ratio,
-    save_analysis_log
+    save_analysis_log,
 )
-
 
 logger = logging.getLogger("signal_reactivation_sync")
 
 
-# ============================================================
-# 📌 Estado global accesible vía /estado
-# ============================================================
+# Estado global para /estado
 _reactivation_status = {
     "running": False,
     "last_run": "Nunca",
@@ -54,14 +51,14 @@ def get_reactivation_status() -> dict:
 # ============================================================
 def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
     """
-    Evalúa si una señal puede reactivarse a partir del análisis técnico.
+    Evalúa si una señal puede reactivarse a partir del análisis técnico:
 
-    Condiciones:
-    - allowed=True (motor no la descarta)
+    Criterios:
+    - result["allowed"] debe ser True
     - match_ratio >= thresholds["reactivation"]
     - major_trend / overall_trend coherente con la dirección
-    - divergencias NO en contra
-    - smart_bias NO contrario
+    - divergencias NO fuertemente en contra
+    - smart_bias NO fuertemente contrario
     """
     thresholds = _get_thresholds()
     re_thr = thresholds.get("reactivation", 75.0)
@@ -73,8 +70,8 @@ def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
     major_trend = (result.get("major_trend") or "").lower()
     overall_trend = (result.get("overall_trend") or "").lower()
     smart_bias = (result.get("smart_bias") or "").lower()
+    divs = result.get("divergences", {}) or {}
 
-    divs = (result.get("divergences") or {})
     rsi = (divs.get("RSI") or "").lower()
     macd = (divs.get("MACD") or "").lower()
 
@@ -82,33 +79,36 @@ def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
         return False, "Motor técnico marcó la señal como no viable (allowed=False)."
 
     if match_ratio < re_thr:
-        return False, f"Match insuficiente ({match_ratio:.1f}% < {re_thr}%)."
+        return False, f"Match insuficiente para reactivar ({match_ratio:.1f}% < {re_thr}%)."
 
-    # Tendencia mayor coherente
+    # Direccionalidad global
     if direction == "long":
-        if "bear" in overall_trend or "bear" in major_trend:
-            return False, "Tendencia mayor bajista."
+        if "bear" in overall_trend or "bajista" in major_trend:
+            return False, "Tendencia mayor bajista contra LONG."
     elif direction == "short":
-        if "bull" in overall_trend or "bull" in major_trend:
-            return False, "Tendencia mayor alcista."
+        if "bull" in overall_trend or "alcista" in major_trend:
+            return False, "Tendencia mayor alcista contra SHORT."
 
-    # Divergencias en contra
+    # Divergencias fuertes
     if direction == "long":
-        if "bear" in rsi or "bear" in macd:
+        if "bajista" in rsi or "bear" in rsi or "bajista" in macd or "bear" in macd:
             return False, "Divergencias bajistas en contra de LONG."
     elif direction == "short":
-        if "bull" in rsi or "bull" in macd:
+        if "alcista" in rsi or "bull" in rsi or "alcista" in macd or "bull" in macd:
             return False, "Divergencias alcistas en contra de SHORT."
 
     # Smart bias contrario
     if direction == "long" and "bear" in smart_bias:
-        return False, "Smart bias bajista."
+        return False, "Smart bias bajista en contra de LONG."
     if direction == "short" and "bull" in smart_bias:
-        return False, "Smart bias alcista."
+        return False, "Smart bias alcista en contra de SHORT."
 
     return True, "Condiciones favorables para reactivar."
 
 
+# ============================================================
+# 🧱 Construcción del mensaje enviado al usuario
+# ============================================================
 def _build_reactivation_message(signal: dict, report: str, reason: str) -> str:
     symbol = signal.get("symbol", "N/A")
     direction = (signal.get("direction") or "").upper()
@@ -129,16 +129,17 @@ def _build_reactivation_message(signal: dict, report: str, reason: str) -> str:
 
 
 # ============================================================
-# 🔁 Ciclo de reactivación (una pasada)
+# 🔁 Ejecutar un ciclo de reactivación (una sola pasada)
 # ============================================================
 async def run_reactivation_cycle() -> dict:
     _reactivation_status["running"] = True
     _reactivation_status["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
-        signals = get_pending_signals()
+        signals = get_pending_signals_for_reactivation()
     except Exception as e:
         logger.error(f"❌ Error obteniendo señales pendientes: {e}")
+        _reactivation_status["monitored_signals"] = 0
         return {"checked": 0, "reactivated": 0}
 
     if not signals:
@@ -157,7 +158,6 @@ async def run_reactivation_cycle() -> dict:
 
             logger.info(f"♻️ Revisando señal pendiente: {symbol} ({direction}).")
 
-            # Evaluar con el motor técnico
             result, report = analyze_and_format(symbol, direction_hint=direction)
             ok, reason = _can_reactivate(result, direction)
 
@@ -165,13 +165,13 @@ async def run_reactivation_cycle() -> dict:
                 logger.info(f"⏳ Señal {symbol} NO reactivada: {reason}")
                 continue
 
-            # Marcar reactivada
             sig_id = sig.get("id")
+
             if sig_id is not None:
                 try:
                     mark_signal_reactivated(sig_id)
                 except Exception as e:
-                    logger.error(f"❌ Error marcando señal {sig_id}: {e}")
+                    logger.error(f"❌ Error marcando señal {sig_id} como reactivada: {e}")
 
             reactivated += 1
 
@@ -186,7 +186,7 @@ async def run_reactivation_cycle() -> dict:
 
     logger.info(
         f"♻️ Revisión completada — {checked} señales revisadas, "
-        f"{reactivated} reactivadas."
+        f"{reactivated} reactivadas en este ciclo."
     )
 
     return {"checked": checked, "reactivated": reactivated}
