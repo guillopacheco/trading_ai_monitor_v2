@@ -110,28 +110,35 @@ def _choose_timeframes(symbol: str) -> List[str]:
 
     return tfs
 
-
 def _calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Añade EMA, MACD y RSI al DataFrame."""
+    """Añade EMA, MACD, RSI y ATR al DataFrame."""
     close = df["close"]
 
+    # EMAs
     df["ema_short"] = ta.ema(close, length=EMA_SHORT_PERIOD)
     df["ema_long"] = ta.ema(close, length=EMA_LONG_PERIOD)
 
+    # MACD
     macd = ta.macd(close, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL)
     if macd is not None:
-        df["macd"] = macd["MACD_12_26_9"]
-        df["macd_signal"] = macd["MACDs_12_26_9"]
-        df["macd_hist"] = macd["MACDh_12_26_9"]
+        df["macd"] = macd.iloc[:, 0]
+        df["macd_signal"] = macd.iloc[:, 1]
+        df["macd_hist"] = macd.iloc[:, 2]
     else:
         df["macd"] = np.nan
         df["macd_signal"] = np.nan
         df["macd_hist"] = 0.0
 
+    # RSI
     df["rsi"] = ta.rsi(close, length=14)
 
-    return df
+    # ATR (para módulo de volatilidad)
+    try:
+        df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    except Exception:
+        df["atr"] = np.nan
 
+    return df
 
 def _trend_from_votes(bull: int, bear: int) -> Tuple[str, str]:
     """
@@ -215,6 +222,8 @@ def analyze_single_tf(
       "macd_hist": 0.0012,
       "ema_short": 0.1234,
       "ema_long": 0.1200,
+      "close": 0.1250,
+      "atr": 0.0021,
       "div_rsi": "alcista" / "bajista" / "ninguna",
       "div_macd": "alcista" / "bajista" / "ninguna",
     }
@@ -232,6 +241,15 @@ def analyze_single_tf(
     macd_hist = float(last["macd_hist"])
     close = float(last["close"])
 
+    atr_val = 0.0
+    if "atr" in df.columns:
+        try:
+            atr_raw = float(df["atr"].iloc[-1])
+            if not np.isnan(atr_raw):
+                atr_val = atr_raw
+        except Exception:
+            atr_val = 0.0
+
     # Votos de tendencia
     bull = 0
     bear = 0
@@ -242,7 +260,7 @@ def analyze_single_tf(
     elif close < ema_l:
         bear += 1
 
-    # EMA corta vs larga (pendiente de la tendencia)
+    # EMA corta vs larga
     if ema_s > ema_l:
         bull += 1
     elif ema_s < ema_l:
@@ -254,7 +272,7 @@ def analyze_single_tf(
     elif macd_hist < 0:
         bear += 1
 
-    # RSI (≥55 tendencia alcista; ≤45 bajista)
+    # RSI (≥55 alcista; ≤45 bajista)
     if rsi >= 55:
         bull += 1
     elif rsi <= 45:
@@ -288,10 +306,10 @@ def analyze_single_tf(
         "ema_short": ema_s,
         "ema_long": ema_l,
         "close": close,
+        "atr": atr_val,
         "div_rsi": div_rsi,
         "div_macd": div_macd,
     }
-
 
 # ============================================================
 # 🧠 Motor principal multi-TF
@@ -306,16 +324,16 @@ def get_multi_tf_snapshot(
     {
       "symbol": "EPICUSDT",
       "direction_hint": "long" / "short" / None,
-      "timeframes": [
-          {...},  # TF más alto
-          {...},  # ...
-      ],
+      "timeframes": [...],
       "major_trend_label": "...",
       "major_trend_code": "bull/bear/sideways",
-      "trend_score": float 0-1,
-      "match_ratio": float 0-100,
-      "divergences": { "RSI": "Alcista (1h)", "MACD": "Bajista (4h)" } ...
-      ...
+      "trend_score": float 0–1,
+      "match_ratio": float 0–100,
+      "divergences": { "RSI": "...", "MACD": "..." },
+      "smart_bias_code": "...",
+      "confidence": float 0–1,
+      "technical_score": float 0–100,
+      "grade": "A" / "B" / "C" / "D",
     }
     """
     direction_hint = (direction_hint or "").lower()
@@ -336,16 +354,13 @@ def get_multi_tf_snapshot(
         raise RuntimeError(f"Falló el análisis técnico para {symbol}: sin TF válidos.")
 
     # ---------------------- Tendencia global ----------------------
-    # Peso según jerarquía (TF más alto con mayor peso)
     weights: Dict[str, float] = {}
     total_tfs = len(tf_results)
     for idx, tf_res in enumerate(tf_results):
         # Ej: para 4 TF → pesos 4,3,2,1
         weights[tf_res["tf"]] = float(total_tfs - idx)
 
-    bull_w = 0.0
-    bear_w = 0.0
-    side_w = 0.0
+    bull_w = bear_w = side_w = 0.0
 
     for tf_res in tf_results:
         w = weights[tf_res["tf"]]
@@ -390,11 +405,10 @@ def get_multi_tf_snapshot(
         else:
             match_ratio = 50.0  # neutro si no hay definición clara
 
-    # ---------------------- Divergencias agregadas ----------------------
+    # ---------------------- Divergencias agregadas (texto) ----------------------
     div_rsi_global = "Ninguna"
     div_macd_global = "Ninguna"
 
-    # Priorizamos TF más alto donde haya divergencia
     for tf_res in tf_results:
         label = tf_res["tf_label"]
         if tf_res["div_rsi"] != "ninguna":
@@ -417,9 +431,6 @@ def get_multi_tf_snapshot(
     # ---------------------- Smart bias ----------------------
     smart_bias_code = "neutral"
 
-    # Condición de posible giro:
-    # - Tendencia mayor alcista + divergencias bajistas importantes
-    # - Tendencia mayor bajista + divergencias alcistas importantes
     has_bear_div = any(
         res["div_rsi"] == "bajista" or res["div_macd"] == "bajista"
         for res in tf_results
@@ -436,8 +447,7 @@ def get_multi_tf_snapshot(
     elif major_trend_code in ("bull", "bear") and trend_score >= 0.6:
         smart_bias_code = "continuation"
 
-    # ---------------------- Confianza global ----------------------
-    # Base en función de ANALYSIS_MODE
+    # ---------------------- Confianza global (igual que antes) ----------------------
     if ANALYSIS_MODE == "aggressive":
         base_conf = 0.35
     elif ANALYSIS_MODE == "conservative":
@@ -447,7 +457,6 @@ def get_multi_tf_snapshot(
 
     conf = base_conf + (match_ratio / 100.0) * 0.5 + (trend_score * 0.2)
 
-    # Penalizar divergencias contra la dirección sugerida
     if direction_hint:
         if direction_hint == "long" and "Bajista" in (div_rsi_global + div_macd_global):
             conf -= 0.15
@@ -455,6 +464,91 @@ def get_multi_tf_snapshot(
             conf -= 0.15
 
     conf = max(0.0, min(conf, 1.0))
+
+    # ============================================================
+    # 🧮 NUEVO SISTEMA DE PUNTAJES + ESCALA A–D
+    # ============================================================
+
+    # 1) Trend Score (0–40 pts)
+    trend_pts = float(trend_score) * 40.0
+
+    # 2) Multi-TF Coherency Score (0–25 pts)
+    aligned = sum(1 for r in tf_results if r["trend_code"] == major_trend_code)
+    total = len(tf_results) or 1
+    if aligned >= 3:
+        mtf_pts = 25.0
+    elif aligned == 2:
+        mtf_pts = 15.0
+    elif aligned == 1:
+        mtf_pts = 5.0
+    else:
+        mtf_pts = 0.0
+
+    # 3) Divergence Score (20 / 10 / 5 / -10)
+    support_div = 0
+    contra_div = 0
+    for r in tf_results:
+        local_trend = r["trend_code"]
+        for d in (r["div_rsi"], r["div_macd"]):
+            if d == "alcista":
+                if local_trend == "bull":
+                    support_div += 1
+                elif local_trend == "bear":
+                    contra_div += 1
+            elif d == "bajista":
+                if local_trend == "bear":
+                    support_div += 1
+                elif local_trend == "bull":
+                    contra_div += 1
+
+    if support_div == 0 and contra_div == 0:
+        div_pts = 10.0  # neutro
+    elif contra_div > support_div:
+        div_pts = -10.0  # divergencias contra estructura
+    elif support_div > 0 and contra_div == 0:
+        div_pts = 20.0 if support_div >= 2 else 10.0
+    else:
+        div_pts = 5.0  # mixtas
+
+    # 4) Volatility & ATR Score (10 / 5 / -5)
+    vol_pts = 5.0  # neutro por defecto
+    base_tf = None
+    for pref in ("30m", "1h", "15m", "4h", "5m", "1m"):
+        for r in tf_results:
+            if r["tf_label"] == pref:
+                base_tf = r
+                break
+        if base_tf:
+            break
+
+    if base_tf and base_tf.get("atr", 0.0) > 0 and base_tf["close"] > 0:
+        atr_pct = (base_tf["atr"] / base_tf["close"]) * 100.0
+        if 0.3 <= atr_pct <= 3.0:
+            vol_pts = 10.0   # ATR ideal
+        elif 0.1 <= atr_pct < 0.3 or 3.0 < atr_pct <= 8.0:
+            vol_pts = 5.0    # aceptable
+        else:
+            vol_pts = -5.0   # demasiado bajo o demasiado alto
+
+    # 5) Smart Bias / Structure Bias Score (5 / 2 / -5)
+    if smart_bias_code == "continuation":
+        sb_pts = 5.0
+    elif smart_bias_code == "neutral":
+        sb_pts = 2.0
+    else:  # reversals
+        sb_pts = -5.0
+
+    technical_score = trend_pts + mtf_pts + div_pts + vol_pts + sb_pts
+    technical_score = max(0.0, min(technical_score, 100.0))
+
+    if technical_score >= 85.0:
+        grade = "A"
+    elif technical_score >= 70.0:
+        grade = "B"
+    elif technical_score >= 50.0:
+        grade = "C"
+    else:
+        grade = "D"
 
     return {
         "symbol": symbol,
@@ -467,4 +561,7 @@ def get_multi_tf_snapshot(
         "divergences": divergences,
         "smart_bias_code": smart_bias_code,
         "confidence": float(conf),
+        "technical_score": float(technical_score),
+        "grade": grade,
     }
+
