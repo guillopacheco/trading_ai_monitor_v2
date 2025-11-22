@@ -60,7 +60,7 @@ def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
     - divergencias NO fuertemente en contra
     - smart_bias NO fuertemente contrario
     """
-    thresholds = _get_thresholds()
+    thresholds = get_thresholds()
     re_thr = thresholds.get("reactivation", 75.0)
 
     direction = (original_direction or "").lower()
