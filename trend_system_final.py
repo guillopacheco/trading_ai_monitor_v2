@@ -1,597 +1,351 @@
 """
-trend_system_final.py
-------------------------------------------------------------
-Motor de análisis técnico avanzado para:
+trend_system_final.py — Motor técnico de alto nivel (versión wrapper 2025-11)
+-----------------------------------------------------------------------------
 
-- /analizar (análisis manual desde Telegram)
-- Reactivación de señales (signal_reactivation_sync.py)
-- Monitor de reversiones (position_reversal_monitor.py)
-- Cualquier módulo que quiera un reporte ya formateado.
+Este módulo:
 
-Características clave:
-- Usa indicators.get_technical_data() (multi-TF + divergencias smart)
-- Selección AUTOMÁTICA de TF dentro de indicators.py
-- Cálculo de tendencia por TF (Alcista / Bajista / Lateral)
-- Cálculo de tendencia mayor + coherencia
-- Uso de divergencias clásicas + smart (RSI/MACD)
-- Match técnico vs dirección de la señal (long/short)
-- Recomendación textual coherente con el resto de módulos
-- Devuelve SIEMPRE:
-    - Un dict estructurado con el resultado
-    - Un string formateado para enviar directo a Telegram
-------------------------------------------------------------
+- Usa motor_wrapper_core.get_multi_tf_snapshot() para obtener el análisis
+  multi-temporalidad del símbolo.
+- Aplica reglas de decisión:
+  * allowed / no allowed
+  * match_ratio y umbrales por ANALYSIS_MODE
+  * interpretación de divergencias y smart_bias
+- Expone dos funciones PÚBLICAS (API estable):
+
+  ✔ analyze_trend_core(symbol, direction_hint=None) -> dict
+  ✔ analyze_and_format(symbol, direction_hint=None) -> (dict, markdown_str)
+
+Otros módulos que lo usan:
+- telegram_reader (señales nuevas)
+- command_bot (/analizar)
+- signal_reactivation_sync (reactivación automática)
+- position_reversal_monitor (reversiones peligrosas)
+
+⚠️ IMPORTANTE:
+Mantener esta API estable evita romper el resto de la app.
 """
 
-import logging
-from typing import Dict, Any, Optional, Tuple
-from collections import Counter
+from __future__ import annotations
 
-from indicators import get_technical_data
+import logging
+from typing import Dict, Any, Tuple, Optional
+
 from config import ANALYSIS_MODE
+from motor_wrapper_core import get_multi_tf_snapshot
 
 logger = logging.getLogger("trend_system_final")
 
 
-# ================================================================
-# 🔧 Umbrales dinámicos (agresivo / conservador)
-# ================================================================
+# ============================================================
+# 🎚 Umbrales según modo de análisis
+# ============================================================
 def _get_thresholds() -> Dict[str, float]:
     """
-    Devuelve los umbrales dinámicos para:
-    - confirmación de señal
-    - reactivación de señal
-    - uso interno (monitores)
+    Devuelve los umbrales usados por el resto del sistema:
 
-    Basado en config.ANALYSIS_MODE:
-        - "conservative"
-        - "aggressive"
+    - internal:      mínimo de match_ratio para considerar técnicamente aceptable.
+    - reactivation:  mínimo de match_ratio para reactivar una señal.
+    - strong:        match_ratio considerado muy fuerte.
     """
-    mode = (ANALYSIS_MODE or "conservative").lower()
+    mode = (ANALYSIS_MODE or "balanced").lower()
 
     if mode == "aggressive":
         return {
-            "confirm": 70.0,
-            "reactivation": 70.0,
+            "internal": 55.0,
+            "reactivation": 65.0,
+            "strong": 80.0,
+        }
+    elif mode == "conservative":
+        return {
+            "internal": 65.0,
+            "reactivation": 75.0,
+            "strong": 85.0,
+        }
+    else:  # balanced (valor por defecto)
+        return {
             "internal": 60.0,
+            "reactivation": 70.0,
+            "strong": 82.0,
         }
 
-    # Modo conservador (por defecto)
-    return {
-        "confirm": 80.0,
-        "reactivation": 80.0,
-        "internal": 70.0,
-    }
 
-
-# ================================================================
-# 🔧 Utilidades internas
-# ================================================================
-def _tf_to_minutes(tf: str) -> int:
-    """
-    Convierte '1m', '3m', '5m', '15m', '30m', '60m', '1h', '4h' → minutos.
-    Si falla, devuelve un valor grande para dejarlo al final.
-    """
-    try:
-        tf = tf.strip().lower()
-        if tf.endswith("m"):
-            return int(tf[:-1])
-        if tf.endswith("h"):
-            return int(tf[:-1]) * 60
-        return int(tf)
-    except Exception:
-        return 9999
-
-
-def _trend_label_from_raw(raw: str) -> str:
-    raw = (raw or "").lower()
-    if "bull" in raw or "alc" in raw:
-        return "Alcista"
-    if "bear" in raw or "baj" in raw:
-        return "Bajista"
-    return "Lateral / Mixta"
-
-
-def _bucket_from_label(label: str) -> str:
-    l = (label or "").lower()
-    if "alc" in l or "bull" in l:
-        return "bull"
-    if "baj" in l or "bear" in l:
-        return "bear"
-    return "side"
-
-
-def _bucket_to_label(bucket: str) -> str:
-    if bucket == "bull":
-        return "Alcista"
-    if bucket == "bear":
-        return "Bajista"
-    return "Lateral / Mixta"
-
-
-def _safe_conf_to_float(value: Any) -> float:
-    """
-    Convierte confidencias tipo 'weak' / 'medium' / 'strong' o números a [0..1].
-    Evita errores como float('weak').
-    """
-    if value is None:
-        return 0.0
-
-    # Si ya es número
-    if isinstance(value, (int, float)):
-        try:
-            v = float(value)
-            # Normalizar si parece estar en porcentaje > 1
-            if v > 1.5:
-                return max(0.0, min(1.0, v / 100.0))
-            return max(0.0, min(1.0, v))
-        except Exception:
-            return 0.0
-
-    # Si es string, intentar parsear o mapear
-    if isinstance(value, str):
-        txt = value.strip().lower()
-        # Intento directo
-        try:
-            v = float(txt)
-            if v > 1.5:
-                return max(0.0, min(1.0, v / 100.0))
-            return max(0.0, min(1.0, v))
-        except Exception:
-            pass
-
-        # Mapear categorías habituales
-        mapping = {
-            "veryweak": 0.1,
-            "weak": 0.25,
-            "moderate": 0.5,
-            "medium": 0.5,
-            "strong": 0.8,
-            "verystrong": 0.95,
-        }
-        for key, val in mapping.items():
-            if key in txt:
-                return val
-
-    return 0.0
-
-
-def _classify_confidence(match_ratio: float, smart_conf_avg: float) -> str:
-    """
-    Clasifica la confianza combinando:
-    - match_ratio (coincidencia de tendencias con la dirección)
-    - smart_conf_avg (confianza media de divergencias inteligentes)
-    """
-    base = max(0.0, min(1.0, match_ratio / 100.0))
-    smart = max(0.0, min(1.0, smart_conf_avg))
-    combined = (0.7 * base) + (0.3 * smart)
-
-    if combined >= 0.8:
-        return "🟢 Alta"
-    if combined >= 0.5:
-        return "🟡 Media"
-    return "🔴 Baja"
-
-
-def _compute_major_trend(trends: Dict[str, str]) -> Tuple[str, float]:
-    """
-    A partir de un dict {tf: tendencia}, calcula:
-    - tendencia mayor (Alcista/Bajista/Lateral)
-    - porcentaje de coherencia entre temporalidades
-    """
-    if not trends:
-        return "Sin datos", 0.0
-
-    buckets = {"bull": 0, "bear": 0, "side": 0}
-    for label in trends.values():
-        b = _bucket_from_label(label)
-        buckets[b] += 1
-
-    total = sum(buckets.values()) or 1
-    dominant = max(buckets, key=buckets.get)
-    coherence = (buckets[dominant] / total) * 100.0
-    return _bucket_to_label(dominant), coherence
-
-
-def _evaluate_direction_match(
-    direction_hint: Optional[str],
-    trends: Dict[str, str],
-) -> Tuple[float, int, int]:
-    """
-    Calcula qué porcentaje de temporalidades coincide con la dirección sugerida
-    (long/short). Si no hay direction_hint, devuelve 0.
-    """
-    if not direction_hint or not trends:
-        return 0.0, 0, 0
-
-    direction = direction_hint.lower()
-    matches = 0
-    total = 0
-
-    for _, label in trends.items():
-        label = (label or "").lower()
-        total += 1
-        if direction == "long" and "alcista" in label:
-            matches += 1
-        elif direction == "short" and "bajista" in label:
-            matches += 1
-
-    if total == 0:
-        return 0.0, 0, 0
-
-    ratio = (matches / total) * 100.0
-    return ratio, matches, total
-
-
-def _summarize_divergences(tech_multi: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
-    """
-    A partir del dict de indicadores por TF, genera un resumen amigable:
-
-    { "RSI": "Alcista (15m)" / "Bajista (1h)" / "Ninguna",
-      "MACD": "...",
-      "Volumen": "Ninguna" (placeholder)
-    }
-    """
-    rsi_candidates = []
-    macd_candidates = []
-
-    for tf, tech in tech_multi.items():
-        # Smart primero, luego legacy
-        rsi_raw = tech.get("smart_rsi_div") or tech.get("rsi_div")
-        macd_raw = tech.get("smart_macd_div") or tech.get("macd_div")
-
-        if rsi_raw and str(rsi_raw).lower() not in ["none", "ninguna", "neutral"]:
-            rsi_candidates.append((tf, str(rsi_raw).lower()))
-
-        if macd_raw and str(macd_raw).lower() not in ["none", "ninguna", "neutral"]:
-            macd_candidates.append((tf, str(macd_raw).lower()))
-
-    def _pick_main(cands):
-        if not cands:
-            return "Ninguna"
-
-        # Ordenar por TF más lenta primero (1h > 15m > 5m…)
-        cands_sorted = sorted(cands, key=lambda x: _tf_to_minutes(x[0]), reverse=True)
-        tf, kind = cands_sorted[0]
-        # Texto bonito
-        if "bear" in kind or "baj" in kind:
-            return f"Bajista ({tf})"
-        if "bull" in kind or "alc" in kind:
-            return f"Alcista ({tf})"
-        return f"{kind} ({tf})"
-
-    return {
-        "RSI": _pick_main(rsi_candidates),
-        "MACD": _pick_main(macd_candidates),
-        "Volumen": "Ninguna",  # placeholder, por ahora
-    }
-
-
-def _direction_vs_bias_comment(direction: Optional[str], bias: str) -> Optional[str]:
-    """
-    Nota si la dirección sugerida va en contra del bias smart.
-    bias típico: 'bullish-reversal', 'bearish-reversal', 'continuation', 'neutral'
-    """
-    if not direction or not bias:
-        return None
-
-    d = direction.lower()
-    b = bias.lower()
-
-    if d == "long" and "bear" in b:
-        return "⚠️ La dirección LONG va en contra de un posible giro bajista (smart bias)."
-    if d == "short" and "bull" in b:
-        return "⚠️ La dirección SHORT va en contra de un posible giro alcista (smart bias)."
-    return None
-
-
-# ================================================================
-# 🧠 Núcleo de análisis
-# ================================================================
+# ============================================================
+# 🧠 Motor de decisión de alto nivel
+# ============================================================
 def analyze_trend_core(
     symbol: str,
-    direction_hint: Optional[str] = None,
+    direction_hint: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Analiza un símbolo usando:
+    Analiza la estructura de mercado y devuelve un dict con la
+    información suficiente para que otros módulos tomen decisiones.
 
-    - indicators.get_technical_data() sobre múltiples TF
-    - divergencias smart (ya calculadas en indicators.py)
-    - bias y confianza smart
-    - coincidencia con la dirección sugerida (long/short)
-
-    Devuelve un dict estructurado:
-
+    Retorno típico:
     {
-      "symbol": ...,
-      "trends": { "5m": "Alcista", ... },
-      "major_trend": "Alcista/Bajista/Lateral/...",
-      "major_coherence": 0-100,
-      "direction_hint": "long"/"short"/None,
-      "match_ratio": 0-100,
-      "match_count": int,
-      "match_total": int,
-      "divergences": { "RSI": "...", "MACD": "...", "Volumen": "..." },
-      "smart_bias": "...",
-      "smart_confidence_avg": 0-1,
-      "confidence_label": "🟢/🟡/🔴 ...",
-      "allowed": bool (si la señal es viable),
-      "overall_trend": "bullish"/"bearish"/"sideways",
-      "recommendation": str,
+      "symbol": "EPICUSDT",
+      "direction": "long" / "short" / None,
+      "major_trend": "Alcista",
+      "overall_trend": "Alcista fuerte",
+      "match_ratio": 87.5,
+      "allowed": True / False,
+      "confidence": 0.63,
+      "confidence_label": "🟢 Alta" / "🟡 Media" / "🔴 Baja",
+      "smart_bias": "Reversión alcista",
+      "divergences": { "RSI": "...", "MACD": "..." },
+      "timeframes": {
+          "15m": "Alcista",
+          "30m": "Bajista",
+          "1h": "Alcista",
+          "4h": "Sin datos" / ...
+      },
+      "debug": {...}  # datos adicionales si se quieren loguear.
     }
     """
-    try:
-        tech_multi = get_technical_data(symbol)
+    direction_hint = (direction_hint or "").lower()
+    if direction_hint not in ("long", "short"):
+        direction_hint = None
 
-        if not tech_multi:
-            logger.warning(f"⚠️ No se encontraron datos técnicos para {symbol}")
-            return {
-                "symbol": symbol,
-                "trends": {},
-                "major_trend": "Sin datos",
-                "major_coherence": 0.0,
-                "direction_hint": direction_hint,
-                "match_ratio": 0.0,
-                "match_count": 0,
-                "match_total": 0,
-                "divergences": {"RSI": "Ninguna", "MACD": "Ninguna", "Volumen": "Ninguna"},
-                "smart_bias": "neutral",
-                "smart_confidence_avg": 0.0,
-                "confidence_label": "🔴 Baja",
-                "allowed": False,
-                "overall_trend": "sideways",
-                "recommendation": "Sin datos técnicos suficientes.",
-            }
+    # 1) Obtener snapshot multi-TF
+    snapshot = get_multi_tf_snapshot(symbol, direction_hint=direction_hint)
 
-        # ------------------------------------------------------------
-        # 📊 Tendencias por TF + smart bias/confidence
-        # ------------------------------------------------------------
-        trends: Dict[str, str] = {}
-        smart_biases = []
-        smart_conf_values = []
+    tf_map = {}
+    for tf_res in snapshot["timeframes"]:
+        tf_map[tf_res["tf_label"]] = tf_res["trend_label"]
 
-        for tf, tech in tech_multi.items():
-            raw_trend = tech.get("trend")  # bullish/bearish calculado en indicators
-            label = _trend_label_from_raw(raw_trend)
-            trends[tf] = label
+    major_trend_label = snapshot["major_trend_label"]
+    major_trend_code = snapshot["major_trend_code"]
+    match_ratio = snapshot["match_ratio"]
+    divergences = snapshot["divergences"]
+    smart_bias_code = snapshot["smart_bias_code"]
+    confidence = snapshot["confidence"]
 
-            sb = tech.get("smart_bias", "neutral")
-            sc = _safe_conf_to_float(tech.get("smart_confidence", 0.0))
+    thresholds = _get_thresholds()
+    internal_thr = thresholds["internal"]
+    strong_thr = thresholds["strong"]
 
-            if sb and sb != "neutral":
-                smart_biases.append(sb)
-            if sc > 0:
-                smart_conf_values.append(sc)
+    # 2) Overall trend (texto más humano)
+    aligned_tfs = list(tf_map.values()).count(major_trend_label)
+    total_tfs = len(tf_map) if tf_map else 1
+    align_ratio = aligned_tfs / total_tfs
 
-        major_trend, major_coherence = _compute_major_trend(trends)
-
-        dominant_bias = "neutral"
-        if smart_biases:
-            dominant_bias = Counter(smart_biases).most_common(1)[0][0]
-
-        smart_conf_avg = sum(smart_conf_values) / len(smart_conf_values) if smart_conf_values else 0.0
-
-        # ------------------------------------------------------------
-        # 📈 Divergencias (resumen)
-        # ------------------------------------------------------------
-        divergences = _summarize_divergences(tech_multi)
-
-        # ------------------------------------------------------------
-        # 🎯 Coincidencia con dirección sugerida
-        # ------------------------------------------------------------
-        match_ratio, match_count, match_total = _evaluate_direction_match(direction_hint, trends)
-
-        # ------------------------------------------------------------
-        # ✅ Lógica de "allowed" para uso interno (reversión/reactivación)
-        # ------------------------------------------------------------
-        thresholds = _get_thresholds()
-        internal_thr = thresholds.get("internal", 70.0)
-
-        allowed = True
-        reasons_internal = []
-
-        # 1) Coincidencia muy baja
-        if direction_hint:
-            if match_ratio < (internal_thr * 0.6):
-                allowed = False
-                reasons_internal.append(f"Match muy bajo ({match_ratio:.1f}%).")
-
-        # 2) Divergencias fuertes en contra
-        rsi_div = (divergences.get("RSI") or "").lower()
-        macd_div = (divergences.get("MACD") or "").lower()
-
-        if direction_hint == "long":
-            if "bajista" in rsi_div or "bear" in rsi_div or "bajista" in macd_div or "bear" in macd_div:
-                allowed = False
-                reasons_internal.append("Divergencias bajistas contra LONG.")
-        elif direction_hint == "short":
-            if "alcista" in rsi_div or "bull" in rsi_div or "alcista" in macd_div or "bull" in macd_div:
-                allowed = False
-                reasons_internal.append("Divergencias alcistas contra SHORT.")
-
-        # 3) Smart bias muy contrario
-        db = dominant_bias.lower()
-        if direction_hint == "long" and "bear" in db:
-            allowed = False
-            reasons_internal.append("Smart bias bajista contra LONG.")
-        if direction_hint == "short" and "bull" in db:
-            allowed = False
-            reasons_internal.append("Smart bias alcista contra SHORT.")
-
-        # ------------------------------------------------------------
-        # 🧮 Confianza global
-        # ------------------------------------------------------------
-        confidence_label = _classify_confidence(match_ratio, smart_conf_avg)
-
-        # ------------------------------------------------------------
-        # 🧭 Overall trend (compacto)
-        # ------------------------------------------------------------
-        if "alcista" in major_trend.lower():
-            overall_trend = "bullish"
-        elif "bajista" in major_trend.lower():
-            overall_trend = "bearish"
-        else:
-            overall_trend = "sideways"
-
-        # ------------------------------------------------------------
-        # 📌 Recomendación textual
-        # ------------------------------------------------------------
-        if direction_hint:
-            confirm_thr = thresholds.get("confirm", 80.0)
-
-            if not allowed:
-                recommendation = f"❌ Condiciones técnicas poco favorables para {direction_hint.upper()}: " \
-                                 + "; ".join(reasons_internal) if reasons_internal else \
-                                 "❌ Condiciones técnicas poco favorables para la señal."
-            else:
-                if match_ratio >= confirm_thr:
-                    recommendation = f"✅ Señal confirmada ({match_ratio:.1f}% de coincidencia con la tendencia)."
-                elif match_ratio >= (confirm_thr - 20):
-                    recommendation = f"🟡 Señal parcialmente confirmada ({match_ratio:.1f}% de coincidencia)."
-                else:
-                    recommendation = f"⚠️ Señal débil ({match_ratio:.1f}% de coincidencia). Esperar mejor entrada."
-
-        else:
-            # Sin dirección propuesta, lectura descriptiva
-            if "alcista" in major_trend.lower():
-                recommendation = "📈 Tendencia mayor alcista. Buscar oportunidades LONG en retrocesos."
-            elif "bajista" in major_trend.lower():
-                recommendation = "📉 Tendencia mayor bajista. Buscar oportunidades SHORT en rebotes."
-            elif "lateral" in major_trend.lower():
-                recommendation = "⚖️ Mercado lateral/mixto. Evitar entradas agresivas; esperar ruptura clara."
-            else:
-                recommendation = "ℹ️ Sin suficiente información para una recomendación clara."
-
-        # Nota extra si bias smart contradice
-        bias_note = _direction_vs_bias_comment(direction_hint, dominant_bias)
-        if bias_note:
-            recommendation += f" {bias_note}"
-
-        # Nota si hay divergencias detectadas
-        if any(v and v != "Ninguna" for v in divergences.values()):
-            recommendation += " (⚠️ Divergencia técnica detectada.)"
-
-        return {
-            "symbol": symbol,
-            "trends": trends,
-            "major_trend": major_trend,
-            "major_coherence": round(major_coherence, 2),
-            "direction_hint": direction_hint,
-            "match_ratio": round(match_ratio, 2),
-            "match_count": match_count,
-            "match_total": match_total,
-            "divergences": divergences,
-            "smart_bias": dominant_bias,
-            "smart_confidence_avg": round(smart_conf_avg, 3),
-            "confidence_label": confidence_label,
-            "allowed": allowed,
-            "overall_trend": overall_trend,
-            "recommendation": recommendation,
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Error en analyze_trend_core para {symbol}: {e}")
-        return {
-            "symbol": symbol,
-            "trends": {},
-            "major_trend": "Error",
-            "major_coherence": 0.0,
-            "direction_hint": direction_hint,
-            "match_ratio": 0.0,
-            "match_count": 0,
-            "match_total": 0,
-            "divergences": {"RSI": "Error", "MACD": "Error", "Volumen": "Error"},
-            "smart_bias": "neutral",
-            "smart_confidence_avg": 0.0,
-            "confidence_label": "🔴 Baja",
-            "allowed": False,
-            "overall_trend": "sideways",
-            "recommendation": "Error en el análisis técnico.",
-        }
-
-
-# ================================================================
-# 📨 Formateo final para Telegram
-# ================================================================
-def analyze_and_format(
-    symbol: str,
-    direction_hint: Optional[str] = None,
-) -> Tuple[Dict[str, Any], str]:
-    """
-    Función principal que usarán:
-    - /analizar
-    - signal_reactivation_sync
-    - position_reversal_monitor
-    - Otros módulos que quieran un reporte listo para Telegram
-
-    Retorna:
-      (resultado_dict, mensaje_formateado_markdown)
-    """
-    result = analyze_trend_core(symbol, direction_hint=direction_hint)
-
-    symbol = result.get("symbol", symbol)
-    trends = result.get("trends", {})
-    major_trend = result.get("major_trend", "Sin datos")
-    major_coherence = result.get("major_coherence", 0.0)
-    direction = result.get("direction_hint")
-    match_ratio = result.get("match_ratio", 0.0)
-    divergences = result.get("divergences", {})
-    smart_bias = result.get("smart_bias", "neutral")
-    smart_conf = result.get("smart_confidence_avg", 0.0)
-    confidence_label = result.get("confidence_label", "🔴 Baja")
-    recommendation = result.get("recommendation", "Sin recomendación.")
-
-    # Tendencias por TF ordenadas
-    tf_lines = []
-    for tf in sorted(trends.keys(), key=_tf_to_minutes):
-        tf_lines.append(f"🔹 *{tf}*: {trends[tf]}")
-    tf_block = "\n".join(tf_lines) if tf_lines else "🔹 Sin datos por temporalidad."
-
-    # Divergencias en texto
-    if divergences:
-        parts = []
-        rsi_txt = divergences.get("RSI")
-        macd_txt = divergences.get("MACD")
-        if rsi_txt and rsi_txt != "Ninguna":
-            parts.append(f"RSI: {rsi_txt}")
-        if macd_txt and macd_txt != "Ninguna":
-            parts.append(f"MACD: {macd_txt}")
-        div_text = ", ".join(parts) if parts else "Ninguna"
+    if align_ratio >= 0.75:
+        overall_trend = f"{major_trend_label} fuerte"
+    elif align_ratio <= 0.4:
+        overall_trend = f"{major_trend_label} débil / mercado mixto"
     else:
-        div_text = "Ninguna"
+        overall_trend = f"{major_trend_label} moderada"
 
-    # Sesgo smart legible
-    bias_human_map = {
+    # 3) Smart bias en texto
+    smart_bias_human = {
         "bullish-reversal": "Reversión alcista",
         "bearish-reversal": "Reversión bajista",
         "continuation": "Continuación de tendencia",
         "neutral": "Neutral / sin sesgo claro",
-    }
-    bias_human = bias_human_map.get(smart_bias, smart_bias)
+    }.get(smart_bias_code, "Neutral / sin sesgo claro")
 
+    # 4) Confianza → etiqueta
+    if confidence >= 0.65:
+        conf_label = "🟢 Alta"
+    elif confidence >= 0.4:
+        conf_label = "🟡 Media"
+    else:
+        conf_label = "🔴 Baja"
+
+    # 5) allowed / no allowed (según divergencias y match_ratio)
+    allowed = True
+    reasons: list[str] = []
+
+    if direction_hint:
+        dir_txt = "LONG" if direction_hint == "long" else "SHORT"
+        reasons.append(f"Dirección sugerida: {dir_txt}.")
+
+    # Penalizar si match_ratio bajo
+    if match_ratio < internal_thr:
+        allowed = False
+        reasons.append(
+            f"Match_ratio bajo ({match_ratio:.1f}% < {internal_thr:.1f}%)."
+        )
+
+    # Divergencias en contra de la dirección
+    div_text = f"{divergences.get('RSI','')} {divergences.get('MACD','')}"
+    if direction_hint == "long" and ("Bajista" in div_text):
+        reasons.append("Divergencias bajistas contra LONG.")
+        # si además la confianza es baja, anulamos
+        if confidence < 0.55:
+            allowed = False
+
+    if direction_hint == "short" and ("Alcista" in div_text):
+        reasons.append("Divergencias alcistas contra SHORT.")
+        if confidence < 0.55:
+            allowed = False
+
+    # Smart bias contrario
+    if direction_hint == "long" and smart_bias_code == "bearish-reversal":
+        reasons.append("Smart bias indica posible giro bajista.")
+        if confidence < 0.7:
+            allowed = False
+
+    if direction_hint == "short" and smart_bias_code == "bullish-reversal":
+        reasons.append("Smart bias indica posible giro alcista.")
+        if confidence < 0.7:
+            allowed = False
+
+    # Si no hay dirección_hint, nunca bloqueamos totalmente, solo avisamos
+    if direction_hint is None:
+        allowed = True
+
+    result: Dict[str, Any] = {
+        "symbol": symbol,
+        "direction": direction_hint,
+        "major_trend": major_trend_label,
+        "overall_trend": overall_trend,
+        "match_ratio": float(match_ratio),
+        "allowed": bool(allowed),
+        "confidence": float(confidence),
+        "confidence_label": conf_label,
+        "smart_bias": smart_bias_human,
+        "divergences": divergences,
+        "timeframes": tf_map,
+        "reasons": reasons,
+        "debug": {
+            "major_trend_code": major_trend_code,
+            "raw_snapshot": snapshot,
+            "thresholds": thresholds,
+        },
+    }
+
+    return result
+
+
+# ============================================================
+# 📝 Formateo para Telegram
+# ============================================================
+def analyze_and_format(
+    symbol: str,
+    direction_hint: Optional[str] = None
+) -> Tuple[Dict[str, Any], str]:
+    """
+    Función que usan:
+
+    - /analizar (command_bot)
+    - telegram_reader (señales nuevas)
+    - signal_reactivation_sync (reactivación)
+    - position_reversal_monitor (reversiones)
+
+    Devuelve:
+      result_dict, mensaje_markdown
+    """
+    result = analyze_trend_core(symbol, direction_hint=direction_hint)
+
+    tf_lines = []
+    # Queremos un orden coherente: 15m, 30m, 1h, 4h (si existen)
+    order = ["15m", "30m", "1h", "4h", "5m", "1m"]
+    tfs = result.get("timeframes", {})
+
+    for label in order:
+        if label in tfs:
+            tf_lines.append(f"🔹 {label}: {tfs[label]}")
+    # Añadir cualquier TF extra
+    for label, trend in tfs.items():
+        if label not in order:
+            tf_lines.append(f"🔹 {label}: {trend}")
+
+    major_trend = result["major_trend"]
+    overall_trend = result["overall_trend"]
+    match_ratio = result["match_ratio"]
+    divergences = result["divergences"]
+    smart_bias = result["smart_bias"]
+    conf_label = result["confidence_label"]
+    confidence = result["confidence"]
+    allowed = result["allowed"]
+    direction = result["direction"]
+
+    # Texto de divergencias
+    div_parts = []
+    if divergences.get("RSI") and divergences["RSI"] != "Ninguna":
+        div_parts.append(f"RSI: {divergences['RSI']}")
+    if divergences.get("MACD") and divergences["MACD"] != "Ninguna":
+        div_parts.append(f"MACD: {divergences['MACD']}")
+    div_text = ", ".join(div_parts) if div_parts else "Ninguna"
+
+    # Dirección en texto
+    dir_line = ""
+    match_line = ""
     if direction:
         dir_text = direction.upper()
-        dir_line = f"🎯 *Dirección sugerida:* {dir_text}\n"
-        match_line = f"📊 *Coincidencia con la tendencia:* {match_ratio:.1f}%\n"
-    else:
-        dir_line = ""
-        match_line = ""
+        dir_line = f"🎯 Dirección sugerida: {dir_text}\n"
+        match_line = f"📊 Coincidencia con la tendencia: {match_ratio:.1f}%\n"
 
-    message = (
-        f"📊 *Análisis de {symbol}*\n"
-        f"{tf_block}\n\n"
-        f"🧭 *Tendencia mayor:* {major_trend} ({major_coherence:.2f}%)\n"
-        f"{dir_line}"
-        f"{match_line}"
-        f"🧪 *Divergencias:* {div_text}\n"
-        f"🧬 *Sesgo técnico (smart):* {bias_human} (confianza {smart_conf:.2f})\n"
-        f"🧮 *Confianza global:* {confidence_label}\n\n"
-        f"📌 *Recomendación:* {recommendation}"
+    # Confianza texto simple (además del emoji)
+    if confidence >= 0.65:
+        conf_text = "Alta"
+    elif confidence >= 0.4:
+        conf_text = "Media"
+    else:
+        conf_text = "Baja"
+
+    # Recomendación final
+    rec = ""
+
+    thresholds = _get_thresholds()
+    internal_thr = thresholds["internal"]
+    strong_thr = thresholds["strong"]
+
+    warning_suffix = ""
+    if "Bajista" in div_text or "Alcista" in div_text:
+        warning_suffix = " (⚠️ Divergencia técnica detectada.)"
+
+    if not direction:
+        # Modo exploratorio (/analizar sin dirección)
+        rec = (
+            f"📌 Escenario actual: {overall_trend}. "
+            f"Smart bias: {smart_bias}. "
+            f"Confianza: {conf_text}."
+        )
+    else:
+        if allowed:
+            if match_ratio >= strong_thr and confidence >= 0.6:
+                rec = (
+                    "✅ Señal confirmada (alta coincidencia con la tendencia)."
+                )
+            elif match_ratio >= internal_thr:
+                rec = (
+                    "✅ Señal aceptable, pero con algunas condiciones a vigilar."
+                )
+            else:
+                rec = (
+                    "⚠️ Señal marginal: la coincidencia con la tendencia es limitada."
+                )
+        else:
+            rec = (
+                "❌ Condiciones técnicas poco favorables para la dirección indicada."
+            )
+
+        if warning_suffix:
+            rec = f"{rec}{warning_suffix}"
+
+    lines = [
+        f"📊 Análisis de {symbol}",
+        *tf_lines,
+        "",
+        f"🧭 Tendencia mayor: {major_trend}",
+        f"📈 Estructura global: {overall_trend}",
+    ]
+
+    if direction:
+        lines.append(dir_line.rstrip())
+        lines.append(match_line.rstrip())
+
+    lines.extend(
+        [
+            f"🧪 Divergencias: {div_text}",
+            f"🧬 Sesgo técnico (smart): {smart_bias}",
+            f"🧮 Confianza global: {conf_label} ({conf_text})",
+            "",
+            f"📌 Recomendación: {rec}",
+        ]
     )
 
+    message = "\n".join(lines)
+
     return result, message
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    r, m = analyze_and_format("BTCUSDT", direction_hint="long")
-    print(m)
