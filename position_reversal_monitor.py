@@ -22,7 +22,7 @@ from typing import Tuple
 
 from bybit_client import get_open_positions
 from notifier import send_message
-from trend_system_final import analyze_trend_core, _get_thresholds
+from motor_wrapper import analyze_for_reversal, get_thresholds
 
 logger = logging.getLogger("position_reversal_monitor")
 
@@ -63,7 +63,7 @@ def _is_reversal(direction: str, analysis: dict, loss_pct: float) -> Tuple[bool,
     ✔ divergencias peligrosas en contra (RSI/MACD)
     ✔ tendencia mayor en contra
     """
-    thresholds = _get_thresholds()
+    thresholds = get_thresholds()
     internal_thr = thresholds.get("internal", 70.0)
 
     direction = (direction or "").lower()
@@ -162,7 +162,7 @@ async def monitor_reversals(interval_seconds: int = 600, run_once: bool = False)
                     )
 
                     # Análisis profundo
-                    analysis = analyze_trend_core(symbol, direction_hint=direction)
+                    analysis = analyze_for_reversal(symbol, direction_hint=direction)
                     is_rev, reason = _is_reversal(direction, analysis, loss_pct)
 
                     if not is_rev:

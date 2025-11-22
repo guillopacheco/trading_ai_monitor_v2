@@ -21,7 +21,7 @@ from datetime import datetime
 
 from config import SIGNAL_RECHECK_INTERVAL_MINUTES
 from notifier import send_message
-from trend_system_final import analyze_and_format, _get_thresholds
+from motor_wrapper import analyze_for_reactivation, get_thresholds
 
 from signal_manager_db import (
     get_pending_signals_for_reactivation,
@@ -158,7 +158,7 @@ async def run_reactivation_cycle() -> dict:
 
             logger.info(f"♻️ Revisando señal pendiente: {symbol} ({direction}).")
 
-            result, report = analyze_and_format(symbol, direction_hint=direction)
+            result, report = analyze_for_reactivation(symbol, direction_hint=direction)
             ok, reason = _can_reactivate(result, direction)
 
             if not ok:

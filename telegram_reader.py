@@ -22,7 +22,7 @@ from config import TELEGRAM_CHANNEL_ID
 from helpers import normalize_symbol, normalize_direction
 from database import save_signal
 from notifier import send_message
-from trend_system_final import analyze_and_format
+from motor_wrapper import analyze_for_signal
 
 logger = logging.getLogger("telegram_reader")
 
@@ -148,7 +148,7 @@ async def process_signal(parsed: dict):
 
     # 2) Ejecutar análisis técnico
     try:
-        result, tech_msg = analyze_and_format(
+        result, tech_msg = analyze_for_signal(
             symbol=symbol,
             direction_hint=direction,
         )
