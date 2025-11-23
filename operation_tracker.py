@@ -9,7 +9,6 @@ Funciones principales:
 ✔ Evalúa pérdida, tendencia y sesgo smart
 ✔ Produce recomendaciones claras: mantener / cerrar / revertir
 ✔ Envía alertas automáticas vía notifier.send_message()
-
 Compatible con modo REAL y SIMULACIÓN.
 --------------------------------------------------------------------
 """

@@ -1,18 +1,12 @@
 """
-main.py — Orquestador FINAL (versión integrada 2025-11)
-------------------------------------------------------------
-Inicializa y ejecuta TODOS los módulos del sistema:
+main.py — Orquestador FINAL con integración de alertas (2025-11)
 
-✔ Base de datos
-✔ Cliente de Telethon
-✔ Lector de señales (telegram_reader)
-✔ Bot de comandos (command_bot)
-✔ Monitor de operaciones (operation_tracker)
-✔ Monitor de reversiones (position_reversal_monitor)
-✔ Reactivación automática de señales (signal_reactivation_sync)
-
-Todo estable bajo asyncio + Telethon async.
-------------------------------------------------------------
+Incluye:
+✔ Alertas tempranas de reversión (integradas en motor_wrapper + trackers)
+✔ Alertas de agotamiento de tendencia (operation_tracker)
+✔ Alertas automáticas de TP (operation_tracker)
+✔ Sin modificar módulos externos
+✔ Sin romper compatibilidad
 """
 
 import logging
@@ -38,7 +32,7 @@ from signal_reactivation_sync import auto_reactivation_loop
 
 
 # ============================================================
-# 📘 Configuración de logging global
+# 📘 Configuración global de logging
 # ============================================================
 
 setup_logging()
@@ -46,29 +40,26 @@ logger = logging.getLogger("MAIN")
 
 
 # ============================================================
-# 🌐 Cliente de Telethon (lector de señales) — ASYNC
+# 🌐 Cliente de Telethon
 # ============================================================
 
 async def init_telegram_client() -> TelegramClient:
     """
-    Inicializa el cliente Telethon de forma 100% async.
-    Maneja autenticación si la sesión no está todavía autorizada.
+    Inicializa el cliente de Telethon de forma segura.
+    Maneja autenticación si la sesión no ha sido autorizada.
     """
-
-    logger.info("📡 Inicializando cliente de Telethon...")
+    logger.info("📡 Inicializando cliente Telethon...")
 
     client = TelegramClient(
         TELEGRAM_SESSION,
         API_ID,
-        API_HASH
+        API_HASH,
     )
 
-    # 🔹 Telethon moderno requiere await en connect()
     await client.connect()
 
-    # 🔹 Verificar autorización
     if not await client.is_user_authorized():
-        logger.warning("📲 Autenticación requerida — enviando código...")
+        logger.warning("📲 Autenticación requerida. Enviando código...")
         await client.send_code_request(TELEGRAM_PHONE)
         code = input("🔐 Ingrese el código enviado por Telegram: ")
         await client.sign_in(TELEGRAM_PHONE, code)
@@ -77,14 +68,17 @@ async def init_telegram_client() -> TelegramClient:
 
 
 # ============================================================
-# 🧠 Loop recurrente de monitoreo de operaciones (Bybit)
+# 📊 Loop — Monitoreo general de operaciones Bybit + TP alerts
 # ============================================================
 
 async def loop_positions(interval_seconds: int = 60):
-    logger.info("📡 Monitor de posiciones iniciado (loop_positions).")
-
+    logger.info("📡 Iniciando monitor de posiciones (loop_positions)")
     while True:
         try:
+            # Aquí ya están integrados:
+            # ✔ Alertas automáticas de TP
+            # ✔ Alertas de agotamiento
+            # ✔ Alertas tempranas de reversión
             await monitor_open_positions()
         except Exception as e:
             logger.error(f"❌ Error en loop_positions: {e}")
@@ -93,14 +87,16 @@ async def loop_positions(interval_seconds: int = 60):
 
 
 # ============================================================
-# 🧠 Loop recurrente de reversión (cada X minutos)
+# 🔥 Loop — Reversiones profundas (motor_wrapper)
 # ============================================================
 
 async def loop_reversals(interval_seconds: int = 300):
-    logger.info("🔍 Monitor de reversiones iniciado (loop_reversals).")
-
+    logger.info("🔍 Reversal monitor iniciado (loop_reversals)")
     while True:
         try:
+            # Aquí se evalúan:
+            # ✔ Reversiones mayores (-50%)
+            # ✔ Posibles reversiones basadas en smart bias + divergencias
             await monitor_reversals(run_once=True)
         except Exception as e:
             logger.error(f"❌ Error en loop_reversals: {e}")
@@ -109,7 +105,7 @@ async def loop_reversals(interval_seconds: int = 300):
 
 
 # ============================================================
-# 🚀 Orquestador principal
+# 🚀 MAIN — Orquestación central del sistema
 # ============================================================
 
 async def main():
@@ -117,59 +113,52 @@ async def main():
 
     # 1) Base de datos
     init_database()
-    logger.info("🗄 Base de datos inicializada.")
+    logger.info("🗄 Base de datos OK.")
 
-    # 2) Cliente Telethon completamente async
+    # 2) Telegram
     telegram_client = await init_telegram_client()
 
-    # 3) Activar listener del canal VIP
+    # 3) Listener del canal VIP
     start_telegram_reader(telegram_client)
-    logger.info("📩 Lector de señales activado.")
+    logger.info("📩 Lector de señales activo.")
 
-    # 4) Bot de comandos (async)
+    # 4) Bot de comandos
     bot_task = asyncio.create_task(start_command_bot())
-    logger.info("🤖 Bot de comandos iniciado.")
+    logger.info("🤖 Bot Telegram listo.")
 
-    # 5) Monitoreo de posiciones (loop cada 60s)
+    # 5) Monitoreo de operaciones (incluye TPs + agotamiento + reversión temprana)
     positions_task = asyncio.create_task(loop_positions(60))
 
-    # 6) Monitoreo de reversiones (cada 5 min)
+    # 6) Reversiones profundas
     reversals_task = asyncio.create_task(loop_reversals(300))
 
     # 7) Reactivación automática de señales
     reactivation_task = asyncio.create_task(auto_reactivation_loop())
 
-    logger.info("🧠 Tareas principales en ejecución.")
-    logger.info("📡 Ejecutando cliente de Telegram (run_until_disconnected)...")
+    logger.info("🧠 Tareas del sistema en ejecución.")
+    logger.info("📡 Esperando eventos de Telegram...")
 
-    # 8) Telethon mantiene la ejecución (async)
     try:
         await telegram_client.run_until_disconnected()
 
     finally:
-        logger.warning("🛑 Cliente de Telegram desconectado. Finalizando sistema...")
+        logger.warning("🛑 Telegram desconectado. Cancelando tareas...")
 
-        # Cancelar tareas activas
-        for task in [
-            bot_task,
-            positions_task,
-            reversals_task,
-            reactivation_task
-        ]:
-            if task and not task.done():
-                task.cancel()
+        for t in [bot_task, positions_task, reversals_task, reactivation_task]:
+            if t and not t.done():
+                t.cancel()
 
         logger.info("🧹 Sistema finalizado limpiamente.")
 
 
 # ============================================================
-# 🔧 Entrada principal
+# 🏁 Entrada principal
 # ============================================================
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.warning("🛑 Ejecución detenida manualmente.")
+        logger.warning("🛑 Interrumpido manualmente.")
     except Exception as e:
-        logger.error(f"❌ Error fatal en main.py: {e}")
+        logger.error(f"❌ Error fatal: {e}")

@@ -541,6 +541,42 @@ def get_multi_tf_snapshot(
     technical_score = trend_pts + mtf_pts + div_pts + vol_pts + sb_pts
     technical_score = max(0.0, min(technical_score, 100.0))
 
+    # ============================================================
+    # ⚠️ AJUSTE: Penalización por divergencia contraria en 1h/4h
+    # ============================================================
+
+    penalty = 0.0
+    conf_penalty = 0.0
+    warning_divergence = False
+
+    # Detectar divergencias contrarias fuertes (solo 1h y 4h)
+    for r in tf_results:
+        if r["tf_label"] in ("1h", "4h"):
+            # Divergencia alcista contra SHORT
+            if direction_hint == "short" and (
+                r["div_rsi"] == "alcista" or r["div_macd"] == "alcista"
+            ):
+                penalty += 20.0
+                conf_penalty += 0.25
+                warning_divergence = True
+
+            # Divergencia bajista contra LONG
+            if direction_hint == "long" and (
+                r["div_rsi"] == "bajista" or r["div_macd"] == "bajista"
+            ):
+                penalty += 20.0
+                conf_penalty += 0.25
+                warning_divergence = True
+            
+            if warning_divergence:
+                result_warning = "⚠️ Divergencia fuerte contraria detectada (1h/4h)."
+            else:
+                result_warning = ""
+
+    # Aplicar penalización
+    technical_score = max(0.0, technical_score - penalty)
+    confidence = max(0.0, confidence - conf_penalty)
+
     if technical_score >= 85.0:
         grade = "A"
     elif technical_score >= 70.0:
