@@ -110,6 +110,49 @@ def mark_signal_reactivated(signal_id: int):
     except Exception as e:
         logger.error(f"❌ Error en mark_signal_reactivated: {e}")
 
+# ------------------------------------------------------------
+# 📌 Marcar una señal como NO reactivada
+# ------------------------------------------------------------
+def mark_signal_not_reactivated(signal_id: int, reason: str = "", extra: dict = None):
+    """
+    Marca una señal como 'ignored' (no reactivada) y opcionalmente
+    guarda un registro de motivo o datos adicionales.
+    """
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+
+        # Marcar como ignorada
+        cur.execute("""
+            UPDATE signals
+            SET status = 'ignored'
+            WHERE id = ?
+        """, (signal_id,))
+
+        conn.commit()
+
+        # Guardar log para análisis posterior
+        try:
+            details = ""
+            if reason:
+                details += f"reason={reason}; "
+            if extra:
+                details += f"extra={extra}; "
+
+            cur.execute("""
+                INSERT INTO signal_analysis_log (signal_id, match_ratio, recommendation, details)
+                VALUES (?, ?, ?, ?)
+            """, (signal_id, None, "ignored", details))
+            conn.commit()
+
+        except Exception as e2:
+            logger.error(f"⚠️ Error guardando log de no activación: {e2}")
+
+        conn.close()
+        logger.info(f"⏳ Señal {signal_id} marcada como NO reactivada.")
+
+    except Exception as e:
+        logger.error(f"❌ Error en mark_signal_not_reactivated: {e}")
 
 # ------------------------------------------------------------
 # 📌 Actualizar match_ratio en tabla signals

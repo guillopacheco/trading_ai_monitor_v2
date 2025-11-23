@@ -26,6 +26,7 @@ from motor_wrapper import analyze_for_reactivation, get_thresholds
 from signal_manager_db import (
     get_pending_signals_for_reactivation,
     mark_signal_reactivated,
+    mark_signal_not_reactivated,   # 👈 NUEVO
     update_signal_match_ratio,
     save_analysis_log,
 )
@@ -163,7 +164,26 @@ async def run_reactivation_cycle() -> dict:
 
             if not ok:
                 logger.info(f"⏳ Señal {symbol} NO reactivada: {reason}")
+
+                sig_id = sig.get("id")
+                if sig_id is not None:
+                    try:
+                        mark_signal_not_reactivated(
+                            sig_id,
+                            reason=reason,
+                            extra={
+                                "match_ratio": result.get("match_ratio"),
+                                "major_trend": result.get("major_trend"),
+                                "overall_trend": result.get("overall_trend"),
+                                "smart_bias": result.get("smart_bias"),
+                                "divergences": result.get("divergences"),
+                            },
+                        )
+                    except Exception as e:
+                        logger.error(f"❌ Error marcando señal {sig_id} como NO reactivada: {e}")
+
                 continue
+
 
             sig_id = sig.get("id")
 
@@ -216,3 +236,10 @@ if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO)
     asyncio.run(run_reactivation_cycle())
+
+
+
+
+
+
+
