@@ -573,9 +573,14 @@ def get_multi_tf_snapshot(
             else:
                 result_warning = ""
 
-    # Aplicar penalización
+    # Aplicar penalización correctamente usando conf (variable real del motor)
     technical_score = max(0.0, technical_score - penalty)
-    confidence = max(0.0, confidence - conf_penalty)
+
+    try:
+        conf = max(0.0, conf - conf_penalty)
+    except Exception:
+        # Si conf no existiera por algún flujo raro, usamos valor estable
+        conf = max(0.0, (locals().get("conf", 0.3)) - conf_penalty)
 
     if technical_score >= 85.0:
         grade = "A"
