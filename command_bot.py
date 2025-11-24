@@ -31,7 +31,6 @@ from database import get_signals, clear_old_records
 from operation_tracker import monitor_open_positions
 from position_reversal_monitor import monitor_reversals
 from signal_reactivation_sync import (
-    get_reactivation_status,
     run_reactivation_cycle
 )
 
