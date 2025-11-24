@@ -31,6 +31,9 @@ from trend_system_final import (
     analyze_and_format as _legacy_analyze_and_format,
     _get_thresholds,
 )
+from smart_entry_validator import evaluate_entry as _evaluate_entry
+from entry_validator import validate_entry
+
 
 logger = logging.getLogger("motor_wrapper")
 
@@ -75,11 +78,32 @@ def _normalize_result(
     }
 
     # Por compatibilidad, si major_trend no está, usamos overall_trend
+        # Por compatibilidad, si major_trend no está, usamos overall_trend
     if not result["major_trend"] and result["overall_trend"]:
         result["major_trend"] = result["overall_trend"]
 
-    return result
+    # ============================================================
+    # 🧠 Evaluación inteligente de ENTRADA (Smart Entry)
+    # ============================================================
+    try:
+        debug = raw.get("debug") or {}
+        snapshot = debug.get("raw_snapshot")
+        if isinstance(snapshot, dict):
+            entry_info = _evaluate_entry(symbol, direction_hint, snapshot)
 
+            result["entry_score"] = entry_info.get("entry_score")
+            result["entry_grade"] = entry_info.get("entry_grade")
+            result["entry_mode"] = entry_info.get("entry_mode")
+            result["entry_allowed"] = bool(entry_info.get("entry_allowed", True))
+            result["entry_reasons"] = entry_info.get("entry_reasons", [])
+
+            # Si la entrada no es apta, bloqueamos la señal a nivel global
+            if not result["entry_allowed"]:
+                result["allowed"] = False
+    except Exception as e:
+        logger.error(f"⚠️ Error en Smart Entry para {symbol}: {e}")
+
+    return result
 
 # ================================================================
 # 📌 API pública — usar SIEMPRE estas funciones
@@ -95,6 +119,19 @@ def analyze_for_signal(
     - result: dict normalizado (major_trend, match_ratio, divergences, etc.)
     - report: cadena de texto lista para enviar a Telegram.
     """
+    raw_snapshot = debug.get("raw_snapshot")
+    if raw_snapshot:
+        entry_eval = validate_entry(raw_snapshot, direction)
+        result["entry_allowed"] = entry_eval["allowed"]
+        result["entry_score"] = entry_eval["score"]
+        result["entry_grade"] = entry_eval["grade"]
+        result["entry_mode"] = entry_eval["mode"]
+        result["entry_reasons"] = entry_eval["reasons"]
+
+        # Si el validador dice que NO debe entrar, anulamos el allowed global.
+        if entry_eval["allowed"] is False:
+            result["allowed"] = False
+
     try:
         raw_result, report = _legacy_analyze_and_format(
             symbol=symbol,
