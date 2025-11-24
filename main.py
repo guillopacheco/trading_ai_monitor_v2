@@ -28,8 +28,7 @@ from telegram_reader import start_telegram_reader
 from command_bot import start_command_bot
 from operation_tracker import monitor_open_positions
 from position_reversal_monitor import monitor_reversals
-from signal_reactivation_sync import auto_reactivation_loop
-
+from signal_reactivation_sync import start_reactivation_monitor
 
 # ============================================================
 # 📘 Configuración global de logging
@@ -133,7 +132,8 @@ async def main():
     reversals_task = asyncio.create_task(loop_reversals(300))
 
     # 7) Reactivación automática de señales
-    reactivation_task = asyncio.create_task(auto_reactivation_loop())
+    reactivation_task = asyncio.create_task(start_reactivation_monitor())
+
 
     logger.info("🧠 Tareas del sistema en ejecución.")
     logger.info("📡 Esperando eventos de Telegram...")
