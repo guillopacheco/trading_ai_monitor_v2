@@ -9,15 +9,10 @@ Objetivo:
     * Reactivaciones automáticas
     * Monitoreo de reversiones
 
-En esta PRIMERA versión el wrapper es casi transparente:
-- Delegamos en trend_system_final.analyze_and_format / analyze_trend_core.
-- Normalizamos el diccionario de salida para que siempre tenga las claves
-  que usan otros módulos: match_ratio, major_trend, smart_bias, divergences, etc.
-
-Más adelante:
-- Podremos reforzar el peso de divergencias en 4h/1h.
-- Podremos cambiar el “modo” (aggressive/balanced/conservative) sin tocar
-  telegram_reader, signal_reactivation_sync ni position_reversal_monitor.
+En esta versión:
+- Normaliza la salida del motor técnico (trend_system_final)
+- Integra Smart Entry dentro de _normalize_result()
+- No tiene bloques inconsistentes ni referencias a “debug”
 """
 
 from __future__ import annotations
@@ -31,9 +26,9 @@ from trend_system_final import (
     analyze_and_format as _legacy_analyze_and_format,
     _get_thresholds,
 )
-from smart_entry_validator import evaluate_entry as _evaluate_entry
-from entry_validator import validate_entry
 
+# Smart Entry integrado en normalize_result
+from smart_entry_validator import evaluate_entry as _evaluate_entry
 
 logger = logging.getLogger("motor_wrapper")
 
@@ -53,11 +48,10 @@ def _normalize_result(
 
     direction_hint = (direction_hint or raw.get("direction_hint") or "").lower()
 
-    # Campos básicos
     result: Dict[str, Any] = {
         "symbol": raw.get("symbol", symbol),
         "direction_hint": direction_hint,
-        "timeframes": raw.get("timeframes"),          # puede ser dict o None
+        "timeframes": raw.get("timeframes"),
         "major_trend": raw.get("major_trend"),
         "overall_trend": raw.get("overall_trend"),
         "match_ratio": float(raw.get("match_ratio", 0.0) or 0.0),
@@ -67,7 +61,7 @@ def _normalize_result(
         "allowed": bool(raw.get("allowed", True)),
     }
 
-    # Divergencias agregadas
+    # Divergencias
     divs = raw.get("divergences") or raw.get("divergence_summary") or {}
     if not isinstance(divs, dict):
         divs = {}
@@ -77,13 +71,12 @@ def _normalize_result(
         "MACD": divs.get("MACD") or divs.get("macd") or "",
     }
 
-    # Por compatibilidad, si major_trend no está, usamos overall_trend
-        # Por compatibilidad, si major_trend no está, usamos overall_trend
+    # Fallback
     if not result["major_trend"] and result["overall_trend"]:
         result["major_trend"] = result["overall_trend"]
 
     # ============================================================
-    # 🧠 Evaluación inteligente de ENTRADA (Smart Entry)
+    # 🧠 Smart Entry integrado
     # ============================================================
     try:
         debug = raw.get("debug") or {}
@@ -97,13 +90,14 @@ def _normalize_result(
             result["entry_allowed"] = bool(entry_info.get("entry_allowed", True))
             result["entry_reasons"] = entry_info.get("entry_reasons", [])
 
-            # Si la entrada no es apta, bloqueamos la señal a nivel global
             if not result["entry_allowed"]:
                 result["allowed"] = False
+
     except Exception as e:
         logger.error(f"⚠️ Error en Smart Entry para {symbol}: {e}")
 
     return result
+
 
 # ================================================================
 # 📌 API pública — usar SIEMPRE estas funciones
@@ -113,25 +107,8 @@ def analyze_for_signal(
     direction_hint: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """
-    Análisis principal cuando llega una señal nueva del canal VIP.
-
-    Devuelve:
-    - result: dict normalizado (major_trend, match_ratio, divergences, etc.)
-    - report: cadena de texto lista para enviar a Telegram.
+    Análisis principal utilizado cuando llega una señal nueva del canal VIP.
     """
-    raw_snapshot = debug.get("raw_snapshot")
-    if raw_snapshot:
-        entry_eval = validate_entry(raw_snapshot, direction)
-        result["entry_allowed"] = entry_eval["allowed"]
-        result["entry_score"] = entry_eval["score"]
-        result["entry_grade"] = entry_eval["grade"]
-        result["entry_mode"] = entry_eval["mode"]
-        result["entry_reasons"] = entry_eval["reasons"]
-
-        # Si el validador dice que NO debe entrar, anulamos el allowed global.
-        if entry_eval["allowed"] is False:
-            result["allowed"] = False
-
     try:
         raw_result, report = _legacy_analyze_and_format(
             symbol=symbol,
@@ -139,7 +116,6 @@ def analyze_for_signal(
         )
     except Exception as e:
         logger.error(f"❌ Error en analyze_for_signal({symbol}): {e}")
-        # Fallback muy defensivo
         raw_result = {
             "symbol": symbol,
             "direction_hint": direction_hint,
@@ -167,10 +143,6 @@ def analyze_for_reactivation(
 ) -> Tuple[Dict[str, Any], str]:
     """
     Análisis usado por el ciclo de reactivación automática.
-
-    Por ahora delega en analyze_for_signal (mismo análisis),
-    pero si en el futuro queremos reglas específicas para reactivación,
-    solo se cambia aquí.
     """
     return analyze_for_signal(symbol, direction_hint=direction_hint)
 
@@ -180,10 +152,7 @@ def analyze_for_reversal(
     direction_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Análisis “crudo” para el monitor de reversiones de posiciones.
-
-    Devuelve SOLO el dict normalizado (sin texto formateado),
-    porque position_reversal_monitor construye su propio mensaje.
+    Análisis crudo utilizado por position_reversal_monitor.
     """
     try:
         raw = _legacy_core(symbol, direction_hint=direction_hint)
@@ -207,7 +176,7 @@ def analyze_for_reversal(
 
 def get_thresholds() -> Dict[str, float]:
     """
-    Reexpone los thresholds del motor antiguo, por compatibilidad.
+    Reexpone thresholds del motor antiguo.
     """
     try:
         return _get_thresholds()
