@@ -1,270 +1,152 @@
-"""
-entry_validator.py
--------------------
-Validador profesional de ENTRADA basado en snapshot multi-TF.
-
-Este módulo NO ejecuta análisis técnico.
-Trabaja únicamente con el snapshot generado por motor_wrapper_core.
-
-Usa:
-- Coherencia de tendencia (4h→1h→30m→15m→5m)
-- Momentum (RSI)
-- Divergencias RSI / MACD
-- EMA short/long en marcos bajos (timing)
-- Smart bias
-- Confianza global
-- match_ratio inicial
-
-Devuelve:
-- entry_allowed
-- entry_score (0–100)
-- entry_grade (A–D)
-- entry_mode (swing / scalp / neutral)
-- entry_reasons (explicación)
-"""
-
 import logging
-from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("entry_validator")
 
+from indicators import (
+    get_multi_tf_trend,
+    get_rsi,
+    get_macd,
+    detect_divergence_rsi,
+    detect_divergence_macd,
+    get_bollinger,
+    get_stoch,
+)
 
-# ============================================================
-# Utilidades internas
-# ============================================================
-def _normalize_direction(direction_hint: Optional[str]) -> Optional[str]:
-    if not direction_hint:
-        return None
-    d = direction_hint.lower().strip()
-    if d in ("long", "buy"):
-        return "long"
-    if d in ("short", "sell"):
-        return "short"
-    return None
+from bybit_client import get_ohlcv_data
 
 
-def _grade(score: float) -> str:
-    if score >= 80:
-        return "A"
-    if score >= 65:
-        return "B"
-    if score >= 50:
-        return "C"
-    return "D"
+# ================================================================
+#   MÓDULO DE ENTRADA INTELIGENTE v1.0
+# ================================================================
+
+class EntryDecision:
+    OK = "ENTRY_OK"
+    CAUTION = "ENTRY_RISKY"
+    BLOCK = "ENTRY_BLOCKED"
 
 
-def _build_tf_index(snapshot: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    idx = {}
-    for tf in snapshot.get("timeframes", []):
-        label = tf.get("tf_label") or tf.get("tf")
-        if label:
-            idx[str(label)] = tf
-    return idx
-
-
-# ============================================================
-# Núcleo del validador profesional
-# ============================================================
-def validate_entry(snapshot: Dict[str, Any], signal_side: Optional[str]) -> Dict[str, Any]:
+def evaluate_entry(symbol: str, direction: str, entry_price: float):
     """
-    snapshot = resultado del motor técnico (motor_wrapper_core):
-        snapshot["timeframes"], snapshot["match_ratio"], snapshot["divergences"], etc.
-    signal_side = "long" / "short" / None
-
-    Devuelve:
-      {
-        "allowed": bool,
-        "score": float,
-        "grade": str,
-        "mode": "swing"|"scalp"|"neutral",
-        "reasons": [ ... ]
-      }
+    Analiza si la entrada es adecuada según:
+    - divergencias
+    - momentum
+    - volatilidad
+    - estructura 15m y 1h
+    - agotamiento (extension EMA-BB)
     """
+    logger.info(f"🧠 Evaluando entrada inteligente para {symbol} ({direction})...")
 
-    direction = _normalize_direction(signal_side)
-    reasons: List[str] = []
-    score: float = float(snapshot.get("match_ratio", 50.0))
-    conf: float = float(snapshot.get("confidence", 0.0))
-    divs: Dict[str, Any] = snapshot.get("divergences") or {}
+    # --------------------------------------------------------------
+    # 📌 1. Obtener datos multi-temporalidad
+    # --------------------------------------------------------------
+    try:
+        df15 = get_ohlcv_data(symbol, "15")
+        df1h = get_ohlcv_data(symbol, "60")
 
-    reasons.append(f"Match ratio inicial: {score:.1f}%")
+        if df15 is None or df15.empty:
+            return EntryDecision.CAUTION
 
-    # Tendencia global
-    major_code = snapshot.get("major_trend_code")
-    smart_bias = snapshot.get("smart_bias_code")
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo datos para entrada inteligente: {e}")
+        return EntryDecision.CAUTION
 
-    tf = _build_tf_index(snapshot)
+    # --------------------------------------------------------------
+    # 📌 2. Detectar divergencias (contra la señal = bloqueo)
+    # --------------------------------------------------------------
+    try:
+        rsi_div_15 = detect_divergence_rsi(df15)
+        macd_div_15 = detect_divergence_macd(df15)
 
-    # -------------------------------------------------------------
-    # 1) Sin dirección → modo exploratorio (neutro)
-    # -------------------------------------------------------------
-    if direction is None:
-        if conf >= 0.7:
-            score += 5
-            reasons.append("Confianza alta → +5.")
-        elif conf < 0.4:
-            score -= 5
-            reasons.append("Confianza baja → -5.")
+        rsi_div_1h = detect_divergence_rsi(df1h)
+        macd_div_1h = detect_divergence_macd(df1h)
 
-        score = max(0, min(score, 100))
-        return {
-            "allowed": True,
-            "score": score,
-            "grade": _grade(score),
-            "mode": "neutral",
-            "reasons": reasons,
-        }
+        # SHORT → divergencia alcista es peligrosísima
+        if direction == "SHORT":
+            if rsi_div_15 == "bullish" or rsi_div_1h == "bullish":
+                logger.info("❌ Divergencia RSI alcista en contra → Bloqueo entrada SHORT")
+                return EntryDecision.BLOCK
 
-    # -------------------------------------------------------------
-    # 2) Tendencia mayor vs dirección
-    # -------------------------------------------------------------
-    want = "bull" if direction == "long" else "bear"
+            if macd_div_15 == "bullish" or macd_div_1h == "bullish":
+                logger.info("❌ Divergencia MACD alcista en contra → Bloqueo entrada SHORT")
+                return EntryDecision.BLOCK
 
-    if major_code == want:
-        score += 8
-        reasons.append("Alineado con tendencia mayor → +8.")
-    elif major_code in ("bull", "bear"):
-        score -= 12
-        reasons.append("Contra la tendencia mayor → -12.")
-    else:
-        reasons.append("Tendencia mayor lateral.")
+        # LONG → divergencia bajista invalida la entrada
+        if direction == "LONG":
+            if rsi_div_15 == "bearish" or rsi_div_1h == "bearish":
+                logger.info("❌ Divergencia RSI bajista en contra → Bloqueo entrada LONG")
+                return EntryDecision.BLOCK
 
-    # -------------------------------------------------------------
-    # 3) Coherencia multi-TF (más peso a 4h, 1h)
-    # -------------------------------------------------------------
-    weights = {"4h": 2.0, "1h": 1.6, "30m": 1.3, "15m": 1.0, "5m": 0.8}
+            if macd_div_15 == "bearish" or macd_div_1h == "bearish":
+                logger.info("❌ Divergencia MACD bajista en contra → Bloqueo entrada LONG")
+                return EntryDecision.BLOCK
 
-    def ok_dir(code: str) -> bool:
-        return (direction == "long" and code == "bull") or (
-            direction == "short" and code == "bear"
-        )
+    except:
+        pass
 
-    for label, w in weights.items():
-        tf_data = tf.get(label)
-        if not tf_data:
-            continue
+    # --------------------------------------------------------------
+    # 📌 3. Momentum MACD (fuerza real)
+    # --------------------------------------------------------------
+    try:
+        macd15 = get_macd(df15)
+        last_hist = macd15["hist"].iloc[-1]
+        prev_hist = macd15["hist"].iloc[-3]
 
-        code = tf_data.get("trend_code")
-        if code:
-            if ok_dir(code):
-                score += 2.5 * w
-            elif code in ("bull", "bear"):
-                score -= 3.0 * w
+        momentum_direction = "up" if last_hist > prev_hist else "down"
 
-        rsi = tf_data.get("rsi")
-        if rsi is not None:
-            rsi = float(rsi)
-            if direction == "long":
-                if rsi >= 55:
-                    score += 1.5 * w
-                elif rsi <= 45:
-                    score -= 1.5 * w
-            else:
-                if rsi <= 45:
-                    score += 1.5 * w
-                elif rsi >= 55:
-                    score -= 1.5 * w
+        if direction == "LONG" and momentum_direction == "down":
+            logger.info("⚠️ Momentum débil para LONG → Entrada arriesgada")
+            return EntryDecision.CAUTION
 
-    # -------------------------------------------------------------
-    # 4) EMA short / long (timing)
-    # -------------------------------------------------------------
-    low = tf.get("15m") or tf.get("30m") or tf.get("5m")
-    if low:
-        es = low.get("ema_short")
-        el = low.get("ema_long")
-        if es is not None and el is not None:
-            if direction == "long":
-                if es > el:
-                    score += 6
-                    reasons.append("EMA short > EMA long en TF bajo → +6.")
-                else:
-                    score -= 8
-                    reasons.append("EMA short < EMA long en TF bajo → -8.")
-            else:
-                if es < el:
-                    score += 6
-                    reasons.append("EMA short < EMA long en TF bajo → +6.")
-                else:
-                    score -= 8
-                    reasons.append("EMA short > EMA long en TF bajo → -8.")
+        if direction == "SHORT" and momentum_direction == "up":
+            logger.info("⚠️ Momentum débil para SHORT → Entrada arriesgada")
+            return EntryDecision.CAUTION
 
-    # -------------------------------------------------------------
-    # 5) Divergencias peligrosas
-    # -------------------------------------------------------------
-    div_rsi = str(divs.get("RSI") or "").lower()
-    div_macd = str(divs.get("MACD") or "").lower()
+    except:
+        pass
 
-    if direction == "long":
-        if "bajista" in div_rsi or "bajista" in div_macd:
-            score -= 15
-            reasons.append("Divergencias bajistas contra LONG → -15.")
-    else:
-        if "alcista" in div_rsi or "alcista" in div_macd:
-            score -= 15
-            reasons.append("Divergencias alcistas contra SHORT → -15.")
+    # --------------------------------------------------------------
+    # 📌 4. Agotamiento (Bollinger + EMAs)
+    # --------------------------------------------------------------
+    try:
+        upper, middle, lower = get_bollinger(df15)
+        last_close = df15["close"].iloc[-1]
 
-    # -------------------------------------------------------------
-    # 6) Smart bias + confianza
-    # -------------------------------------------------------------
-    if smart_bias == "continuation":
-        score += 4
-        reasons.append("Smart bias: continuación → +4.")
-    elif smart_bias in ("bullish-reversal", "bearish-reversal"):
-        score -= 6
-        reasons.append("Smart bias advierte giro → -6.")
+        # LONG comprado en banda superior → exceso = peligro
+        if direction == "LONG" and last_close > upper:
+            logger.info("❌ Señal LONG en extensión (Bollinger) → Bloqueo entrada")
+            return EntryDecision.BLOCK
 
-    if conf >= 0.7:
-        score += 4
-        reasons.append("Confianza global alta → +4.")
-    elif conf < 0.4:
-        score -= 6
-        reasons.append("Confianza global baja → -6.")
+        # SHORT en banda inferior → riesgo extremo
+        if direction == "SHORT" and last_close < lower:
+            logger.info("❌ Señal SHORT en extensión (Bollinger) → Bloqueo entrada")
+            return EntryDecision.BLOCK
 
-    # Clamp
-    score = max(0, min(score, 100))
-    grade = _grade(score)
+    except:
+        pass
 
-    # -------------------------------------------------------------
-    # 7) Decisión final
-    # -------------------------------------------------------------
-    allowed = score >= 50
+    # --------------------------------------------------------------
+    # 📌 5. Stochastic: cambios de dirección inmediatos
+    # --------------------------------------------------------------
+    try:
+        stoch = get_stoch(df15)
+        k = stoch["k"].iloc[-1]
+        d = stoch["d"].iloc[-1]
 
-    if score < 45:
-        # Divergencias fuertes = prohibido
-        if (direction == "long" and "bajista" in div_rsi) or (
-            direction == "short" and "alcista" in div_rsi
-        ):
-            allowed = False
-            reasons.append("Peligro crítico: divergencias fuertes + score bajo.")
+        # LONG pero stoch cruza hacia abajo desde sobrecompra
+        if direction == "LONG" and k < d and k > 80:
+            logger.info("❌ STC cruzando abajo → Rechazo entrada LONG")
+            return EntryDecision.BLOCK
 
-    # -------------------------------------------------------------
-    # 8) Clasificación del modo
-    # -------------------------------------------------------------
-    swing = False
-    scalp = False
+        # SHORT pero stoch cruza hacia arriba desde sobreventa
+        if direction == "SHORT" and k > d and k < 20:
+            logger.info("❌ STC cruzando arriba → Rechazo entrada SHORT")
+            return EntryDecision.BLOCK
 
-    if tf.get("4h") and ok_dir(tf["4h"].get("trend_code", "")):
-        swing = True
-    if tf.get("1h") and ok_dir(tf["1h"].get("trend_code", "")):
-        swing = True
-    if tf.get("5m") and ok_dir(tf["5m"].get("trend_code", "")):
-        scalp = True
-    if tf.get("15m") and ok_dir(tf["15m"].get("trend_code", "")):
-        scalp = True
+    except:
+        pass
 
-    if swing and not scalp:
-        mode = "swing"
-    elif scalp and not swing:
-        mode = "scalp"
-    elif swing and scalp:
-        mode = "swing"
-    else:
-        mode = "neutral"
-
-    return {
-        "allowed": allowed,
-        "score": score,
-        "grade": grade,
-        "mode": mode,
-        "reasons": reasons,
-    }
+    # --------------------------------------------------------------
+    # 📌 6. Si pasa todos los filtros → Entrada válida
+    # --------------------------------------------------------------
+    logger.info("✅ Entrada inteligente aprobada.")
+    return EntryDecision.OK

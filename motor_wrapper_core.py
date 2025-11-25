@@ -567,7 +567,7 @@ def get_multi_tf_snapshot(
                 penalty += 20.0
                 conf_penalty += 0.25
                 warning_divergence = True
-            
+
             if warning_divergence:
                 result_warning = "⚠️ Divergencia fuerte contraria detectada (1h/4h)."
             else:
@@ -605,4 +605,3 @@ def get_multi_tf_snapshot(
         "technical_score": float(technical_score),
         "grade": grade,
     }
-

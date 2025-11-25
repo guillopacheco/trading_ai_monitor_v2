@@ -71,7 +71,7 @@ def parse_signal(text: str):
     symbol_raw = header.group(1)          # Ej: HEI/USDT
     direction_raw = header.group(2)       # Long / Short
 
-    entry_match = ENTRY_REGEX.search(text)
+    """entry_match = ENTRY_REGEX.search(text)
     if not entry_match:
         logger.debug("📭 Señal ignorada: no se encontró Entry.")
         return None
@@ -80,7 +80,7 @@ def parse_signal(text: str):
         entry_price = float(entry_match.group(2))
     except Exception:
         logger.debug("📭 Señal ignorada: Entry no numérico.")
-        return None
+        return None"""
 
     lev_match = LEV_REGEX.search(text)
     leverage = int(lev_match.group(1)) if lev_match else 20
