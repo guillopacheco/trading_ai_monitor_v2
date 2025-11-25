@@ -1,222 +1,244 @@
+"""
+signal_reactivation_sync.py — Reactivación automática de señales
+-----------------------------------------------------------------
+Flujo:
+1) Lee señales pendientes en DB (signal_manager_db).
+2) Para cada señal, llama al motor técnico vía motor_wrapper.analyze_for_reactivation().
+3) Aplica lógica de reactivación según:
+   - match_ratio vs thresholds["reactivation"]
+   - mayor/overall trend
+   - divergencias y smart_bias
+4) Si todo cuadra → marca reactivada + envía reporte al usuario.
+
+IMPORTANTE:
+- notifier.send_message es SINCRÓNICO → aquí usamos asyncio.to_thread.
+-----------------------------------------------------------------
+"""
+
 import asyncio
 import logging
-import time
+from datetime import datetime
 
-from motor_wrapper import analyze_for_signal
+from config import SIGNAL_RECHECK_INTERVAL_MINUTES
+from notifier import send_message
+from motor_wrapper import analyze_for_reactivation, get_thresholds
+
 from signal_manager_db import (
     get_pending_signals_for_reactivation,
     mark_signal_reactivated,
-    mark_signal_not_reactivated,
+    update_signal_match_ratio,
     save_analysis_log,
 )
 
 logger = logging.getLogger("signal_reactivation_sync")
 
 
-# =====================================================================
-# 🧠 SISTEMA AVANZADO DE VALIDACIÓN DE REACTIVACIÓN
-# =====================================================================
-class SmartReactivationValidator:
+# Estado global para /estado
+_reactivation_status: dict = {
+    "running": False,
+    "last_run": "Nunca",
+    "monitored_signals": 0,
+    "reactivated_count": 0,
+}
+
+
+def get_reactivation_status() -> dict:
+    """Devuelve un snapshot del estado interno para /estado."""
+    return dict(_reactivation_status)
+
+
+# ============================================================
+# 🔍 Reglas de reactivación
+# ============================================================
+def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
+    """Evalúa si una señal puede reactivarse a partir del análisis técnico.
+
+    Criterios:
+    - result["allowed"] debe ser True
+    - match_ratio >= thresholds["reactivation"]
+    - major_trend / overall_trend coherente con la dirección
+    - divergencias NO fuertemente en contra
+    - smart_bias NO fuertemente contrario
     """
-    Sistema avanzado que determina si una señal debe reactivarse.
-    Incluye análisis de momentum, divergencias, agotamiento,
-    volatilidad, microestructura y elasticidad de Bollinger.
-    """
+    thresholds = get_thresholds()
+    re_thr = thresholds.get("reactivation", 75.0)
 
-    @staticmethod
-    def evaluate(symbol: str, result: dict, direction: str):
-        """
-        Retorna: (ok: bool, reason: str)
-        """
+    direction = (original_direction or "").lower()
+    match_ratio = float(result.get("match_ratio", 0.0) or 0.0)
+    allowed = bool(result.get("allowed", True))
 
-        # Extraer data del motor técnico
-        rsi = result.get("rsi")
-        macd = result.get("macd")
-        stok = result.get("stochastic")
-        divergences = result.get("divergences", {})
-        boll = result.get("bollinger", {})
-        ema_fast = result.get("ema_fast")
-        ema_slow = result.get("ema_slow")
-        last_candle = result.get("last_candle")
-        atr = result.get("atr")
-        smart_bias = result.get("smart_bias")
-        major_trend = result.get("major_trend")
-        match_ratio = result.get("match_ratio", 0)
+    major_trend = (result.get("major_trend") or "").lower()
+    overall_trend = (result.get("overall_trend") or "").lower()
+    smart_bias = (result.get("smart_bias") or "").lower()
+    divs = result.get("divergences", {}) or {}
 
-        # ================================================================
-        # 1. MOMENTUM POST-TP
-        # ================================================================
-        if direction == "short":
-            if rsi and rsi > 50:
-                return False, "RSI cruzó 50 (momentum bajista agotado)"
-            if macd and macd.get("hist", 0) > 0:
-                return False, "MACD alcista (momentum contrario)"
-        else:
-            if rsi and rsi < 50:
-                return False, "RSI debajo de 50 (momentum alcista débil)"
-            if macd and macd.get("hist", 0) < 0:
-                return False, "MACD bajista (momentum contrario)"
+    rsi = (divs.get("RSI") or "").lower()
+    macd = (divs.get("MACD") or "").lower()
 
-        # ================================================================
-        # 2. AGOTAMIENTO / DIVERGENCIAS
-        # ================================================================
-        if direction == "short":
-            if divergences.get("rsi") == "bullish" or divergences.get("macd") == "bullish":
-                return False, "Divergencia alcista fuerte detectada"
-        else:
-            if divergences.get("rsi") == "bearish" or divergences.get("macd") == "bearish":
-                return False, "Divergencia bajista fuerte detectada"
+    if not allowed:
+        return False, "Motor técnico marcó la señal como no viable (allowed=False)."
 
-        # ================================================================
-        # 3. ESTRUCTURA: EMA20 / EMA50
-        # ================================================================
-        if ema_fast is not None and ema_slow is not None:
-            if direction == "short" and ema_fast > ema_slow:
-                return False, "EMA rápida por encima de EMA lenta (riesgo de reversión)"
-            if direction == "long" and ema_fast < ema_slow:
-                return False, "EMA rápida debajo de EMA lenta (tendencia no cambia)"
+    if match_ratio < re_thr:
+        return False, f"Match insuficiente para reactivar ({match_ratio:.1f}% < {re_thr}%)."
 
-        # ================================================================
-        # 4. VOLATILIDAD Y MANIPULACIÓN
-        # ================================================================
-        if atr and last_candle:
-            if last_candle.get("body", 0) > atr * 2.5:
-                return False, "Vela extrema detectada (manipulación probable)"
+    # Direccionalidad global
+    if direction == "long":
+        if "bear" in overall_trend or "bajista" in major_trend:
+            return False, "Tendencia mayor bajista contra LONG."
+    elif direction == "short":
+        if "bull" in overall_trend or "alcista" in major_trend:
+            return False, "Tendencia mayor alcista contra SHORT."
 
-        # ================================================================
-        # 5. MICROESTRUCTURA: VELAS RECIENTES
-        # ================================================================
-        if last_candle and last_candle.get("type") in ["doji", "indecision"]:
-            return False, "Vela de indecisión reciente"
+    # Divergencias fuertes
+    if direction == "long":
+        if (
+            "bajista" in rsi
+            or "bear" in rsi
+            or "bajista" in macd
+            or "bear" in macd
+        ):
+            return False, "Divergencias bajistas en contra de LONG."
+    elif direction == "short":
+        if (
+            "alcista" in rsi
+            or "bull" in rsi
+            or "alcista" in macd
+            or "bull" in macd
+        ):
+            return False, "Divergencias alcistas en contra de SHORT."
 
-        if last_candle and last_candle.get("rejection", False):
-            return False, "Rechazo fuerte encontrado en la última vela"
+    # Smart bias contrario
+    if direction == "long" and "bear" in smart_bias:
+        return False, "Smart bias bajista en contra de LONG."
+    if direction == "short" and "bull" in smart_bias:
+        return False, "Smart bias alcista en contra de SHORT."
 
-        # ================================================================
-        # 6. ELASTICIDAD DE BOLLINGER
-        # ================================================================
-        if boll:
-            if direction == "short" and boll.get("squeeze", False):
-                return False, "Squeeze activo (rebote posible)"
-
-            if direction == "long" and boll.get("expansion", False):
-                return False, "Expansión brusca (riesgo de caída)"
-
-        # ================================================================
-        # SI SUPERA TODOS LOS FILTROS
-        # ================================================================
-        return True, "Condiciones técnicas favorables para reactivar"
+    return True, "Condiciones favorables para reactivar."
 
 
-# =====================================================================
-# LÓGICA PARA DECIDIR SI UNA SEÑAL PUEDE REACTIVARSE
-# =====================================================================
-def _can_reactivate(result: dict, direction: str):
-    """
-    Analiza si una señal debe reactivarse.
-    """
+# ============================================================
+# 🧱 Construcción del mensaje enviado al usuario
+# ============================================================
+def _build_reactivation_message(signal: dict, report: str, reason: str) -> str:
+    symbol = signal.get("symbol", "N/A")
+    direction = (signal.get("direction") or "").upper()
+    lev = signal.get("leverage", 20)
+    entry = signal.get("entry_price")
 
-    if not result:
-        return False, "Motor técnico devolvió resultado vacío"
-
-    match_ratio = result.get("match_ratio", 0)
-    if match_ratio < 40:
-        return False, f"Match ratio insuficiente ({match_ratio}%)"
-
-    # Nueva capa avanzada
-    ok, reason = SmartReactivationValidator.evaluate(
-        result.get("symbol", "UNKNOWN"),
-        result,
-        direction
-    )
-    return ok, reason
+    lines = [
+        f"♻️ *Reactivación de señal*: **{symbol}**",
+        f"🎯 Dirección original: *{direction}* x{lev}",
+        f"💵 Entry: `{entry}`",
+        "",
+        f"✅ *Motivo técnico:* {reason}",
+        "",
+        "🌀 *Análisis actual del mercado:*",
+        report,
+    ]
+    return "\n".join(lines)
 
 
-# =====================================================================
-# CICLO DE REACTIVACIÓN
-# =====================================================================
-async def run_reactivation_cycle():
-    """
-    Revisa señales pendientes y decide si reactivarlas o descartarlas.
-    """
+# ============================================================
+# 🔁 Ejecutar un ciclo de reactivación (una sola pasada)
+# ============================================================
+async def run_reactivation_cycle() -> dict:
+    """Revisa todas las señales pendientes y decide si reactivarlas."""
+    _reactivation_status["running"] = True
+    _reactivation_status["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    logger.info("♻️ Ejecutando ciclo de reactivación…")
+    try:
+        signals = get_pending_signals_for_reactivation()
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo señales pendientes: {e}")
+        _reactivation_status["monitored_signals"] = 0
+        return {"checked": 0, "reactivated": 0}
 
-    pending = get_pending_signals_for_reactivation()
-    if not pending:
-        logger.info("♻️ No hay señales pendientes.")
-        return
+    if not signals:
+        logger.info("ℹ️ No hay señales pendientes para revisar.")
+        _reactivation_status["monitored_signals"] = 0
+        return {"checked": 0, "reactivated": 0}
 
-    logger.info(f"♻️ {len(pending)} señales pendientes encontradas.")
+    checked = 0
+    reactivated = 0
 
-    for sig in pending:
+    for sig in signals:
         try:
-            symbol = sig["symbol"]
-            side = sig["side"]
-            signal_id = sig["id"]
+            checked += 1
+            symbol = sig.get("symbol")
+            direction = (sig.get("direction") or "").lower()
 
-            logger.info(f"♻️ Revisando señal pendiente: {symbol} ({side}).")
+            logger.info(f"♻️ Revisando señal pendiente: {symbol} ({direction}).")
 
-            # Dirección normalizada
-            direction = "long" if side.lower() == "buy" else "short"
+            # Llamamos al motor técnico vía wrapper
+            result, report = analyze_for_reactivation(symbol, direction_hint=direction)
 
-            # Analizar mercado nuevamente
-            result = analyze_for_signal(symbol, direction, validate=True)
+            # Guardamos el match_ratio aunque luego no se reactive
+            sig_id = sig.get("id")
+            try:
+                if sig_id is not None:
+                    update_signal_match_ratio(sig_id, result.get("match_ratio", 0.0))
+            except Exception as e:
+                logger.error(f"⚠️ Error actualizando match_ratio para señal {sig_id}: {e}")
 
-            if not result:
-                logger.warning(f"❌ Motor no devolvió resultado para {symbol}.")
-                mark_signal_not_reactivated(signal_id, reason="motor_failed")
-                continue
-
-            # Decisión inteligente
             ok, reason = _can_reactivate(result, direction)
 
             if not ok:
                 logger.info(f"⏳ Señal {symbol} NO reactivada: {reason}")
-
-                mark_signal_not_reactivated(
-                    signal_id,
-                    reason=reason,
-                    extra={
-                        "match_ratio": result.get("match_ratio"),
-                        "major_trend": result.get("major_trend"),
-                        "overall_trend": result.get("overall_trend"),
-                        "smart_bias": result.get("smart_bias"),
-                        "divergences": result.get("divergences"),
-                    }
-                )
+                # Log de análisis fallido (para debugging futuro)
+                try:
+                    if sig_id is not None:
+                        save_analysis_log(
+                            sig_id,
+                            result.get("match_ratio", 0.0),
+                            "not_reactivated",
+                            reason,
+                        )
+                except Exception as e:
+                    logger.error(f"⚠️ Error guardando analysis_log para señal {sig_id}: {e}")
                 continue
 
             # Si es válida → reactivar
-            mark_signal_reactivated(signal_id)
+            if sig_id is not None:
+                try:
+                    mark_signal_reactivated(sig_id)
+                except Exception as e:
+                    logger.error(f"❌ Error marcando señal {sig_id} como reactivada: {e}")
 
-            # Log del análisis técnico
-            save_analysis_log(
-                signal_id,
-                result.get("match_ratio"),
-                "reactivated",
-                f"Reactivación aprobada ({reason})"
-            )
+            reactivated += 1
 
-            logger.info(f"♻️ Señal reactivada: {symbol}")
+            msg = _build_reactivation_message(sig, report, reason)
+            await asyncio.to_thread(send_message, msg)
 
         except Exception as e:
             logger.error(f"❌ Error evaluando señal {sig}: {e}")
 
-    logger.info("♻️ Revisión completada.")
-    logger.info("🕒 Próxima revisión en 15 minutos.")
+    _reactivation_status["monitored_signals"] = checked
+    _reactivation_status["reactivated_count"] += reactivated
+
+    return {"checked": checked, "reactivated": reactivated}
 
 
-# =====================================================================
-# LOOP PRINCIPAL
-# =====================================================================
-async def start_reactivation_monitor():
+# ============================================================
+# 🔁 Bucle automático (usado por main.py)
+# ============================================================
+async def auto_reactivation_loop(interval_min: int | None = None) -> None:
+    """Ejecuta run_reactivation_cycle() cada N minutos."""
+    interval_min = interval_min or SIGNAL_RECHECK_INTERVAL_MINUTES
+    interval_sec = max(60, int(interval_min * 60))
+
     logger.info("♻️  Iniciando monitoreo automático de reactivaciones…")
 
     while True:
         try:
+            logger.info("♻️  Ejecutando ciclo de reactivación…")
             await run_reactivation_cycle()
+            logger.info(f"🕒 Próxima revisión en {interval_min} minutos.")
         except Exception as e:
-            logger.error(f"❌ Error en ciclo de reactivación: {e}")
+            logger.error(f"❌ Error en auto_reactivation_loop: {e}")
 
-        await asyncio.sleep(15 * 60)  # 15 minutos
+        await asyncio.sleep(interval_sec)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run_reactivation_cycle())
