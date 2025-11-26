@@ -3,10 +3,10 @@ signal_reactivation_sync.py — Reactivación automática de señales
 -----------------------------------------------------------------
 Flujo:
 1) Lee señales pendientes en DB (signal_manager_db).
-2) Para cada señal, llama al motor técnico vía motor_wrapper.analyze_for_reactivation().
+2) Para cada señal, llama a trend_system_final.analyze_and_format().
 3) Aplica lógica de reactivación según:
    - match_ratio vs thresholds["reactivation"]
-   - mayor/overall trend
+   - major_trend / overall_trend
    - divergencias y smart_bias
 4) Si todo cuadra → marca reactivada + envía reporte al usuario.
 
@@ -14,7 +14,6 @@ IMPORTANTE:
 - notifier.send_message es SINCRÓNICO → aquí usamos asyncio.to_thread.
 -----------------------------------------------------------------
 """
-
 import asyncio
 import logging
 from datetime import datetime
@@ -34,7 +33,7 @@ logger = logging.getLogger("signal_reactivation_sync")
 
 
 # Estado global para /estado
-_reactivation_status: dict = {
+_reactivation_status = {
     "running": False,
     "last_run": "Nunca",
     "monitored_signals": 0,
@@ -43,7 +42,6 @@ _reactivation_status: dict = {
 
 
 def get_reactivation_status() -> dict:
-    """Devuelve un snapshot del estado interno para /estado."""
     return dict(_reactivation_status)
 
 
@@ -51,7 +49,8 @@ def get_reactivation_status() -> dict:
 # 🔍 Reglas de reactivación
 # ============================================================
 def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
-    """Evalúa si una señal puede reactivarse a partir del análisis técnico.
+    """
+    Aplica reglas de reactivación a partir del snapshot técnico.
 
     Criterios:
     - result["allowed"] debe ser True
@@ -78,6 +77,7 @@ def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
     if not allowed:
         return False, "Motor técnico marcó la señal como no viable (allowed=False)."
 
+    # Filtro por match_ratio
     if match_ratio < re_thr:
         return False, f"Match insuficiente para reactivar ({match_ratio:.1f}% < {re_thr}%)."
 
@@ -91,20 +91,10 @@ def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
 
     # Divergencias fuertes
     if direction == "long":
-        if (
-            "bajista" in rsi
-            or "bear" in rsi
-            or "bajista" in macd
-            or "bear" in macd
-        ):
+        if "bajista" in rsi or "bear" in rsi or "bajista" in macd or "bear" in macd:
             return False, "Divergencias bajistas en contra de LONG."
     elif direction == "short":
-        if (
-            "alcista" in rsi
-            or "bull" in rsi
-            or "alcista" in macd
-            or "bull" in macd
-        ):
+        if "alcista" in rsi or "bull" in rsi or "alcista" in macd or "bull" in macd:
             return False, "Divergencias alcistas en contra de SHORT."
 
     # Smart bias contrario
@@ -120,13 +110,13 @@ def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
 # 🧱 Construcción del mensaje enviado al usuario
 # ============================================================
 def _build_reactivation_message(signal: dict, report: str, reason: str) -> str:
-    symbol = signal.get("symbol", "N/A")
-    direction = (signal.get("direction") or "").upper()
+    symbol = signal.get("symbol", "¿?")
+    direction = signal.get("direction", "?").upper()
     lev = signal.get("leverage", 20)
-    entry = signal.get("entry_price")
+    entry = signal.get("entry_price", 0.0)
 
     lines = [
-        f"♻️ *Reactivación de señal*: **{symbol}**",
+        f"♻️ Reactivación de señal: **{symbol}**",
         f"🎯 Dirección original: *{direction}* x{lev}",
         f"💵 Entry: `{entry}`",
         "",
@@ -142,7 +132,6 @@ def _build_reactivation_message(signal: dict, report: str, reason: str) -> str:
 # 🔁 Ejecutar un ciclo de reactivación (una sola pasada)
 # ============================================================
 async def run_reactivation_cycle() -> dict:
-    """Revisa todas las señales pendientes y decide si reactivarlas."""
     _reactivation_status["running"] = True
     _reactivation_status["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -162,75 +151,84 @@ async def run_reactivation_cycle() -> dict:
     reactivated = 0
 
     for sig in signals:
+        checked += 1
         try:
-            checked += 1
             symbol = sig.get("symbol")
-            direction = (sig.get("direction") or "").lower()
+            direction = sig.get("direction")
+            signal_id = sig.get("id")
 
             logger.info(f"♻️ Revisando señal pendiente: {symbol} ({direction}).")
 
-            # Llamamos al motor técnico vía wrapper
-            result, report = analyze_for_reactivation(symbol, direction_hint=direction)
+            # 1) Análisis técnico
+            result, report = analyze_for_reactivation(
+                symbol=symbol,
+                direction_hint=direction,
+            )
 
-            # Guardamos el match_ratio aunque luego no se reactive
-            sig_id = sig.get("id")
+            match_ratio = float(result.get("match_ratio", 0.0) or 0.0)
+            allowed, reason = _can_reactivate(result, direction)
+
+            # Guardar log técnico de este análisis
             try:
-                if sig_id is not None:
-                    update_signal_match_ratio(sig_id, result.get("match_ratio", 0.0))
+                save_analysis_log(
+                    signal_id=signal_id,
+                    match_ratio=match_ratio,
+                    recommendation=reason,
+                    details=report,
+                )
             except Exception as e:
-                logger.error(f"⚠️ Error actualizando match_ratio para señal {sig_id}: {e}")
+                logger.error(f"⚠️ Error guardando log de análisis: {e}")
 
-            ok, reason = _can_reactivate(result, direction)
+            # Actualizar match_ratio en tabla signals
+            try:
+                update_signal_match_ratio(signal_id, match_ratio)
+            except Exception as e:
+                logger.error(f"⚠️ Error actualizando match_ratio en DB: {e}")
 
-            if not ok:
-                logger.info(f"⏳ Señal {symbol} NO reactivada: {reason}")
-                # Log de análisis fallido (para debugging futuro)
-                try:
-                    if sig_id is not None:
-                        save_analysis_log(
-                            sig_id,
-                            result.get("match_ratio", 0.0),
-                            "not_reactivated",
-                            reason,
-                        )
-                except Exception as e:
-                    logger.error(f"⚠️ Error guardando analysis_log para señal {sig_id}: {e}")
+            if not allowed:
+                logger.info(
+                    f"⏳ Señal {symbol} NO reactivada: {reason}"
+                )
                 continue
 
-            # Si es válida → reactivar
-            if sig_id is not None:
-                try:
-                    mark_signal_reactivated(sig_id)
-                except Exception as e:
-                    logger.error(f"❌ Error marcando señal {sig_id} como reactivada: {e}")
+            # 2) Marcar en DB
+            try:
+                mark_signal_reactivated(signal_id)
+            except Exception as e:
+                logger.error(f"⚠️ Error marcando señal como reactivada: {e}")
 
             reactivated += 1
 
+            # 3) Notificar por Telegram
             msg = _build_reactivation_message(sig, report, reason)
             await asyncio.to_thread(send_message, msg)
 
         except Exception as e:
-            logger.error(f"❌ Error evaluando señal {sig}: {e}")
+            logger.error(f"❌ Error evaluando señal pendiente: {e}")
 
     _reactivation_status["monitored_signals"] = checked
     _reactivation_status["reactivated_count"] += reactivated
+
+    logger.info(
+        f"♻️ Revisión completada — {checked} señales revisadas, "
+        f"{reactivated} reactivadas en este ciclo."
+    )
 
     return {"checked": checked, "reactivated": reactivated}
 
 
 # ============================================================
-# 🔁 Bucle automático (usado por main.py)
+# 🔁 Bucle automático
 # ============================================================
-async def auto_reactivation_loop(interval_min: int | None = None) -> None:
-    """Ejecuta run_reactivation_cycle() cada N minutos."""
-    interval_min = interval_min or SIGNAL_RECHECK_INTERVAL_MINUTES
-    interval_sec = max(60, int(interval_min * 60))
+async def auto_reactivation_loop():
+    interval_min = int(SIGNAL_RECHECK_INTERVAL_MINUTES or 15)
+    interval_sec = interval_min * 60
 
-    logger.info("♻️  Iniciando monitoreo automático de reactivaciones…")
+    logger.info("♻️ Iniciando monitoreo automático de reactivaciones…")
 
     while True:
         try:
-            logger.info("♻️  Ejecutando ciclo de reactivación…")
+            logger.info("♻️ Ejecutando ciclo de reactivación…")
             await run_reactivation_cycle()
             logger.info(f"🕒 Próxima revisión en {interval_min} minutos.")
         except Exception as e:
@@ -239,6 +237,13 @@ async def auto_reactivation_loop(interval_min: int | None = None) -> None:
         await asyncio.sleep(interval_sec)
 
 
+async def start_reactivation_monitor():
+    '''Punto de entrada público para main.py.
+    Inicia el bucle automático de reactivaciones.'''
+    await auto_reactivation_loop()
+
+
 if __name__ == "__main__":
+    import logging
     logging.basicConfig(level=logging.INFO)
     asyncio.run(run_reactivation_cycle())
