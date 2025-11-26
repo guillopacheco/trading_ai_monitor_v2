@@ -1,360 +1,307 @@
 """
-smart_entry_validator.py — Motor profesional de decisión de entrada
--------------------------------------------------------------------
+smart_entry_validator.py — Módulo de Entrada Inteligente v1.1
+-------------------------------------------------------------
 
-Este módulo NO descarga datos ni calcula indicadores.
-Trabaja ÚNICAMENTE con el snapshot multi-TF generado por:
+Modo seleccionado: Opción 1
+===========================
+Filtro fuerte pero flexible:
 
-    motor_wrapper_core.get_multi_tf_snapshot()
+- SOLO bloquea (entry_allowed = False) las entradas claramente peligrosas,
+  clasificadas como "zona ROJA".
 
-Y decide:
+- Todo lo que no sea rojo se permite:
+    * mode = "ok"  (verde)
+    * mode = "warn" (amarillo)
+  pero SIEMPRE se registran las razones en logs y en `entry_reasons`.
 
-- Si tiene sentido entrar en la operación (entry_allowed)
-- Qué tan buena es la entrada (entry_score y entry_grade A–D)
-- Si la lógica sugiere un escenario más tipo swing o tipo scalp (entry_mode)
-- Explica por qué (entry_reasons)
+- La señal:
+    * Se guarda en DB.
+    * Puede entrar en el módulo de reactivación.
+    * Podrá ser usada para entrada automática futura (si la lógica lo permite).
 
-Se centra en:
+Entrada:
+--------
+evaluate_entry(symbol: str, direction: str | None, snapshot: dict)
 
-- Tendencia mayor vs dirección de la señal
-- Coherencia multi-TF (4h, 1h, 30m, 15m, 5m)
-- Momentum (RSI)
-- Relación EMA corta / EMA larga en TF bajos (timing de entrada)
-- Divergencias RSI / MACD contra la señal
-- Smart bias y confianza global del motor
+`snapshot` viene de get_multi_tf_snapshot() y suele contener:
+    - grade: "A"/"B"/"C"/"D"
+    - technical_score: 0–100
+    - match_ratio: 0–100
+    - confidence: 0–1
+    - major_trend_code: "bull"/"bear"/"sideways"
+    - smart_bias_code: "continuation"/"bullish-reversal"/"bearish-reversal"/"neutral"
+    - divergences: {"RSI": "...", "MACD": "..."}
+
+Salida:
+-------
+{
+    "symbol": str,
+    "direction": str | None,
+    "entry_score": float,       # 0–100
+    "entry_grade": "A/B/C/D",
+    "entry_mode": "ok" | "warn" | "block",
+    "entry_allowed": bool,
+    "entry_reasons": [str, ...]
+}
+
+NOTA:
+-----
+Este módulo NO envía mensajes. Solo calcula criterios de entrada.
+El motor (motor_wrapper.py) ya inyecta estos campos en el resultado global
+y puede usar entry_allowed para:
+    - marcar allowed=False
+    - ajustar la recomendación de texto
 """
 
 from __future__ import annotations
 
-from typing import Dict, Any, Optional, List
 import logging
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("smart_entry_validator")
 
 
 # ============================================================
-# Utilidades internas
+# 🔍 Helper para leer campos del snapshot
 # ============================================================
-def _normalize_direction(direction_hint: Optional[str]) -> Optional[str]:
-    """
-    Normaliza la dirección a 'long' / 'short' / None.
-    """
-    if not direction_hint:
-        return None
-    d = direction_hint.lower()
-    if d.startswith("long") or d == "buy":
-        return "long"
-    if d.startswith("short") or d == "sell":
-        return "short"
-    return None
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except Exception:
+        return default
 
 
-def _build_tf_index(snapshot: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """
-    Crea un índice por tf_label (ej: '4h', '1h', '30m', '15m', '5m')
-    para acceder rápidamente a la info de cada timeframe.
-    """
-    idx: Dict[str, Dict[str, Any]] = {}
-    for tf_res in snapshot.get("timeframes", []) or []:
-        label = tf_res.get("tf_label") or tf_res.get("tf") or ""
-        if label:
-            idx[str(label)] = tf_res
-    return idx
-
-
-def _grade_from_score(score: float) -> str:
-    """
-    Convierte un score 0–100 a una letra A–D.
-    """
-    if score >= 80.0:
-        return "A"
-    if score >= 65.0:
-        return "B"
-    if score >= 50.0:
-        return "C"
-    return "D"
+def _norm_str(value: Any) -> str:
+    return str(value or "").strip()
 
 
 # ============================================================
-# Núcleo: evaluación de entrada
+# 🎯 Núcleo de evaluación de entrada
 # ============================================================
+
 def evaluate_entry(
     symbol: str,
-    direction_hint: Optional[str],
+    direction: Optional[str],
     snapshot: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Evaluador profesional de ENTRADA.
+    Aplica la lógica de ENTRADA INTELIGENTE (Opción 1) sobre el snapshot técnico.
 
-    Params:
-      symbol:
-        Par analizado, ej: 'PIPPINUSDT'.
-      direction_hint:
-        'long' / 'short' / None. Si es None, se asume modo exploratorio.
-      snapshot:
-        Dict devuelto por get_multi_tf_snapshot(), típicamente:
-
-        {
-          "symbol": "...",
-          "direction_hint": "long/short/None",
-          "timeframes": [
-             {
-               "tf": "60",
-               "tf_label": "1h",
-               "trend_label": "Alcista",
-               "trend_code": "bull/bear/sideways",
-               "votes_bull": int,
-               "votes_bear": int,
-               "rsi": float,
-               "macd_hist": float,
-               "ema_short": float,
-               "ema_long": float,
-               "close": float,
-               "atr": float,
-               "div_rsi": "alcista/bajista/ninguna",
-               "div_macd": "alcista/bajista/ninguna",
-             },
-             ...
-          ],
-          "major_trend_label": "...",
-          "major_trend_code": "bull/bear/sideways",
-          "trend_score": float 0–1,
-          "match_ratio": float 0–100,
-          "divergences": { "RSI": "...", "MACD": "..." },
-          "smart_bias_code": "...",
-          "confidence": float 0–1,
-          ...
-        }
-
-    Return:
-      Un dict con:
-
-      {
-        "entry_allowed": bool,          # ¿Tiene sentido entrar?
-        "entry_score": float,           # 0–100
-        "entry_grade": "A"|"B"|"C"|"D", # más alto = mejor
-        "entry_mode": "swing"|"scalp"|"neutral",
-        "entry_reasons": [str, ...],    # explicación legible
-      }
+    - Identifica banderas ROJAS y AMARILLAS.
+    - Calcula un `entry_score` (basado en technical_score).
+    - Decide:
+        * entry_mode: "ok" | "warn" | "block"
+        * entry_allowed: True/False
+        * entry_grade: "A/B/C/D"
+        * entry_reasons: lista de textos explicativos.
     """
-    direction = _normalize_direction(direction_hint)
+
+    direction = (direction or "").lower()
     reasons: List[str] = []
 
-    # Si no hay dirección (modo exploratorio), damos score neutro y no bloqueamos.
-    match_ratio = float(snapshot.get("match_ratio", 50.0) or 50.0)
-    confidence = float(snapshot.get("confidence", 0.0) or 0.0)
+    # --- Campos básicos del snapshot ---
+    grade = _norm_str(snapshot.get("grade") or snapshot.get("technical_grade") or "")
+    technical_score = _safe_float(snapshot.get("technical_score"), 0.0)
+    match_ratio = _safe_float(snapshot.get("match_ratio"), 50.0)
+    confidence = _safe_float(snapshot.get("confidence"), 0.3)
+    smart_bias = _norm_str(
+        snapshot.get("smart_bias_code") or snapshot.get("smart_bias") or "neutral"
+    ).lower()
+    major_trend = _norm_str(
+        snapshot.get("major_trend_code") or snapshot.get("major_trend") or ""
+    ).lower()
+
     divergences = snapshot.get("divergences") or {}
-    smart_bias_code = snapshot.get("smart_bias_code")
-    major_trend_code = snapshot.get("major_trend_code")
+    div_rsi = _norm_str(divergences.get("RSI"))
+    div_macd = _norm_str(divergences.get("MACD"))
 
-    if direction is None:
-        base_score = match_ratio
-        # Ajuste ligero por confianza
-        if confidence >= 0.7:
-            base_score += 5.0
-        elif confidence < 0.4:
-            base_score -= 5.0
+    # Contadores de banderas
+    red_flags = 0
+    yellow_flags = 0
 
-        score = max(0.0, min(base_score, 100.0))
-        grade = _grade_from_score(score)
-        reasons.append("Modo exploratorio: sin filtro estricto de entrada.")
-        return {
-            "entry_allowed": True,
-            "entry_score": score,
-            "entry_grade": grade,
-            "entry_mode": "neutral",
-            "entry_reasons": reasons,
-        }
+    # =======================================================
+    # 1) Score técnico y grade general
+    # =======================================================
 
-    # A partir de aquí: hay una dirección concreta (LONG / SHORT)
-    tf_index = _build_tf_index(snapshot)
-    score = match_ratio  # punto de partida
-    reasons.append(f"Match ratio base del motor: {match_ratio:.1f}%.")
+    # Zone D o technical_score muy bajo → bandera roja
+    if grade.upper() == "D" or technical_score < 45:
+        red_flags += 1
+        reasons.append("📉 Score técnico muy bajo (zona D / <45).")
 
-    # ------------------------------------------------------------
-    # 1) Tendencia mayor vs dirección
-    # ------------------------------------------------------------
-    want_code = "bull" if direction == "long" else "bear"
-    if major_trend_code == want_code:
-        score += 8.0
-        reasons.append("Dirección alineada con la tendencia mayor.")
-    elif major_trend_code in ("bull", "bear"):
-        score -= 12.0
-        reasons.append("Dirección va contra la tendencia mayor.")
-    else:
-        reasons.append("Tendencia mayor lateral / mixta.")
+    # Grades intermedios (C) se consideran amarillos suaves
+    elif grade.upper() == "C":
+        yellow_flags += 1
+        reasons.append("⚠️ Estructura técnica media (grade C).")
 
-    # ------------------------------------------------------------
-    # 2) Coherencia multi-TF (4h, 1h, 30m, 15m, 5m)
-    # ------------------------------------------------------------
-    weights = {
-        "4h": 2.0,
-        "1h": 1.6,
-        "30m": 1.3,
-        "15m": 1.0,
-        "5m": 0.8,
-    }
+    # =======================================================
+    # 2) Match ratio con la dirección de la señal
+    # =======================================================
 
-    def _dir_code_ok(code: str) -> bool:
-        if direction == "long":
-            return code == "bull"
-        return code == "bear"
+    if match_ratio < 40:
+        red_flags += 1
+        reasons.append(
+            f"⚠️ Coincidencia con la tendencia muy baja (match_ratio={match_ratio:.1f}%)."
+        )
+    elif match_ratio < 55:
+        yellow_flags += 1
+        reasons.append(
+            f"⚠️ Coincidencia con la tendencia solo moderada (match_ratio={match_ratio:.1f}%)."
+        )
 
-    for label, w in weights.items():
-        tf = tf_index.get(label)
-        if not tf:
-            continue
+    # =======================================================
+    # 3) Confianza global del motor
+    # =======================================================
 
-        code = tf.get("trend_code")
-        if not code:
-            continue
+    if confidence < 0.28:
+        red_flags += 1
+        reasons.append(
+            f"⚠️ Confianza global muy baja (confidence={confidence:.2f})."
+        )
+    elif confidence < 0.35:
+        yellow_flags += 1
+        reasons.append(
+            f"⚠️ Confianza global media-baja (confidence={confidence:.2f})."
+        )
 
-        # Tendencia TF vs dirección
-        if _dir_code_ok(code):
-            score += 2.5 * w
-        elif code in ("bull", "bear"):
-            score -= 3.0 * w
+    # =======================================================
+    # 4) Smart bias y estructura vs dirección de la señal
+    # =======================================================
 
-        # Momentum RSI dentro de cada TF
-        rsi_val = tf.get("rsi")
-        rsi = float(rsi_val) if rsi_val is not None else None
-        if rsi is not None:
-            if direction == "long":
-                if rsi >= 55:
-                    score += 1.5 * w
-                elif rsi <= 45:
-                    score -= 1.5 * w
-            else:
-                if rsi <= 45:
-                    score += 1.5 * w
-                elif rsi >= 55:
-                    score -= 1.5 * w
+    if direction in ("long", "short"):
+        # Sesgos de reversión fuertes contra la operación
+        if smart_bias == "bullish-reversal" and direction == "short":
+            red_flags += 1
+            reasons.append("🔄 Sesgo técnico indica reversión ALCISTA contra SHORT.")
+        elif smart_bias == "bearish-reversal" and direction == "long":
+            red_flags += 1
+            reasons.append("🔄 Sesgo técnico indica reversión BAJISTA contra LONG.")
 
-    # ------------------------------------------------------------
-    # 3) EMA en marcos bajos (timing de entrada)
-    # ------------------------------------------------------------
-    low_tf = tf_index.get("15m") or tf_index.get("30m") or tf_index.get("5m")
-    if low_tf:
-        ema_s = low_tf.get("ema_short")
-        ema_l = low_tf.get("ema_long")
-        if ema_s is not None and ema_l is not None:
-            if direction == "long":
-                if ema_s > ema_l:
-                    score += 6.0
-                    reasons.append(
-                        "EMA rápida por encima de lenta en marco bajo (impulso alcista activo)."
-                    )
-                else:
-                    score -= 8.0
-                    reasons.append(
-                        "EMA rápida por debajo de lenta en marco bajo (entrada contra el impulso)."
-                    )
-            else:  # short
-                if ema_s < ema_l:
-                    score += 6.0
-                    reasons.append(
-                        "EMA rápida por debajo de lenta en marco bajo (impulso bajista activo)."
-                    )
-                else:
-                    score -= 8.0
-                    reasons.append(
-                        "EMA rápida por encima de lenta en marco bajo (entrada contra el impulso)."
-                    )
+        # Tendencia mayor muy contraria + match bajo
+        if major_trend == "bull" and direction == "short" and match_ratio < 50:
+            yellow_flags += 1
+            reasons.append("📈 Tendencia mayor alcista contra operación SHORT.")
+        if major_trend == "bear" and direction == "long" and match_ratio < 50:
+            yellow_flags += 1
+            reasons.append("📉 Tendencia mayor bajista contra operación LONG.")
 
-    # ------------------------------------------------------------
-    # 4) Divergencias (RSI / MACD)
-    # ------------------------------------------------------------
-    div_rsi_text = str(divergences.get("RSI") or divergences.get("rsi") or "").lower()
-    div_macd_text = str(divergences.get("MACD") or divergences.get("macd") or "").lower()
+    # =======================================================
+    # 5) Divergencias (RSI / MACD) contra la operación
+    # =======================================================
 
-    if direction == "long":
-        if "bajista" in div_rsi_text or "bajista" in div_macd_text:
-            score -= 15.0
-            reasons.append("Divergencias bajistas contra un LONG (posible rebote/corrección).")
-    else:  # short
-        if "alcista" in div_rsi_text or "alcista" in div_macd_text:
-            score -= 15.0
-            reasons.append("Divergencias alcistas contra un SHORT (posible rebote fuerte).")
+    div_rsi_l = div_rsi.lower()
+    div_macd_l = div_macd.lower()
 
-    # ------------------------------------------------------------
-    # 5) Smart bias + confianza global
-    # ------------------------------------------------------------
-    if smart_bias_code == "continuation":
-        score += 4.0
-        reasons.append("Smart bias indica continuación de tendencia.")
-    elif smart_bias_code in ("bullish-reversal", "bearish-reversal"):
-        # Si la reversión va en contra de la operación, penalizamos más
-        if (direction == "long" and smart_bias_code == "bearish-reversal") or (
-            direction == "short" and smart_bias_code == "bullish-reversal"
-        ):
-            score -= 10.0
-            reasons.append("Smart bias advierte posible giro en contra de la operación.")
+    def _is_opposite_div(text: str, direction: str) -> bool:
+        t = text.lower()
+        if not t or not direction:
+            return False
+
+        # Alcista contra SHORT
+        if "alcista" in t and direction == "short":
+            return True
+        # Bajista contra LONG
+        if "bajista" in t and direction == "long":
+            return True
+        return False
+
+    # RSI
+    if _is_opposite_div(div_rsi, direction):
+        # Si menciona 1h o 4h lo consideramos más serio
+        if "1h" in div_rsi_l or "4h" in div_rsi_l:
+            red_flags += 1
+            reasons.append("⚠️ Divergencia RSI fuerte contra la operación (1h/4h).")
         else:
-            score -= 4.0
-            reasons.append("Contexto de giro general, se reduce la agresividad.")
+            yellow_flags += 1
+            reasons.append("⚠️ Divergencia RSI contra la operación.")
+    elif "alcista" in div_rsi_l or "bajista" in div_rsi_l:
+        yellow_flags += 1
+        reasons.append("ℹ️ Divergencia RSI presente (vigilar).")
 
-    if confidence >= 0.7:
-        score += 4.0
-        reasons.append("Confianza global del motor alta.")
-    elif confidence < 0.4:
-        score -= 6.0
-        reasons.append("Confianza global del motor baja.")
+    # MACD
+    if _is_opposite_div(div_macd, direction):
+        yellow_flags += 1
+        reasons.append("⚠️ Divergencia MACD contra la operación (posible giro).")
+    elif "alcista" in div_macd_l or "bajista" in div_macd_l:
+        yellow_flags += 1
+        reasons.append("ℹ️ Divergencia MACD presente (vigilar).")
 
-    # Clamp del score
-    score = max(0.0, min(score, 100.0))
-    grade = _grade_from_score(score)
+    # =======================================================
+    # 6) Cálculo de entry_score y entry_grade
+    # =======================================================
 
-    # ------------------------------------------------------------
-    # 6) Clasificar modo: swing vs scalp
-    # ------------------------------------------------------------
-    swing_like = False
-    scalp_like = False
+    # Para v1.1 usamos technical_score como base de entry_score
+    entry_score = max(0.0, min(100.0, technical_score))
 
-    high_tf = tf_index.get("4h") or tf_index.get("1h")
-    if high_tf and _dir_code_ok(high_tf.get("trend_code", "")):
-        swing_like = True
-
-    if low_tf and _dir_code_ok(low_tf.get("trend_code", "")):
-        scalp_like = True
-
-    if swing_like and not scalp_like:
-        entry_mode = "swing"
-    elif scalp_like and not swing_like:
-        entry_mode = "scalp"
-    elif swing_like and scalp_like:
-        # Cuando coinciden ambas, lo consideramos swing
-        entry_mode = "swing"
+    if entry_score >= 80 and red_flags == 0:
+        entry_grade = "A"
+    elif entry_score >= 65:
+        entry_grade = "B"
+    elif entry_score >= 50:
+        entry_grade = "C"
     else:
-        entry_mode = "neutral"
+        entry_grade = "D"
 
-    # ------------------------------------------------------------
-    # 7) Decisión final: ¿permitir la entrada o no?
-    # ------------------------------------------------------------
+    # =======================================================
+    # 7) Política Opción 1 — Decisión final
+    # =======================================================
+
+    """
+    Opción 1:
+    ---------
+    - Bloquea SOLO cuando el contexto es claramente rojo:
+        * red_flags >= 2, o
+        * red_flags >= 1 y entry_score < 40
+
+    - Si no bloquea:
+        * mode = "warn" si hay banderas amarillas o rojas puntuales.
+        * mode = "ok" si casi no hay banderas.
+    """
+
     entry_allowed = True
+    entry_mode = "ok"
 
-    # Regla principal: por debajo de 50 → no entra
-    if score < 50.0:
+    if red_flags >= 2 or (red_flags >= 1 and entry_score < 40):
         entry_allowed = False
-        reasons.append(f"Score de entrada bajo ({score:.1f} < 50).")
+        entry_mode = "block"
+        reasons.append("⛔ Entrada bloqueada por múltiples banderas rojas.")
+    elif red_flags == 1 or yellow_flags >= 2:
+        entry_allowed = True
+        entry_mode = "warn"
+        reasons.append("🟠 Entrada permitida, pero en modo PRECAUCIÓN.")
+    else:
+        entry_allowed = True
+        entry_mode = "ok"
+        reasons.append("🟢 Condiciones de entrada aceptables.")
 
-    # Regla extra: score MUY bajo + divergencias fuertes en contra
-    if score < 45.0:
-        if (
-            direction == "long"
-            and ("bajista" in div_rsi_text or "bajista" in div_macd_text)
-        ) or (
-            direction == "short"
-            and ("alcista" in div_rsi_text or "alcista" in div_macd_text)
-        ):
-            entry_allowed = False
-            reasons.append(
-                "Divergencias fuertes contra la señal con score muy bajo: entrada descartada."
-            )
+    # =======================================================
+    # 8) Log resumido para debugging en VPS
+    # =======================================================
+
+    try:
+        flags_summary = f"red={red_flags}, yellow={yellow_flags}"
+        logger.info(
+            f"🧠 SmartEntry[{symbol}] dir={direction or '-'} "
+            f"mode={entry_mode} allowed={entry_allowed} "
+            f"score={entry_score:.1f} {flags_summary} | "
+            f"reasons={'; '.join(reasons)}"
+        )
+    except Exception:
+        # No romper nunca por el log
+        pass
+
+    # =======================================================
+    # 9) Respuesta normalizada
+    # =======================================================
 
     return {
-        "entry_allowed": entry_allowed,
-        "entry_score": float(score),
-        "entry_grade": grade,
+        "symbol": symbol,
+        "direction": direction,
+        "entry_score": entry_score,
+        "entry_grade": entry_grade,
         "entry_mode": entry_mode,
+        "entry_allowed": bool(entry_allowed),
         "entry_reasons": reasons,
     }

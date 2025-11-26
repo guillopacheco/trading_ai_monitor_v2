@@ -5,8 +5,8 @@ Flujo:
 1) Detecta señales con regex robustas del canal VIP.
 2) Parsea símbolo, dirección, entry, leverage, TP.
 3) Guarda la señal en DB con database.save_signal().
-4) Llama al motor técnico trend_system_final.analyze_and_format().
-5) Envía reporte técnico al usuario por Telegram (via notifier.send_message).
+4) Llama al motor técnico (motor_wrapper.analyze_for_signal).
+5) Envía reporte técnico + entrada inteligente al usuario por Telegram.
 
 IMPORTANTE:
 - notifier.send_message es SINCRÓNICO.
@@ -18,6 +18,7 @@ import re
 import logging
 import asyncio
 from telethon import events, TelegramClient
+
 from config import TELEGRAM_CHANNEL_ID
 from helpers import normalize_symbol, normalize_direction
 from database import save_signal
@@ -56,7 +57,7 @@ TP_REGEX = re.compile(
 # ============================================================
 def parse_signal(text: str):
     """
-    Intenta extraer:
+    Extrae:
       - symbol: 'HEIUSDT', '4USDT', etc. (normalizado)
       - direction: 'long' / 'short'
       - entry_price: float
@@ -121,7 +122,8 @@ async def process_signal(parsed: dict):
     Flujo completo para una señal ya parseada:
     - Log interno
     - Guardado en DB (tabla signals)
-    - Análisis técnico trend_system_final
+    - Análisis técnico (motor_wrapper / trend_system_final)
+    - Bloque de *Entrada inteligente*
     - Notificación al usuario por Telegram
     """
     symbol = parsed["symbol"]
@@ -146,7 +148,7 @@ async def process_signal(parsed: dict):
     except Exception as e:
         logger.error(f"❌ Error guardando señal en DB: {e}")
 
-    # 2) Ejecutar análisis técnico
+    # 2) Ejecutar análisis técnico + Smart Entry
     try:
         result, tech_msg = analyze_for_signal(
             symbol=symbol,
@@ -155,6 +157,45 @@ async def process_signal(parsed: dict):
     except Exception as e:
         logger.error(f"❌ Error en análisis técnico para {symbol}: {e}")
         tech_msg = "❌ Error en el análisis técnico. Revisa logs en el servidor."
+        result = {}
+
+    # -------------------------
+    # 🧠 Bloque de Entrada Inteligente
+    # -------------------------
+    entry_score = result.get("entry_score")
+    entry_grade = result.get("entry_grade")
+    entry_mode = result.get("entry_mode")
+    entry_allowed = result.get("entry_allowed", True)
+
+    # Línea de calidad
+    if entry_grade and entry_score is not None:
+        calidad_line = f"🎯 Calidad de entrada: *{entry_grade}* ({entry_score:.0f} pts)"
+    elif entry_grade:
+        calidad_line = f"🎯 Calidad de entrada: *{entry_grade}*"
+    elif entry_score is not None:
+        calidad_line = f"🎯 Calidad de entrada: {entry_score:.0f} pts"
+    else:
+        calidad_line = "🎯 Calidad de entrada: _sin evaluar_"
+
+    # Línea de modo
+    if entry_mode:
+        modo_line = f"🧭 Modo sugerido: *{entry_mode}*"
+    else:
+        modo_line = ""
+
+    # Línea de estado (opción B → sólo advertencia, no bloqueo real)
+    if entry_allowed:
+        estado_line = "✅ Estado: *Apta* (sin bloqueo automático)"
+    else:
+        estado_line = "⚠️ Estado: *Riesgo alto* (entrada desaconsejada)"
+
+    entry_block = [
+        "🧠 *Entrada inteligente:*",
+        calidad_line,
+    ]
+    if modo_line:
+        entry_block.append(modo_line)
+    entry_block.append(estado_line)
 
     # 3) Construir mensaje final
     msg_lines = [
@@ -162,8 +203,10 @@ async def process_signal(parsed: dict):
         f"📈 Dirección: *{direction.upper()}* x{lev}",
         f"💵 Entry: `{entry}`",
         "",
-        "🌀 *Análisis técnico inicial:*",
+        "🌀 *Análisis técnico del mercado:*",
         tech_msg,
+        "",
+        *entry_block,
         "",
         "📌 El monitor automático seguirá evaluando condiciones óptimas ",
         "para entrada, reactivación y posibles reversiones.",
@@ -184,7 +227,7 @@ async def process_signal(parsed: dict):
 def attach_listeners(client: TelegramClient):
     """
     Registra el listener de nuevas señales sobre el canal VIP
-    definido en TELEGRAM_CHANNEL_ID (.env/config).
+    definido en TELEGRAM_CHANNEL_ID.
     """
 
     @client.on(events.NewMessage(chats=[TELEGRAM_CHANNEL_ID]))

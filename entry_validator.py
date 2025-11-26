@@ -1,152 +1,195 @@
 import logging
+from indicators import (
+    get_multi_tf_trend,
+    detect_divergences,
+    get_atr_series,
+    get_latest_candles,
+    get_volume_series,
+)
+from helpers import normalize_tf_list
 
 logger = logging.getLogger("entry_validator")
 
-from indicators import (
-    get_multi_tf_trend,
-    get_rsi,
-    get_macd,
-    detect_divergence_rsi,
-    detect_divergence_macd,
-    get_bollinger,
-    get_stoch,
-)
+# ============================================================
+#  ENTRY VALIDATOR v1.1 — Bloquea entrada peligrosa,
+#  pero conserva reactivación futura (modo profesional)
+# ============================================================
 
-from bybit_client import get_ohlcv_data
-
-
-# ================================================================
-#   MÓDULO DE ENTRADA INTELIGENTE v1.0
-# ================================================================
-
-class EntryDecision:
-    OK = "ENTRY_OK"
-    CAUTION = "ENTRY_RISKY"
-    BLOCK = "ENTRY_BLOCKED"
-
-
-def evaluate_entry(symbol: str, direction: str, entry_price: float):
+def validate_entry(symbol: str, direction: str) -> dict:
     """
-    Analiza si la entrada es adecuada según:
-    - divergencias
-    - momentum
-    - volatilidad
-    - estructura 15m y 1h
-    - agotamiento (extension EMA-BB)
+    Evaluación profesional de entrada al recibir una señal.
+    
+    Retorna:
+        {
+            "allowed": bool,
+            "severity": "ok" | "warning" | "blocked",
+            "reasons": [...],
+            "score": float (0–100),
+            "trend_alignment": float,
+            "risk_conditions": dict,
+            "momentum_conditions": dict
+        }
     """
-    logger.info(f"🧠 Evaluando entrada inteligente para {symbol} ({direction})...")
 
-    # --------------------------------------------------------------
-    # 📌 1. Obtener datos multi-temporalidad
-    # --------------------------------------------------------------
+    results = {
+        "allowed": True,
+        "severity": "ok",
+        "score": 0,
+        "trend_alignment": 0,
+        "reasons": [],
+        "risk_conditions": {},
+        "momentum_conditions": {},
+    }
+
+    # ============================================
+    # 0️⃣ Configuración de temporalidades estables
+    # ============================================
+    tfs = ["15m", "30m", "1h", "4h"]
+    tfs = normalize_tf_list(tfs)
+
+    # ============================================
+    # 1️⃣ Tendencia multi-TF
+    # ============================================
     try:
-        df15 = get_ohlcv_data(symbol, "15")
-        df1h = get_ohlcv_data(symbol, "60")
-
-        if df15 is None or df15.empty:
-            return EntryDecision.CAUTION
-
+        trend_data = get_multi_tf_trend(symbol, tfs)
     except Exception as e:
-        logger.error(f"❌ Error obteniendo datos para entrada inteligente: {e}")
-        return EntryDecision.CAUTION
+        logger.error(f"❌ Error en get_multi_tf_trend({symbol}): {e}")
+        results["allowed"] = False
+        results["severity"] = "blocked"
+        results["reasons"].append("Error al obtener tendencias multi-TF.")
+        return results
 
-    # --------------------------------------------------------------
-    # 📌 2. Detectar divergencias (contra la señal = bloqueo)
-    # --------------------------------------------------------------
+    # Conteo de tendencias alineadas
+    same_direction = 0
+    total_valid = 0
+
+    for tf, info in trend_data.items():
+        if not info:
+            continue
+
+        total_valid += 1
+        if info["trend"].lower() == direction.lower():
+            same_direction += 1
+
+    trend_alignment = (same_direction / max(1, total_valid)) * 100
+    results["trend_alignment"] = round(trend_alignment, 2)
+
+    # Regla principal:
+    # → En scalping (<30m), se requiere >= 40%
+    # → En swing (≥30m), se requiere >= 60%
+    if trend_alignment < 40:
+        results["allowed"] = False
+        results["severity"] = "blocked"
+        results["reasons"].append("Tendencia global desalineada (<40%).")
+    elif trend_alignment < 60:
+        results["severity"] = "warning"
+        results["reasons"].append("Tendencia mayor parcialmente desalineada.")
+
+    # ============================================
+    # 2️⃣ Divergencias
+    # ============================================
     try:
-        rsi_div_15 = detect_divergence_rsi(df15)
-        macd_div_15 = detect_divergence_macd(df15)
-
-        rsi_div_1h = detect_divergence_rsi(df1h)
-        macd_div_1h = detect_divergence_macd(df1h)
-
-        # SHORT → divergencia alcista es peligrosísima
-        if direction == "SHORT":
-            if rsi_div_15 == "bullish" or rsi_div_1h == "bullish":
-                logger.info("❌ Divergencia RSI alcista en contra → Bloqueo entrada SHORT")
-                return EntryDecision.BLOCK
-
-            if macd_div_15 == "bullish" or macd_div_1h == "bullish":
-                logger.info("❌ Divergencia MACD alcista en contra → Bloqueo entrada SHORT")
-                return EntryDecision.BLOCK
-
-        # LONG → divergencia bajista invalida la entrada
-        if direction == "LONG":
-            if rsi_div_15 == "bearish" or rsi_div_1h == "bearish":
-                logger.info("❌ Divergencia RSI bajista en contra → Bloqueo entrada LONG")
-                return EntryDecision.BLOCK
-
-            if macd_div_15 == "bearish" or macd_div_1h == "bearish":
-                logger.info("❌ Divergencia MACD bajista en contra → Bloqueo entrada LONG")
-                return EntryDecision.BLOCK
-
+        divs = detect_divergences(symbol, tfs)
     except:
-        pass
+        divs = {}
 
-    # --------------------------------------------------------------
-    # 📌 3. Momentum MACD (fuerza real)
-    # --------------------------------------------------------------
-    try:
-        macd15 = get_macd(df15)
-        last_hist = macd15["hist"].iloc[-1]
-        prev_hist = macd15["hist"].iloc[-3]
+    bullish_div = any(d.get("type") == "bullish" for d in divs.values())
+    bearish_div = any(d.get("type") == "bearish" for d in divs.values())
 
-        momentum_direction = "up" if last_hist > prev_hist else "down"
+    # Señal LONG bloqueada por divergencia bajista fuerte
+    if direction == "long" and bearish_div:
+        results["allowed"] = False
+        results["severity"] = "blocked"
+        results["reasons"].append("Divergencia bajista fuerte detectada.")
 
-        if direction == "LONG" and momentum_direction == "down":
-            logger.info("⚠️ Momentum débil para LONG → Entrada arriesgada")
-            return EntryDecision.CAUTION
+    # Señal SHORT bloqueada por divergencia alcista fuerte
+    if direction == "short" and bullish_div:
+        results["allowed"] = False
+        results["severity"] = "blocked"
+        results["reasons"].append("Divergencia alcista fuerte detectada.")
 
-        if direction == "SHORT" and momentum_direction == "up":
-            logger.info("⚠️ Momentum débil para SHORT → Entrada arriesgada")
-            return EntryDecision.CAUTION
+    # ============================================
+    # 3️⃣ Momentum inmediato (velas recientes)
+    # ============================================
+    candles = get_latest_candles(symbol, "15m", 5)
+    if candles is not None and len(candles) >= 3:
+        last = candles.iloc[-1]
+        prev = candles.iloc[-2]
 
-    except:
-        pass
+        # Cuerpo relativo
+        body = abs(last["close"] - last["open"])
+        range_total = last["high"] - last["low"]
 
-    # --------------------------------------------------------------
-    # 📌 4. Agotamiento (Bollinger + EMAs)
-    # --------------------------------------------------------------
-    try:
-        upper, middle, lower = get_bollinger(df15)
-        last_close = df15["close"].iloc[-1]
+        if range_total > 0:
+            body_ratio = body / range_total
+        else:
+            body_ratio = 0
 
-        # LONG comprado en banda superior → exceso = peligro
-        if direction == "LONG" and last_close > upper:
-            logger.info("❌ Señal LONG en extensión (Bollinger) → Bloqueo entrada")
-            return EntryDecision.BLOCK
+        # Regla:
+        # Si la última vela es FUERTE CONTRARIA → bloquear
+        if direction == "short" and last["close"] > last["open"] and body_ratio > 0.60:
+            results["allowed"] = False
+            results["severity"] = "blocked"
+            results["reasons"].append("Momentum contrario fuerte detectado en 15m.")
 
-        # SHORT en banda inferior → riesgo extremo
-        if direction == "SHORT" and last_close < lower:
-            logger.info("❌ Señal SHORT en extensión (Bollinger) → Bloqueo entrada")
-            return EntryDecision.BLOCK
+        if direction == "long" and last["close"] < last["open"] and body_ratio > 0.60:
+            results["allowed"] = False
+            results["severity"] = "blocked"
+            results["reasons"].append("Momentum contrario fuerte detectado en 15m.")
 
-    except:
-        pass
+        results["momentum_conditions"] = {
+            "last_body_ratio": round(body_ratio, 3),
+            "last_close": float(last["close"]),
+            "last_open": float(last["open"]),
+        }
 
-    # --------------------------------------------------------------
-    # 📌 5. Stochastic: cambios de dirección inmediatos
-    # --------------------------------------------------------------
-    try:
-        stoch = get_stoch(df15)
-        k = stoch["k"].iloc[-1]
-        d = stoch["d"].iloc[-1]
+    # ============================================
+    # 4️⃣ Volumen relativo
+    # ============================================
+    vol = get_volume_series(symbol, "1h")
+    if vol is not None and len(vol) > 5:
+        recent_vol = vol.iloc[-1]
+        avg_vol = vol.iloc[-5:].mean()
 
-        # LONG pero stoch cruza hacia abajo desde sobrecompra
-        if direction == "LONG" and k < d and k > 80:
-            logger.info("❌ STC cruzando abajo → Rechazo entrada LONG")
-            return EntryDecision.BLOCK
+        vol_ratio = recent_vol / avg_vol if avg_vol > 0 else 0
+        results["risk_conditions"]["volume_ratio"] = round(vol_ratio, 2)
 
-        # SHORT pero stoch cruza hacia arriba desde sobreventa
-        if direction == "SHORT" and k > d and k < 20:
-            logger.info("❌ STC cruzando arriba → Rechazo entrada SHORT")
-            return EntryDecision.BLOCK
+        if vol_ratio < 0.45:
+            results["severity"] = "warning"
+            results["reasons"].append("Volumen débil (<45%). Entrada poco fiable.")
 
-    except:
-        pass
+    # ============================================
+    # 5️⃣ ATR — volatilidad / riesgo SL
+    # ============================================
+    atr = get_atr_series(symbol, "1h")
+    if atr is not None:
+        atr_val = atr.iloc[-1]
+        results["risk_conditions"]["atr"] = float(atr_val)
 
-    # --------------------------------------------------------------
-    # 📌 6. Si pasa todos los filtros → Entrada válida
-    # --------------------------------------------------------------
-    logger.info("✅ Entrada inteligente aprobada.")
-    return EntryDecision.OK
+        if atr_val > 0:
+            # Una volatilidad demasiado baja o demasiado alta penaliza
+            if atr_val < 0.004:
+                results["severity"] = "warning"
+                results["reasons"].append("ATR extremadamente bajo (posible rango estrecho).")
+
+            if atr_val > 0.06:
+                results["severity"] = "warning"
+                results["reasons"].append("ATR muy alto (riesgo de barridas).")
+
+    # ============================================
+    # 6️⃣ Score final
+    # ============================================
+    score = trend_alignment
+
+    if bullish_div or bearish_div:
+        score -= 20
+
+    if results["severity"] == "warning":
+        score -= 10
+
+    if not results["allowed"]:
+        score -= 40
+
+    results["score"] = max(0, min(100, score))
+
+    return results

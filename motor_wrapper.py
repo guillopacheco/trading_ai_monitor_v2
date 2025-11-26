@@ -1,33 +1,16 @@
-"""
-motor_wrapper.py — Capa estable sobre el motor técnico
--------------------------------------------------------
-
-Objetivo:
-- Evitar que cambios internos en trend_system_final rompan el resto de la app.
-- Dar un único punto de entrada para:
-    * Señales nuevas (canal VIP)
-    * Reactivaciones automáticas
-    * Monitoreo de reversiones
-
-En esta versión:
-- Normaliza la salida del motor técnico (trend_system_final)
-- Integra Smart Entry dentro de _normalize_result()
-- No tiene bloques inconsistentes ni referencias a “debug”
-"""
-
 from __future__ import annotations
 
 import logging
 from typing import Tuple, Dict, Any, Optional
 
-# Motor técnico actual
+# Motor técnico actual (tendencias, divergencias, confianza, etc.)
 from trend_system_final import (
     analyze_trend_core as _legacy_core,
     analyze_and_format as _legacy_analyze_and_format,
     _get_thresholds,
 )
 
-# Smart Entry integrado en normalize_result
+# Módulo de Entrada Inteligente (usa el snapshot multi-TF)
 from smart_entry_validator import evaluate_entry as _evaluate_entry
 
 logger = logging.getLogger("motor_wrapper")
@@ -42,12 +25,13 @@ def _normalize_result(
     direction_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Garantiza que el resultado siempre tenga las mismas claves
-    que usan otros módulos (aunque trend_system_final cambie por dentro).
+    Normaliza la salida del motor técnico para que SIEMPRE tenga
+    las mismas claves que usan otros módulos.
     """
 
     direction_hint = (direction_hint or raw.get("direction_hint") or "").lower()
 
+    # Campos base del motor técnico
     result: Dict[str, Any] = {
         "symbol": raw.get("symbol", symbol),
         "direction_hint": direction_hint,
@@ -61,7 +45,7 @@ def _normalize_result(
         "allowed": bool(raw.get("allowed", True)),
     }
 
-    # Divergencias
+    # Divergencias (RSI / MACD)
     divs = raw.get("divergences") or raw.get("divergence_summary") or {}
     if not isinstance(divs, dict):
         divs = {}
@@ -71,28 +55,28 @@ def _normalize_result(
         "MACD": divs.get("MACD") or divs.get("macd") or "",
     }
 
-    # Fallback
+    # Fallback: si no viene major_trend, usar overall_trend
     if not result["major_trend"] and result["overall_trend"]:
         result["major_trend"] = result["overall_trend"]
 
     # ============================================================
-    # 🧠 Smart Entry integrado
+    # 🧠 Smart Entry (NO bloquea, solo etiqueta — opción B)
     # ============================================================
     try:
-        debug = raw.get("debug") or {}
-        snapshot = debug.get("raw_snapshot")
+        # trend_system_final debe incluir un snapshot en raw["debug"]["raw_snapshot"]
+        debug_block = raw.get("debug") or {}
+        snapshot = debug_block.get("raw_snapshot")
+
         if isinstance(snapshot, dict):
             entry_info = _evaluate_entry(symbol, direction_hint, snapshot)
 
+            # Propagamos los campos de Entrada Inteligente
             result["entry_score"] = entry_info.get("entry_score")
             result["entry_grade"] = entry_info.get("entry_grade")
             result["entry_mode"] = entry_info.get("entry_mode")
+            # Este campo es solo informativo; NO toca result["allowed"]
             result["entry_allowed"] = bool(entry_info.get("entry_allowed", True))
             result["entry_reasons"] = entry_info.get("entry_reasons", [])
-
-            if not result["entry_allowed"]:
-                result["allowed"] = False
-
     except Exception as e:
         logger.error(f"⚠️ Error en Smart Entry para {symbol}: {e}")
 
@@ -108,6 +92,10 @@ def analyze_for_signal(
 ) -> Tuple[Dict[str, Any], str]:
     """
     Análisis principal utilizado cuando llega una señal nueva del canal VIP.
+
+    Devuelve:
+      - result: dict normalizado (tendencias, divergencias, smart entry, etc.)
+      - report: texto formateado del motor técnico (para el bloque técnico).
     """
     try:
         raw_result, report = _legacy_analyze_and_format(
@@ -116,6 +104,7 @@ def analyze_for_signal(
         )
     except Exception as e:
         logger.error(f"❌ Error en analyze_for_signal({symbol}): {e}")
+        # Fallback defensivo
         raw_result = {
             "symbol": symbol,
             "direction_hint": direction_hint,
@@ -143,6 +132,7 @@ def analyze_for_reactivation(
 ) -> Tuple[Dict[str, Any], str]:
     """
     Análisis usado por el ciclo de reactivación automática.
+    Por ahora utiliza el mismo flujo que analyze_for_signal.
     """
     return analyze_for_signal(symbol, direction_hint=direction_hint)
 
@@ -153,6 +143,7 @@ def analyze_for_reversal(
 ) -> Dict[str, Any]:
     """
     Análisis crudo utilizado por position_reversal_monitor.
+    Devuelve SOLO el dict normalizado.
     """
     try:
         raw = _legacy_core(symbol, direction_hint=direction_hint)
