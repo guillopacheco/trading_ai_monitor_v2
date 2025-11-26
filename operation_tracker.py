@@ -25,7 +25,7 @@ from trend_system_final import analyze_trend_core, _get_thresholds
 logger = logging.getLogger("operation_tracker")
 
 # Niveles de pérdida considerados críticos
-LOSS_LEVELS = [-3, -5, -10, -20, -30, -50, -70]
+LOSS_LEVELS = [-20, -30, -50, -70]
 
 
 # ============================================================
