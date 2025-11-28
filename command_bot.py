@@ -30,9 +30,8 @@ from notifier import send_message
 from database import get_signals, clear_old_records
 from operation_tracker import monitor_open_positions
 from position_reversal_monitor import monitor_reversals
-from signal_reactivation_sync import (
-    run_reactivation_cycle
-)
+from signal_reactivation_sync import _process_pending_signals
+
 
 # Motor técnico oficial
 from trend_system_final import analyze_and_format
@@ -149,7 +148,7 @@ async def reactivacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("♻️ Revisando señales pendientes...")
 
     try:
-        stats = await run_reactivation_cycle()
+        stats = await _process_pending_signals()
         msg = (
             f"♻️ *Revisión completada*\n"
             f"• Señales revisadas: {stats.get('checked', 0)}\n"
