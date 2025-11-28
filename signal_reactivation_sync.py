@@ -16,11 +16,11 @@ IMPORTANTE:
 """
 import asyncio
 import logging
+import motor_wrapper
 from datetime import datetime
 
 from config import SIGNAL_RECHECK_INTERVAL_MINUTES
 from notifier import send_message
-from motor_wrapper import analyze_for_reactivation, get_thresholds
 
 from signal_manager_db import (
     get_pending_signals_for_reactivation,
