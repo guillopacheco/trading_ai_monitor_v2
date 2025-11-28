@@ -75,6 +75,37 @@ def _confidence_label(c):
         return "medium"
     return "low"
 
+def _debug_report(symbol, direction_hint, snapshot, entry, final):
+    """
+    Genera un reporte detallado del proceso técnico.
+    Solo aparece si DEBUG_MODE = True.
+    """
+    logger.info("\n" + "="*70)
+    logger.info(f"🟦 DEBUG REPORT — {symbol} ({direction_hint})")
+    logger.info("="*70)
+
+    # ---------- SNAPSHOT ----------
+    logger.info("\n📌 SNAPSHOT MULTI-TF (raw):")
+    try:
+        logger.info(pprint.pformat(snapshot, indent=4, compact=False))
+    except Exception:
+        logger.info(str(snapshot))
+
+    # ---------- SMART ENTRY ----------
+    logger.info("\n🎯 SMART ENTRY:")
+    try:
+        logger.info(pprint.pformat(entry, indent=4))
+    except Exception:
+        logger.info(str(entry))
+
+    # ---------- FINAL RESULT ----------
+    logger.info("\n📘 FINAL DECISION:")
+    try:
+        logger.info(pprint.pformat(final, indent=4))
+    except Exception:
+        logger.info(str(final))
+
+    logger.info("="*70 + "\n")
 
 # ============================================================
 # 🧠 Motor técnico unificado
@@ -198,6 +229,32 @@ def run_unified_analysis(symbol: str, direction_hint: str = None, context: str =
                 decision = "reversal-risk"
                 allowed = True
                 decision_reasons.append("Riesgo de reversión detectado")
+
+        # ==========================
+        # DEBUG OUTPUT (si está activo)
+        # ==========================
+        if DEBUG_MODE:
+            try:
+                entry_block = {
+                    "entry_score": entry_score,
+                    "entry_grade": entry_grade,
+                    "entry_mode": entry_mode,
+                    "entry_allowed": entry_allowed,
+                    "entry_reasons": entry_reasons,
+                }
+                final_block = {
+                    "allowed": allowed,
+                    "decision": decision,
+                    "decision_reasons": decision_reasons,
+                    "technical_score": technical_score,
+                    "match_ratio": match_ratio,
+                    "grade": grade,
+                    "confidence": confidence,
+                }
+                _debug_report(symbol, direction_hint, snapshot, entry_block, final_block)
+            except Exception as e:
+                logger.warning(f"⚠️ Error generando debug report: {e}")
+
 
         # --------------------------------------------------------
         # 4) ESTRUCTURA FINAL

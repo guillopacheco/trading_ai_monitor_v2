@@ -55,18 +55,21 @@ def analyze_trend_core(symbol: str, direction: str = None, context: str = "entry
 
 def analyze_and_format(symbol: str, direction: str = None):
     """
-    Produce un texto entendible para Telegram basado en la
-    salida unificada del motor técnico.
+    Versión profesional 2025 del mensaje técnico para Telegram.
+    Compatible con el motor técnico unificado.
     """
 
     data = analyze_trend_core(symbol, direction, context="entry")
 
+    # ============================
+    # 📌 EXTRACCIÓN DE DATOS
+    # ============================
     major = data.get("major_trend", "neutral")
     overall = data.get("overall_trend", "neutral")
     match_ratio = data.get("match_ratio", 0)
     tech_score = data.get("technical_score", 0)
     grade = data.get("grade", "D")
-    conf = data.get("confidence_label", "low")
+    conf_label = data.get("confidence_label", "low")
     smart_bias = data.get("smart_bias", "neutral")
     divergences = data.get("divergences", {})
     tf = data.get("timeframes", {})
@@ -74,51 +77,116 @@ def analyze_and_format(symbol: str, direction: str = None):
     entry_grade = data.get("entry_grade", "D")
     entry_mode = data.get("entry_mode", "block")
 
-    lines = [
-        f"📊 **Análisis Técnico de {symbol} ({direction})**",
-        "",
-        f"**Tendencia Mayor:** {major}",
-        f"**Tendencia General:** {overall}",
-        "",
-        f"**Match Ratio:** {match_ratio:.1f}%",
-        f"**Technical Score:** {tech_score:.1f}",
-        f"**Grado:** {grade}",
-        f"**Confianza:** {conf}",
-        f"**Smart Bias:** {smart_bias}",
-        "",
-        "📌 **Temporalidades:**"
+    decision = data.get("decision", "unknown")
+    decision_reasons = data.get("decision_reasons", [])
+
+    # ============================
+    # 🎯 ENCABEZADO
+    # ============================
+    title = f"📘 **Análisis Técnico — {symbol.upper()} ({direction.upper()})**"
+
+    # ============================
+    # 🎯 CONCLUSIÓN INMEDIATA
+    # ============================
+    if decision == "enter":
+        conclusion = f"🎯 **Conclusión:** ENTRAR (Condición favorable)"
+    elif decision == "reactivate":
+        conclusion = f"🎯 **Conclusión:** REACTIVAR (Señal nuevamente favorable)"
+    elif decision == "reversal-risk":
+        conclusion = f"⚠️ **Conclusión:** RIESGO DE REVERSIÓN (precaución)"
+    elif decision == "wait":
+        conclusion = f"🕒 **Conclusión:** ESPERAR (Estructura mixta)"
+    elif decision == "skip":
+        conclusion = f"⛔ **Conclusión:** EVITAR (Condiciones desfavorables)"
+    else:
+        conclusion = f"❓ **Conclusión:** {decision.upper()}"
+
+    # ============================
+    # 📌 RESUMEN RÁPIDO
+    # ============================
+    resumen = [
+        "📌 **Resumen Rápido**",
+        f"• Tendencia Mayor: {major}",
+        f"• Match Ratio: {match_ratio:.1f}%",
+        f"• Score Técnico: {tech_score:.1f}",
+        f"• Smart Bias: {smart_bias}",
+        f"• Calidad Entrada: {entry_grade} ({entry_mode.upper()})"
     ]
 
+    # ============================
+    # 🕒 TEMPORALIDADES
+    # ============================
+    tfs_list = []
     for k, v in tf.items():
-        lines.append(f"• {k}: {v}")
+        tfs_list.append(f"{k}: {v.capitalize()}")
 
-    # Divergencias
+    temporalidades = " • ".join(tfs_list)
+
+    tf_block = f"🕒 **Temporalidades**\n{temporalidades}"
+
+    # ============================
+    # 🔍 DIVERGENCIAS
+    # ============================
     if divergences:
-        lines.append("")
-        lines.append("🔍 **Divergencias:**")
-        for k, v in divergences.items():
-            lines.append(f"• {k}: {v}")
+        if all(v in [None, "none", ""] for v in divergences.values()):
+            div_block = "🔍 **Divergencias**\n• Ninguna relevante"
+        else:
+            lines = ["🔍 **Divergencias**"]
+            for k, v in divergences.items():
+                if v:
+                    lines.append(f"• {k}: {v}")
+            div_block = "\n".join(lines)
+    else:
+        div_block = "🔍 **Divergencias**\n• Ninguna relevante"
 
-    # Entrada inteligente
-    lines.append("")
-    lines.append("🎯 **Entrada Inteligente**")
-    lines.append(f"• Modo: **{entry_mode.upper()}**")
-    lines.append(f"• Calidad: **{entry_grade}**")
+    # ============================
+    # 📝 MOTIVOS
+    # ============================
+    if decision_reasons:
+        motivos = ["📝 **Motivos**"]
+        for r in decision_reasons:
+            motivos.append(f"• {r}")
+        motivos_block = "\n".join(motivos)
+    else:
+        motivos_block = ""
 
-    # Decisión global
-    decision = data.get("decision", "unknown")
-    lines.append("")
-    lines.append(f"📌 **Decisión:** {decision.upper()}")
+    # ============================
+    # 📈 SUGERENCIA
+    # ============================
+    if decision == "enter":
+        sugerencia = "📈 **Sugerencia:** operación viable, entrar con gestión de riesgo."
+    elif decision == "reactivate":
+        sugerencia = "📈 **Sugerencia:** oportunidad renovada, estructura nuevamente favorable."
+    elif decision == "wait":
+        sugerencia = "🕒 **Sugerencia:** esperar una mejor alineación del mercado."
+    elif decision == "skip":
+        sugerencia = "🚫 **Sugerencia:** evitar esta señal y monitorear posibles reactivaciones."
+    elif decision == "reversal-risk":
+        sugerencia = "⚠️ **Sugerencia:** riesgo de giro importante, revisar exposición."
+    else:
+        sugerencia = ""
 
-    # Razones
-    reasons = data.get("decision_reasons", [])
-    if reasons:
-        lines.append("")
-        lines.append("📝 **Razones:**")
-        for r in reasons:
-            lines.append(f"• {r}")
+    # ============================
+    # 🧱 CONSTRUCCIÓN FINAL
+    # ============================
+    parts = [
+        title,
+        "",
+        conclusion,
+        "",
+        "\n".join(resumen),
+        "",
+        tf_block,
+        "",
+        div_block,
+        "",
+        motivos_block,
+        "",
+        sugerencia
+    ]
 
-    return "\n".join(lines)
+    return "\n".join(part for part in parts if part.strip())
+
 
 
 # ============================================================
