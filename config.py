@@ -153,3 +153,7 @@ if __name__ == "__main__":
     validate_config()
 
 ANALYSIS_DEBUG_MODE = True
+
+# Alias para compatibilidad con el motor técnico unificado
+DEBUG_MODE = ANALYSIS_DEBUG_MODE
+DEBUG_MODE = True
