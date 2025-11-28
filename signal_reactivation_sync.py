@@ -109,23 +109,35 @@ def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
 # ============================================================
 # 🧱 Construcción del mensaje enviado al usuario
 # ============================================================
-def _build_reactivation_message(signal: dict, report: str, reason: str) -> str:
-    symbol = signal.get("symbol", "¿?")
-    direction = signal.get("direction", "?").upper()
-    lev = signal.get("leverage", 20)
-    entry = signal.get("entry_price", 0.0)
+def _build_reactivation_message(signal, report, reason):
+    """
+    Construye mensaje limpio y robusto, aceptando report como:
+    - string
+    - lista
+    - dict
+    - None
+    """
 
-    lines = [
-        f"♻️ Reactivación de señal: **{symbol}**",
-        f"🎯 Dirección original: *{direction}* x{lev}",
-        f"💵 Entry: `{entry}`",
-        "",
-        f"✅ *Motivo técnico:* {reason}",
-        "",
-        "🌀 *Análisis actual del mercado:*",
-        report,
-    ]
-    return "\n".join(lines)
+    # Normalización de report
+    if report is None:
+        formatted = "Sin datos técnicos disponibles."
+    elif isinstance(report, str):
+        formatted = report
+    elif isinstance(report, list):
+        formatted = "\n".join(str(x) for x in report)
+    elif isinstance(report, dict):
+        formatted = "\n".join(f"{k}: {v}" for k, v in report.items())
+    else:
+        formatted = str(report)
+
+    return (
+        f"♻️ **Reactivación detectada**\n\n"
+        f"🔸 **Par:** {signal['symbol']}\n"
+        f"🔸 **Dirección:** {signal['direction']}\n"
+        f"🔸 **Motivo:** {reason}\n\n"
+        f"📊 **Análisis técnico:**\n{formatted}"
+    )
+
 
 
 # ============================================================
