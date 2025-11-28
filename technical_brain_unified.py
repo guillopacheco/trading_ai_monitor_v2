@@ -19,10 +19,11 @@ Entrega siempre un único diccionario estándar.
 """
 
 import logging
-from indicators import get_technical_data
-from smart_divergences import detect_smart_divergences
-from smart_entry_validator import evaluate_entry   # usamos tu módulo actual
+import pprint
+from config import DEBUG_MODE     # ✔ AQUÍ
 from motor_wrapper_core import get_multi_tf_snapshot
+from smart_entry_validator import evaluate_entry
+from indicators import get_technical_data
 
 logger = logging.getLogger("technical_brain_unified")
 
