@@ -160,10 +160,7 @@ async def run_reactivation_cycle() -> dict:
             logger.info(f"♻️ Revisando señal pendiente: {symbol} ({direction}).")
 
             # 1) Análisis técnico
-            result, report = analyze_for_reactivation(
-                symbol=symbol,
-                direction_hint=direction,
-            )
+            analysis = motor_wrapper.analyze_for_reactivation(symbol, direction)
 
             match_ratio = float(result.get("match_ratio", 0.0) or 0.0)
             allowed, reason = _can_reactivate(result, direction)
