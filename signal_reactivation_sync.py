@@ -16,7 +16,7 @@ IMPORTANTE:
 """
 import asyncio
 import logging
-import motor_wrapper
+import motor_wrapper   # ✔ necesario
 from datetime import datetime
 
 from config import SIGNAL_RECHECK_INTERVAL_MINUTES
@@ -59,7 +59,7 @@ def _can_reactivate(result: dict, original_direction: str) -> tuple[bool, str]:
     - divergencias NO fuertemente en contra
     - smart_bias NO fuertemente contrario
     """
-    thresholds = get_thresholds()
+    thresholds = motor_wrapper.get_thresholds()
     re_thr = thresholds.get("reactivation", 75.0)
 
     direction = (original_direction or "").lower()
@@ -162,8 +162,14 @@ async def run_reactivation_cycle() -> dict:
             # 1) Análisis técnico
             analysis = motor_wrapper.analyze_for_reactivation(symbol, direction)
 
-            match_ratio = float(result.get("match_ratio", 0.0) or 0.0)
-            allowed, reason = _can_reactivate(result, direction)
+            # Reporte formateado (texto limpio profesional)
+            report = motor_wrapper.analyze_and_format(symbol, direction)
+
+            # Valores técnicos
+            match_ratio = float(analysis.get("match_ratio", 0.0) or 0.0)
+
+            # Regla de reactivación
+            allowed, reason = _can_reactivate(analysis, direction)
 
             # Guardar log técnico de este análisis
             try:
@@ -183,9 +189,7 @@ async def run_reactivation_cycle() -> dict:
                 logger.error(f"⚠️ Error actualizando match_ratio en DB: {e}")
 
             if not allowed:
-                logger.info(
-                    f"⏳ Señal {symbol} NO reactivada: {reason}"
-                )
+                logger.info(f"⏳ Señal {symbol} NO reactivada: {reason}")
                 continue
 
             # 2) Marcar en DB
@@ -199,6 +203,7 @@ async def run_reactivation_cycle() -> dict:
             # 3) Notificar por Telegram
             msg = _build_reactivation_message(sig, report, reason)
             await asyncio.to_thread(send_message, msg)
+
 
         except Exception as e:
             logger.error(f"❌ Error evaluando señal pendiente: {e}")
