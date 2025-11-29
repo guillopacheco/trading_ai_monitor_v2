@@ -1,79 +1,75 @@
 """
 controllers/signal_controller.py
---------------------------------
-Capa intermedia entre:
-
-    telegram_router.py  → señales entrantes (texto)
-    signal_engine.py    → análisis técnico
-    db_service.py       → guardado y estados
-    telegram_service.py → notificaciones
-
-Este controlador NO accede directamente a Telegram ni a Bybit.
-Solo coordina.
+Controlador que maneja señales después del parser
 """
 
 import logging
-from typing import Optional, Dict
-
 from core.signal_engine import (
-    parse_raw_signal,
     analyze_signal,
+    analyze_reactivation,
+    analyze_open_position,
 )
-from services import db_service
-from utils.formatters import (
-    format_signal_intro,
-    format_analysis_summary,
+from services.db_service import (
+    save_new_signal,
+    save_analysis_result,
 )
-from services.telegram_service import send_message
+# ============================================================
+# SAFE SEND BRIDGE — evita ciclos de importación
+# ============================================================
+def safe_send(msg: str):
+    try:
+        from services.telegram_service import send_message
+        send_message(msg)
+    except Exception:
+        pass
 
 logger = logging.getLogger("signal_controller")
 
 
 # ============================================================
-# 🔥 PROCESAR SEÑALES NUEVAS
+# PROCESAR SEÑAL NUEVA
 # ============================================================
 
-def process_new_signal(raw_text: str):
-    """
-    Recibe el texto del canal VIP → lo parsea → analiza → guarda → notifica.
-    """
+def process_new_signal(signal_obj):
+    """Procesa una señal nueva del canal VIP."""
+    save_new_signal(signal_obj)
 
-    logger.info("📩 Nueva señal recibida desde Telegram.")
+    result = analyze_signal(signal_obj)
 
-    # 1. Parsear texto
-    sig = parse_raw_signal(raw_text)
-    if sig is None:
-        logger.warning("❗ Señal ignorada: no se pudo parsear.")
-        return
+    # guardar log técnico
+    save_analysis_result(signal_obj.symbol, result["analysis"])
 
-    # 2. Guardar en DB como pending
-    signal_id = db_service.create_signal(
-        symbol=sig.symbol,
-        direction=sig.direction,
-        raw_text=sig.raw_text,
-        status="pending",
-    )
+    # enviar mensaje al usuario
+    safe_send(result["summary"])
 
-    logger.info(f"🗄 Guardada señal {sig.symbol} (id={signal_id}) como pending.")
+    return result
 
-    # 3. Ejecutar análisis técnico
-    result = analyze_signal(sig)
 
-    # 4. Preparar mensaje formateado
-    header = format_signal_intro(signal.symbol, signal.direction)
-    detail = format_full_analysis(result["analysis"])
-    final_msg = f"{header}\n{detail}"
+# ============================================================
+# REACTIVACIÓN
+# ============================================================
 
-    # 5. Enviar mensaje al usuario
-    send_message(final_msg)
+def process_reactivation(signal_obj):
+    """Evalúa si una señal pendiente debe reactivarse."""
+    result = analyze_reactivation(signal_obj)
 
-    # 6. Actualizar DB con resultado
-    db_service.save_analysis(
-        signal_id=signal_id,
-        match_ratio=result["analysis"]["match_ratio"],
-        technical_score=result["analysis"]["technical_score"],
-        grade=result["analysis"]["grade"],
-        decision=result["analysis"]["decision"],
-    )
+    save_analysis_result(signal_obj.symbol, result["analysis"])
 
-    logger.info(f"✔ Señal procesada y análisis guardado (id={signal_id}).")
+    safe_send(result["summary"])
+
+    return result
+
+
+# ============================================================
+# POSICIÓN ABIERTA
+# ============================================================
+
+def process_open_position(symbol, direction, loss_pct):
+    result = analyze_open_position(symbol, direction)
+
+    save_analysis_result(symbol, result["analysis"])
+
+    # enviar resumen
+    safe_send(result["summary"])
+
+    return result
