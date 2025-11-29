@@ -12,15 +12,12 @@ import logging
 
 from services.db_service import (
     save_new_signal,
-    save_analysis_log,
+    add_analysis_log,     # ← nombre correcto
 )
 
-from core.signal_engine import (
-    analyze_signal,
-)
+from core.signal_engine import analyze_signal
 
 from services.telegram_service import safe_send
-
 from utils.helpers import now_ts
 
 logger = logging.getLogger("signal_controller")
@@ -47,11 +44,11 @@ def process_new_signal(signal_obj):
     signal_id = save_new_signal(signal_obj)
     logger.info(f"🗄 Señal guardada con ID {signal_id}")
 
-    # 2️⃣ Correr motor técnico A+
+    # 2️⃣ Ejecutar motor técnico A+
     analysis = analyze_signal(signal_obj)
 
-    # 3️⃣ Guardar análisis (para historial completo)
-    save_analysis_log(
+    # 3️⃣ Guardar análisis (historial completo)
+    add_analysis_log(
         signal_id=signal_id,
         timestamp=now_ts(),
         result=analysis.get("raw", {}),
@@ -59,7 +56,7 @@ def process_new_signal(signal_obj):
         reason=analysis.get("reason", "Sin motivo"),
     )
 
-    # 4️⃣ Enviar mensaje a Telegram
+    # 4️⃣ Enviar mensaje formateado a Telegram
     try:
         safe_send(analysis["message"])
     except Exception as e:
