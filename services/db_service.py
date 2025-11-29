@@ -1,343 +1,250 @@
 """
 services/db_service.py
 ----------------------
-Servicio de acceso a la base de datos SQLite.
+Servicio de base de datos SQLite para Trading AI Monitor.
 
-Reemplaza:
-    - database.py
-    - signal_manager_db.py
-
-Responsable de:
-    ✔ crear tablas
-    ✔ guardar señales
-    ✔ leer señales pendientes
-    ✔ registrar análisis
-    ✔ registrar logs de posiciones
+Maneja:
+    - señales recibidas
+    - análisis técnicos
+    - estado de reactivación
+    - logs
 """
 
+from __future__ import annotations
 import sqlite3
 import json
-import time
+import logging
+import os
 from typing import List, Dict, Any, Optional
 
 from config import DB_PATH
-import logging
 
 logger = logging.getLogger("db_service")
 
+
 # ============================================================
-# 🔵 Creación automática de tablas
+# 🔧 CONEXIÓN Y CREACIÓN DE TABLAS
 # ============================================================
+
+def get_connection():
+    return sqlite3.connect(DB_PATH)
+
 
 def init_db():
     """
-    Crea las tablas necesarias si no existen.
-    Ejecutar desde main.py antes de iniciar el scheduler.
+    Crea la base de datos y sus tablas si no existen.
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-    # Tabla de señales
-    cursor.execute("""
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # Tabla principal de señales
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS signals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symbol TEXT NOT NULL,
             direction TEXT NOT NULL,
-            entry REAL NOT NULL,
-            tp_list TEXT,
-            sl REAL,
-            status TEXT DEFAULT 'pending',
-            created_at TEXT,
-            updated_at TEXT
-        )
-    """)
-
-    # Tabla para logs de análisis (opcional)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS analysis_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            signal_id INTEGER,
-            message TEXT,
-            created_at TEXT
-        )
-    """)
-
-    conn.commit()
-    conn.close()
-
-    print("📦 Base de datos verificada (tablas OK).")
-
-# ============================================================
-# 🔵 Conexión
-# ============================================================
-
-def _conn():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
-
-
-# ============================================================
-# 🔵 Inicialización
-# ============================================================
-
-def init_db():
-    conn = _conn()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS signals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT,
-            direction TEXT,
             entry REAL,
-            tp_list TEXT,
-            sl REAL,
-            status TEXT,
-            match_ratio REAL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT
-        )
+            timestamp INTEGER,
+            raw_text TEXT,
+            reactivated INTEGER DEFAULT 0
+        );
     """)
 
-    cursor.execute("""
+    # Logs del motor de análisis (historial completo)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS analysis_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             signal_id INTEGER,
-            match_ratio REAL,
-            recommendation TEXT,
-            details TEXT,
-            timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-        )
+            timestamp INTEGER,
+            allowed INTEGER,
+            reason TEXT,
+            result_json TEXT,
+            FOREIGN KEY(signal_id) REFERENCES signals(id)
+        );
     """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS position_logs (
+    # Señales reactivadas (histórico)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS reactivations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT,
-            direction TEXT,
-            pnl_pct REAL,
-            timestamp TEXT
-        )
+            signal_id INTEGER,
+            timestamp INTEGER,
+            reason TEXT,
+            FOREIGN KEY(signal_id) REFERENCES signals(id)
+        );
     """)
 
     conn.commit()
     conn.close()
+
     logger.info(f"🗄 DB inicializada correctamente en {DB_PATH}")
 
 
 # ============================================================
-# 🔵 CRUD: SEÑALES
+# 🟦 GUARDAR NUEVA SEÑAL
 # ============================================================
 
-def create_signal(data: Dict[str, Any]) -> Optional[int]:
+def save_new_signal(signal_obj) -> int:
     """
-    Inserta una señal nueva en la base de datos.
+    Inserta una nueva señal en la tabla 'signals'.
+    Retorna el ID asignado.
     """
-    conn = _conn()
-    cursor = conn.cursor()
+    conn = get_connection()
+    cur = conn.cursor()
 
-    try:
-        cursor.execute("""
-            INSERT INTO signals (symbol, direction, entry, tp_list, sl, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, [
-            data.get("symbol"),
-            data.get("direction"),
-            data.get("entry"),
-            ",".join(str(t) for t in data.get("tp_list", [])),
-            data.get("sl"),
-            data.get("status", "pending"),
-        ])
-        signal_id = cursor.lastrowid
-        conn.commit()
-        return signal_id
+    cur.execute("""
+        INSERT INTO signals (symbol, direction, entry, timestamp, raw_text)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        signal_obj.symbol,
+        signal_obj.direction,
+        signal_obj.entry,
+        signal_obj.timestamp,
+        signal_obj.raw_text,
+    ))
 
-    except Exception as e:
-        logger.error(f"❌ Error creando señal: {e}")
-        return None
+    conn.commit()
+    signal_id = cur.lastrowid
+    conn.close()
 
-    finally:
-        conn.close()
+    return signal_id
 
 
-def get_pending_signals() -> List[Dict[str, Any]]:
-    conn = _conn()
-    cursor = conn.cursor()
+# ============================================================
+# 🟧 GUARDAR ANÁLISIS DEL MOTOR
+# ============================================================
 
-    cursor.execute("""
-        SELECT id, symbol, direction, entry, tp_list, sl
+def add_analysis_log(signal_id: int, timestamp: int, result: dict,
+                     allowed: bool, reason: str):
+    """
+    Guarda un log de análisis técnico completo en formato JSON.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO analysis_logs (signal_id, timestamp, allowed, reason, result_json)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        signal_id,
+        timestamp,
+        1 if allowed else 0,
+        reason,
+        json.dumps(result)
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# ============================================================
+# 🟨 OBTENER SEÑALES PENDIENTES DE REACTIVACIÓN
+# ============================================================
+
+def get_pending_signals() -> List[Any]:
+    """
+    Retorna todas las señales que NO han sido reactivadas.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, symbol, direction, entry, timestamp, raw_text
         FROM signals
-        WHERE status = 'pending'
+        WHERE reactivated = 0
+        ORDER BY timestamp ASC
     """)
-    rows = cursor.fetchall()
+
+    rows = cur.fetchall()
     conn.close()
 
-    result = []
+    signals = []
     for r in rows:
-        result.append({
-            "id": r[0],
-            "symbol": r[1],
-            "direction": r[2],
-            "entry": r[3],
-            "tp_list": [float(x) for x in (r[4] or "").split(",") if x],
-            "sl": r[5],
-        })
-    return result
+        signals.append(_make_signal_obj(r))
+
+    return signals
 
 
-def set_signal_reactivated(signal_id: int):
-    conn = _conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE signals
-        SET status='active', updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-    """, [signal_id])
-    conn.commit()
-    conn.close()
+# ============================================================
+# 🟨 MARCAR SEÑAL COMO REACTIVADA
+# ============================================================
 
+def set_signal_reactivated(signal_id: int, reason: str = "Motor A+"):
+    """
+    Marca una señal como reactivada y guarda un registro en 'reactivations'.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
 
-def set_signal_ignored(signal_id: int):
-    conn = _conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE signals
-        SET status='ignored', updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-    """, [signal_id])
-    conn.commit()
-    conn.close()
+    cur.execute("""
+        UPDATE signals SET reactivated = 1
+        WHERE id = ?
+    """, (signal_id,))
 
+    cur.execute("""
+        INSERT INTO reactivations (signal_id, timestamp, reason)
+        VALUES (?, strftime('%s','now'), ?)
+    """, (signal_id, reason))
 
-def set_signal_match_ratio(signal_id: int, ratio: float):
-    conn = _conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE signals
-        SET match_ratio=?, updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-    """, [ratio, signal_id])
     conn.commit()
     conn.close()
 
 
 # ============================================================
-# 🔵 Logs técnicos
+# 🟩 OBTENER HISTORIAL COMPLETO DE ANÁLISIS
 # ============================================================
 
-def add_analysis_log(signal_id: int, match_ratio: float, recommendation: str, details: str):
-    conn = _conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO analysis_logs (signal_id, match_ratio, recommendation, details)
-        VALUES (?, ?, ?, ?)
-    """, [signal_id, match_ratio, recommendation, details])
-    conn.commit()
-    conn.close()
+def get_logs_for_signal(signal_id: int) -> List[Dict[str, Any]]:
+    conn = get_connection()
+    cur = conn.cursor()
 
-
-def get_logs(limit: int = 20) -> List[Dict[str, Any]]:
-    conn = _conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT signal_id, match_ratio, recommendation, timestamp
+    cur.execute("""
+        SELECT timestamp, allowed, reason, result_json
         FROM analysis_logs
-        ORDER BY id DESC
-        LIMIT ?
-    """, [limit])
-    rows = cursor.fetchall()
+        WHERE signal_id = ?
+        ORDER BY timestamp ASC
+    """, (signal_id,))
+
+    rows = cur.fetchall()
     conn.close()
 
     logs = []
-    for r in rows:
+    for ts, allowed, reason, result_json in rows:
         logs.append({
-            "signal_id": r[0],
-            "match_ratio": r[1],
-            "recommendation": r[2],
-            "timestamp": r[3],
+            "timestamp": ts,
+            "allowed": bool(allowed),
+            "reason": reason,
+            "result": json.loads(result_json or "{}")
         })
+
     return logs
 
 
 # ============================================================
-# 🔵 Logs de posiciones
+# 🔧 UTILIDAD: construir objeto de señal
 # ============================================================
 
-def add_position_log(symbol: str, direction: str, pnl_pct: float, timestamp: str):
-    conn = _conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO position_logs (symbol, direction, pnl_pct, timestamp)
-        VALUES (?, ?, ?, ?)
-    """, [symbol, direction, pnl_pct, timestamp])
-    conn.commit()
-    conn.close()
-
-# ============================================================
-# 📌 GUARDAR NUEVA SEÑAL
-# ============================================================
-
-def save_new_signal(signal_obj):
+def _make_signal_obj(row):
     """
-    Guarda una señal nueva en la tabla signals.
-    Solo guarda datos básicos: symbol, direction, entry_price, timestamp.
+    Crea un objeto simple que imita la estructura utilizada por la aplicación.
     """
-    try:
-        conn = get_connection()
-        c = conn.cursor()
 
-        c.execute(
-            """
-            INSERT INTO signals (symbol, direction, entry_price, raw_text, timestamp, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                signal_obj.symbol,
-                signal_obj.direction,
-                signal_obj.entry_price,
-                signal_obj.raw_text,
-                int(signal_obj.timestamp),
-                "new",
-            ),
-        )
+    class SignalObj:
+        id: int
+        symbol: str
+        direction: str
+        entry: float
+        timestamp: int
+        raw_text: str
 
-        conn.commit()
-        conn.close()
+        def __init__(self, id, symbol, direction, entry, timestamp, raw_text):
+            self.id = id
+            self.symbol = symbol
+            self.direction = direction
+            self.entry = entry
+            self.timestamp = timestamp
+            self.raw_text = raw_text
 
-    except Exception as e:
-        logger.error(f"❌ Error guardando señal nueva: {e}")
-
-
-# ============================================================
-# 📌 GUARDAR RESULTADO DE ANÁLISIS
-# ============================================================
-
-def save_analysis_result(symbol: str, analysis: dict):
-    """
-    Guarda la salida completa del motor técnico para historial.
-    """
-    try:
-        conn = get_connection()
-        c = conn.cursor()
-
-        c.execute(
-            """
-            INSERT INTO analysis_logs (symbol, decision, grade, match_ratio, technical_score, context, timestamp, raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                symbol,
-                analysis.get("decision"),
-                analysis.get("grade"),
-                float(analysis.get("match_ratio", 0)),
-                float(analysis.get("technical_score", 0)),
-                analysis.get("context", ""),
-                int(analysis.get("timestamp", time.time())),
-                json.dumps(analysis),
-            ),
-        )
-
-        conn.commit()
-        conn.close()
-
-    except Exception as e:
-        logger.error(f"❌ Error guardando análisis técnico: {e}")
+    return SignalObj(*row)

@@ -97,21 +97,51 @@ def analyze_signal_for_reactivation(signal_obj) -> Dict[str, Any]:
 # 🟨 3) Análisis para POSICIONES ABIERTAS (operaciones activas)
 # ==================================================================
 
-def analyze_open_position(position_obj) -> Dict[str, Any]:
+def analyze_open_position(position_obj=None, **kwargs) -> Dict[str, Any]:
     """
-    Analiza una posición abierta utilizando el Motor Técnico A+.
+    Analiza una posición abierta usando el Motor Técnico A+.
 
-    position_obj debe incluir:
-        - symbol
-        - side (BUY/SELL)
-        - entryPrice
+    Soporta dos formatos:
+
+    1) Diccionario completo:
+        {
+            "symbol": "...",
+            "side": "Buy"/"Sell",
+            "entryPrice": 0.0
+        }
+
+    2) Parámetros sueltos:
+        analyze_open_position(symbol="BTCUSDT", side="Buy", entry=123.4)
     """
 
+    # Unificación del input
+    if position_obj is None:
+        position_obj = {}
+
+    # Mezclar kwargs → sobrescriben si se repiten
+    position_obj = {**position_obj, **kwargs}
+
+    # Normalizar
     symbol = position_obj.get("symbol")
-    side = position_obj.get("side", "").lower()
-    entry_price = position_obj.get("entryPrice")
+    side_raw = position_obj.get("side") or position_obj.get("direction")
+    entry_price = (
+        position_obj.get("entryPrice")
+        or position_obj.get("entry")
+        or position_obj.get("entry_price")
+    )
 
-    direction = "long" if side == "buy" else "short"
+    if not symbol or not side_raw:
+        return {
+            "reversal": False,
+            "allowed": False,
+            "reason": "Datos insuficientes para analizar posición abierta.",
+            "raw": {},
+        }
+
+    side = side_raw.lower()
+
+    # BUY/SELL → long/short
+    direction = "long" if side in ["buy", "long"] else "short"
 
     try:
         result = run_unified_analysis(
@@ -119,7 +149,7 @@ def analyze_open_position(position_obj) -> Dict[str, Any]:
             direction=direction,
             entry_price=entry_price,
             is_reactivation=False,
-            is_position_check=True,  # señalamos que es una operación activa
+            is_position_check=True,
         )
     except Exception as e:
         logger.error(f"❌ Error en analyze_open_position: {e}")
@@ -130,12 +160,12 @@ def analyze_open_position(position_obj) -> Dict[str, Any]:
             "raw": {},
         }
 
-    # Detecta reversión severa según motor A+
     reversal = result.get("reversal_detected", False)
 
     return {
         "reversal": reversal,
         "allowed": result.get("allowed", True),
         "reason": result.get("reason", "Sin motivo"),
-        "raw": result
+        "raw": result,
     }
+
