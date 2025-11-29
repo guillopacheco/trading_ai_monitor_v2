@@ -17,7 +17,7 @@ Solo conecta con Bybit.
 import logging
 from typing import Optional, Dict, Any, List
 
-from bybit_client import (
+from services.bybit_client import (
     get_ohlcv_data,
     get_symbol_price,
     get_positions,

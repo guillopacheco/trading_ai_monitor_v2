@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 import pandas_ta as ta
 import logging
-from bybit_client import get_ohlcv_data
+from services.bybit_client import get_ohlcv_data
 from smart_divergences import detect_smart_divergences
 
 logger = logging.getLogger("indicators")
