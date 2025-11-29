@@ -1,34 +1,30 @@
 """
 services/telegram_service.py
 ----------------------------
-Capa central de comunicación con Telegram.
+Servicio encargado de manejar la conexión con Telegram.
 
-✔ Cliente de usuario (Telethon) para:
-    - Leer señales del canal VIP
-    - Recibir comandos por chat privado
-    - Enviar mensajes al usuario
-
-No contiene lógica de análisis ni de DB.
+Este módulo NO importa controllers.
+Únicamente crea el cliente de Telethon, lo inicializa
+y expone una función send_message() para que los controllers
+puedan enviar mensajes sin generar ciclos.
 """
 
 import logging
-from telethon import TelegramClient, events
-
+from telethon import TelegramClient
 from config import (
     API_ID,
     API_HASH,
     TELEGRAM_SESSION,
-    TELEGRAM_CHANNEL_ID,
+    TELEGRAM_BOT_TOKEN,
     TELEGRAM_USER_ID,
 )
 
-from controllers.signal_listener import on_new_signal
-from controllers.commands_controller import handle_command
-from utils.helpers import is_command
-
 logger = logging.getLogger("telegram_service")
 
-# Cliente global de Telethon (sesión de usuario)
+# ============================================================
+# 🔵 Cliente Global de Telegram
+# ============================================================
+
 client = TelegramClient(
     TELEGRAM_SESSION,
     API_ID,
@@ -36,58 +32,47 @@ client = TelegramClient(
 )
 
 
-async def send_message(text: str) -> bool:
-    """
-    Envía un mensaje al usuario configurado (TELEGRAM_USER_ID).
-    """
-    try:
-        await client.send_message(TELEGRAM_USER_ID, text)
-        return True
-    except Exception as e:
-        logger.error(f"❌ Error enviando mensaje a Telegram: {e}")
-        return False
+# ============================================================
+# 🔵 Inicialización de Telegram (usuario + bot)
+# ============================================================
 
-
-@client.on(events.NewMessage)
-async def handler(event):
+async def start_telegram():
     """
-    Dispatcher general de mensajes:
-
-    - Si viene del canal VIP → se trata como señal.
-    - Si es un mensaje privado / comando → va a commands_controller.
+    Inicia sesión del cliente de usuario y del bot.
+    NO registra eventos; eso se hace en controllers/telegram_router.py.
     """
     try:
-        chat_id = event.chat_id
-        text = event.raw_text or ""
+        await client.connect()
 
-        # Señales del canal VIP
-        if chat_id == TELEGRAM_CHANNEL_ID:
-            logger.info("📥 Señal recibida desde canal VIP.")
-            await on_new_signal(event)
-            return
+        # Sesión de usuario
+        if not await client.is_user_authorized():
+            logger.warning("⚠️ La sesión de usuario no está autorizada.")
+            # Aquí normalmente se pediría código, pero lo omitimos.
 
-        # Comandos desde el chat privado
-        if is_command(text):
-            logger.info(f"💬 Comando recibido: {text}")
-            await handle_command(text)
-            return
+        # Iniciar el bot
+        await client.start(bot_token=TELEGRAM_BOT_TOKEN)
+
+        logger.info("📡 Telegram conectado (usuario + bot).")
 
     except Exception as e:
-        logger.error(f"❌ Error en handler de Telegram: {e}")
+        logger.error(f"❌ Error inicializando Telegram: {e}")
+        raise
 
 
-async def start_telegram_service():
-    """
-    Inicializa el cliente de Telegram (sesión de usuario).
-    """
-    logger.info("📡 Iniciando servicio de Telegram (sesión de usuario)…")
-    await client.start()  # Usa API_ID / API_HASH / TELEGRAM_SESSION
-    me = await client.get_me()
-    logger.info(f"🤖 Telegram conectado como: {me.username or me.id}")
+# ============================================================
+# 🔵 Enviar mensaje
+# ============================================================
 
+async def send_message(text: str, chat_id: int = None):
+    """
+    Envia un mensaje por Telegram.
+    Si no se indica chat_id, se envía al usuario dueño (TELEGRAM_USER_ID).
+    """
+    try:
+        if chat_id is None:
+            chat_id = TELEGRAM_USER_ID
 
-def get_client() -> TelegramClient:
-    """
-    Devuelve el cliente Telethon para ser usado en main.py (run_until_disconnected).
-    """
-    return client
+        await client.send_message(chat_id, text)
+
+    except Exception as e:
+        logger.error(f"❌ Error enviando mensaje Telegram: {e}")
