@@ -1,41 +1,41 @@
 """
 main.py
 -------
-Archivo principal del sistema. Orquesta la inicialización
-de servicios, Telegram, router y scheduler.
+Punto de entrada de la aplicación Trading AI Monitor.
 """
 
+from __future__ import annotations
 import asyncio
 import logging
 
 from utils.logger import configure_logging
-from services.telegram_service import start_telegram, client
+from services.telegram_service import start_telegram
 from services.scheduler_service import start_scheduler
-from services.db_service import init_db
-
-# 🔵 IMPORTA EL ROUTER (MUY IMPORTANTE)
-import controllers.telegram_router  # ← registra handlers al cargar
-
-
-logger = logging.getLogger("MAIN")
 
 
 async def main():
+    # Configurar logging
     configure_logging()
+    logger = logging.getLogger("MAIN")
+
     logger.info("🚀 Iniciando Trading AI Monitor...")
-    # Inicializar DB
-    init_db()
 
-    # 1. Telegram
+    # Obtener loop actual
+    loop = asyncio.get_running_loop()
+
+    # Iniciar Telegram (usuario + bot)
     await start_telegram()
+    logger.info("📡 Telegram iniciado.")
 
-    # 2. Scheduler (loops)
-    await start_scheduler()
+    # Iniciar scheduler (reactivación + posiciones)
+    start_scheduler(loop)
+    logger.info("🕒 Scheduler registrado.")
 
     logger.info("📡 Sistema en ejecución. Esperando eventos de Telegram...")
 
-    # Mantener la app viva con el loop de Telethon
-    await client.run_until_disconnected()
+    # Mantener app viva
+    while True:
+        await asyncio.sleep(3600)
 
 
 if __name__ == "__main__":

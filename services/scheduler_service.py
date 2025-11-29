@@ -1,9 +1,7 @@
 """
 services/scheduler_service.py
 -----------------------------
-Ejecutor periódico de dos tareas:
-    1) Reactivación de señales pendientes
-    2) Revisión de posiciones abiertas
+Scheduler: tareas periódicas (reactivación + revisión de posiciones)
 """
 
 from __future__ import annotations
@@ -11,22 +9,15 @@ import logging
 import asyncio
 
 from controllers.reactivation_controller import run_reactivation_cycle
-from controllers.positions_controller import check_open_positions  # ✔ nombre correcto
+from controllers.positions_controller import check_open_positions
 
 logger = logging.getLogger("scheduler_service")
 
 
-# ============================================================
-# ⏳ LOOP PRINCIPAL DEL SCHEDULER
-# ============================================================
-
 async def scheduler_loop():
     """
-    Ejecuta cada 60 segundos:
-        - ciclo de reactivación
-        - revisión de posiciones abiertas
+    Loop del scheduler ejecutado cada 60 segundos.
     """
-
     logger.info("🕒 Scheduler activo (reactivación + posiciones).")
 
     while True:
@@ -44,10 +35,6 @@ async def scheduler_loop():
 
         await asyncio.sleep(60)
 
-
-# ============================================================
-# ▶️ INICIO DEL SCHEDULER (llamado desde main.py)
-# ============================================================
 
 def start_scheduler(loop: asyncio.AbstractEventLoop):
     """
