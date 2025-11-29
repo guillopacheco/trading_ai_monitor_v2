@@ -1,40 +1,34 @@
 """
 controllers/positions_controller.py
 -----------------------------------
-Monitorea posiciones abiertas:
-  ✔ obtención desde Bybit
-  ✔ análisis de reversión con motor técnico
-  ✔ sugerencias de cerrar, mantener, revertir
+Analiza posiciones reales y detecta reversiones / decisiones.
 """
 
 import logging
-from core.signal_engine import analyze_reversal
+from core.signal_engine import analyze_open_position
 from services.bybit_service import get_open_positions
 from services.telegram_service import send_message
 
 logger = logging.getLogger("positions_controller")
 
 
-async def check_positions():
-    """
-    Llamado periódicamente por scheduler_service.
-    """
+def check_open_positions():
+    """Recorre todas las posiciones abiertas y ejecuta el motor técnico."""
     positions = get_open_positions()
+
     if not positions:
         logger.info("📭 No hay posiciones abiertas.")
         return
 
     for p in positions:
-        symbol = p["symbol"]
-        direction = p["side"].lower()  # long/short
+        logger.info(f"🔍 Analizando posición: {p['symbol']} ({p['side']})")
 
-        logger.info(f"🔍 Analizando posición abierta: {symbol} ({direction})")
+        result = analyze_open_position(
+            symbol=p["symbol"],
+            direction=p["side"],
+        )
 
-        reversal = analyze_reversal(symbol, direction)
-        if reversal.get("reversal"):
-            await send_message(
-                f"🚨 Reversión detectada en {symbol}\n"
-                f"Motivo: {reversal['reason']}"
-            )
-        else:
-            logger.info(f"✔ Sin reversión para {symbol}")
+        send_message(
+            f"🔍 **Análisis de posición:** {p['symbol']}\n"
+            f"{result['summary']}"
+        )

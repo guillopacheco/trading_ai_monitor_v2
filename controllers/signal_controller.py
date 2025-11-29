@@ -1,76 +1,79 @@
 """
 controllers/signal_controller.py
 --------------------------------
-Procesa una señal nueva desde Telegram:
-  ✔ parseo
-  ✔ guardado en DB
-  ✔ análisis técnico con motor unificado
-  ✔ notificación por Telegram
+Capa intermedia entre:
+
+    telegram_router.py  → señales entrantes (texto)
+    signal_engine.py    → análisis técnico
+    db_service.py       → guardado y estados
+    telegram_service.py → notificaciones
+
+Este controlador NO accede directamente a Telegram ni a Bybit.
+Solo coordina.
 """
 
 import logging
+from typing import Optional, Dict
 
-from core.signal_engine import analyze_signal
-from services import db_service
-from services.telegram_service import send_message
-from models.signal import Signal
-from utils.parser import parse_signal_text
-from utils.formatters import (
-    format_signal_intro,
-    format_parsed_signal,
-    format_match_ratio_text,
-    format_recommendation_text,
+from core.signal_engine import (
+    parse_raw_signal,
+    analyze_signal,
 )
-
+from services import db_service
+from utils.formatters import (
+    format_signal_header,
+    format_full_analysis,
+)
+from services.telegram_service import send_message
 
 logger = logging.getLogger("signal_controller")
 
 
-async def process_new_signal(text: str):
+# ============================================================
+# 🔥 PROCESAR SEÑALES NUEVAS
+# ============================================================
+
+def process_new_signal(raw_text: str):
     """
-    Pasos:
-      1) parsear texto
-      2) insertar señal en DB
-      3) ejecutar motor técnico
-      4) enviar resultado
+    Recibe el texto del canal VIP → lo parsea → analiza → guarda → notifica.
     """
-    try:
-        parsed = parse_signal_text(text)
-        if not parsed:
-            logger.warning("⚠️ Mensaje recibido pero no es una señal válida.")
-            return
 
-        logger.info(f"🔍 Nueva señal detectada: {parsed['symbol']}")
+    logger.info("📩 Nueva señal recibida desde Telegram.")
 
-        # Guardar en DB
-        signal_id = db_service.create_signal(parsed)
-        if not signal_id:
-            logger.error("❌ No se logró insertar señal en DB.")
-            return
+    # 1. Parsear texto
+    sig = parse_raw_signal(raw_text)
+    if sig is None:
+        logger.warning("❗ Señal ignorada: no se pudo parsear.")
+        return
 
-        signal = Signal(
-            id=signal_id,
-            symbol=parsed["symbol"],
-            direction=parsed["direction"],
-            entry=parsed["entry"],
-            tp_list=parsed["tp_list"],
-            sl=parsed["sl"]
-        )
+    # 2. Guardar en DB como pending
+    signal_id = db_service.create_signal(
+        symbol=sig.symbol,
+        direction=sig.direction,
+        raw_text=sig.raw_text,
+        status="pending",
+    )
 
-        # Análisis técnico
-        analysis = analyze_signal(signal)
+    logger.info(f"🗄 Guardada señal {sig.symbol} (id={signal_id}) como pending.")
 
-        # Enviar a Telegram
-        msg = (
-            format_signal_intro(signal)
-            + "\n"
-            + format_analysis_result(analysis)
-        )
+    # 3. Ejecutar análisis técnico
+    result = analyze_signal(sig)
 
-        await send_message(msg)
+    # 4. Preparar mensaje formateado
+    header = format_signal_header(sig.symbol, sig.direction)
+    detail = format_full_analysis(result["analysis"])
+    final_msg = f"{header}\n{detail}"
 
-        # Registrar match_ratio
-        db_service.set_signal_match_ratio(signal_id, analysis.get("match_ratio", 0))
+    # 5. Enviar mensaje al usuario
+    send_message(final_msg)
 
-    except Exception as e:
-        logger.error(f"❌ Error en process_new_signal: {e}")
+    # 6. Actualizar DB con resultado
+    db_service.save_analysis(
+        signal_id=signal_id,
+        match_ratio=result["analysis"]["match_ratio"],
+        technical_score=result["analysis"]["technical_score"],
+        grade=result["analysis"]["grade"],
+        decision=result["analysis"]["decision"],
+    )
+
+    logger.info(f"✔ Señal procesada y análisis guardado (id={signal_id}).")

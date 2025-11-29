@@ -1,314 +1,169 @@
 """
 core/signal_engine.py
 ---------------------
-MOTOR TÉCNICO UNIFICADO
-Este archivo reemplaza TODOS los motores anteriores (wrapper, smart, trend_system, technical_brain_unified)
+Capa intermedia entre Telegram/DB ↔ Motor Técnico A+.
 
-Funciones principales:
-    ✔ fetch_multi_tf_data()       → descarga datos multi-TF desde Bybit
-    ✔ analyze_timeframe()         → indicadores de una TF
-    ✔ combine_timeframes()        → consolidación multi-TF
-    ✔ calculate_match_ratio()     → puntaje global 0–100%
-    ✔ analyze_signal()            → análisis de entrada inicial
-    ✔ analyze_reactivation()      → evaluación de reactivación
-    ✔ analyze_reversal()          → análisis para posiciones abiertas
+Responsabilidades:
+- Parsear señales crudas
+- Convertirlas en objetos Signal
+- Llamar al Motor Técnico Unificado A+
+- Devolver dicts estandarizados a controladores
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Dict, Any, Optional
-
-from core.indicators_core import (
-    compute_indicators,
-    detect_divergences,
-    select_best_intervals,
-)
-
-from services.bybit_service import (
-    get_ohlcv,
-    get_symbol_price,
-)
-
-from services import db_service
-
-from utils.helpers import now_ts
-from utils.formatters import (
-    format_match_ratio_text,
-    format_recommendation_text,
-)
+from typing import Dict, Optional
 
 from models.signal import Signal
-
-from config import DEBUG_MODE
-
+from core.technical_brain_unified import run_unified_analysis
+from utils.helpers import normalize_direction
+from utils.formatters import (
+    format_signal_header,
+    format_analysis_summary,
+)
 
 logger = logging.getLogger("signal_engine")
 
 
 # ============================================================
-# 🔵 1. DESCARGA MULTI-TEMPORALIDAD
+# 🔍 PARSEAR Y NORMALIZAR SEÑALES DEL CANAL VIP
 # ============================================================
 
-TF_MAP = {
-    "1m": "1",
-    "3m": "3",
-    "5m": "5",
-    "15m": "15",
-    "30m": "30",
-    "1h": "60",
-    "4h": "240",
-}
+def parse_raw_signal(raw_text: str) -> Optional[Signal]:
+    """Convierte texto crudo en objeto Signal limpio."""
+    try:
+        text = raw_text.replace("\n", " ").strip()
 
+        if "#" not in text:
+            return None
 
-def fetch_multi_tf_data(symbol: str, tfs: list) -> Dict[str, Any]:
-    """
-    Descarga OHLCV para varias temporalidades.
-    Devuelve: { "1h": df, "4h": df, ... }
-    """
-    data = {}
-    for tf in tfs:
-        try:
-            interval = TF_MAP.get(tf)
-            if not interval:
-                continue
+        # Par
+        start = text.index("#") + 1
+        end = text.index(" ", start)
+        raw_pair = text[start:end].upper().replace("/", "").strip()
 
-            df = get_ohlcv(symbol, interval=interval, limit=200)
-            if df is not None and not df.empty:
-                data[tf] = df
-            else:
-                logger.warning(f"⚠️ Sin datos para {symbol} {tf}")
+        # Dirección
+        direction = "long" if "LONG" in text.upper() else "short"
 
-        except Exception as e:
-            logger.error(f"❌ Error descargando {symbol} {tf}: {e}")
+        # Entry
+        entry = None
+        if "ENTRY" in text.upper():
+            try:
+                part = text.upper().split("ENTRY")[1]
+                entry = float(part.replace("-", "").strip().split(" ")[0])
+            except Exception:
+                entry = None
 
-    return data
+        return Signal(
+            symbol=raw_pair,
+            direction=direction,
+            raw_text=raw_text,
+            entry_price=entry,
+        )
 
-
-# ============================================================
-# 🔵 2. ANALISIS POR TEMPORALIDAD
-# ============================================================
-
-def analyze_timeframe(df):
-    """
-    Aplica indicadores + divergencias a un DF.
-    """
-    ind = compute_indicators(df)
-    if not ind:
+    except Exception as e:
+        logger.error(f"❌ Error parseando señal: {e}")
         return None
 
-    macd_div = detect_divergences(df, method="macd")
-    rsi_div = detect_divergences(df, method="rsi")
-
-    ind["macd_divergence"] = macd_div
-    ind["rsi_divergence"] = rsi_div
-    return ind
-
 
 # ============================================================
-# 🔵 3. COMBINACIÓN MULTI-TF
+# 🧠 ANÁLISIS PARA SEÑALES NUEVAS
 # ============================================================
 
-def combine_timeframes(results: Dict[str, dict], direction: str) -> Dict[str, Any]:
-    """
-    Consolida todas las TF en un solo resultado.
-    Se usa para match_ratio y recomendación.
-    """
-    total = 0
-    trend_score = 0
-    div_score = 0
-
-    for tf, r in results.items():
-        total += 1
-
-        # Tendencia
-        tf_trend = r.get("trend")
-        if tf_trend == direction:
-            trend_score += 1
-
-        # Divergencias
-        macd_div = r.get("macd_divergence")
-        rsi_div = r.get("rsi_divergence")
-
-        if direction == "long":
-            if macd_div == "bullish":
-                div_score += 1
-            if rsi_div == "bullish":
-                div_score += 1
-
-        else:  # short
-            if macd_div == "bearish":
-                div_score += 1
-            if rsi_div == "bearish":
-                div_score += 1
-
-    trend_pct = trend_score / total if total else 0
-    div_pct = div_score / (total * 2) if total else 0
-
-    match_ratio = round((trend_pct * 0.65 + div_pct * 0.35) * 100, 2)
-
-    return {
-        "match_ratio": match_ratio,
-        "trend_pct": trend_pct,
-        "divergence_pct": div_pct,
-    }
-
-
-# ============================================================
-# 🔵 4. REGLAS DE RECOMENDACIÓN
-# ============================================================
-
-def recommendation_from_ratio(match_ratio: float, direction: str) -> Dict[str, str]:
-    """
-    Devuelve:
-        {
-          "allowed": True/False,
-          "reason": "...",
-          "quality": "A/B/C/D"
-        }
-    """
-
-    if match_ratio >= 80:
-        return {
-            "allowed": True,
-            "quality": "A",
-            "reason": f"Condiciones fuertes para operación {direction.upper()}",
-        }
-
-    if 65 <= match_ratio < 80:
-        return {
-            "allowed": True,
-            "quality": "B",
-            "reason": f"Condiciones buenas para operación {direction.upper()}",
-        }
-
-    if 50 <= match_ratio < 65:
-        return {
-            "allowed": False,
-            "quality": "C",
-            "reason": "Condiciones medias, esperar mejor setup",
-        }
-
-    return {
-        "allowed": False,
-        "quality": "D",
-        "reason": "Condiciones débiles, no entrar",
-    }
-
-
-# ============================================================
-# 🔵 5. ANALISIS COMPLETO DE UNA SEÑAL (ENTRADA)
-# ============================================================
-
-def analyze_signal(signal: Signal) -> Dict[str, Any]:
-    """
-    Motor principal para evaluar si una señal nueva es viable.
-    """
-
+def analyze_signal(signal: Signal) -> Dict:
+    """Ejecuta análisis técnico completo (Motor A+) para señales nuevas."""
     try:
-        logger.info(f"🧠 Analizando señal nueva: {signal.symbol}")
+        logger.info(f"🧠 Analizando señal: {signal.symbol} ({signal.direction})")
 
-        # Multi-TF disponibles
-        all_data = fetch_multi_tf_data(
+        analysis = run_unified_analysis(
             symbol=signal.symbol,
-            tfs=["4h", "1h", "15m", "5m"]
+            direction_hint=normalize_direction(signal.direction),
+            request_context="signal_entry",     # ✔ Etiqueta A+
         )
 
-        best = select_best_intervals(all_data, n=3)
-        if DEBUG_MODE:
-            logger.info(f"🧠 TF seleccionadas: {best}")
-
-        # Analizar cada TF
-        tf_results = {}
-        for tf in best:
-            res = analyze_timeframe(all_data[tf])
-            if res:
-                tf_results[tf] = res
-
-        if not tf_results:
-            return {
-                "allowed": False,
-                "match_ratio": 0,
-                "reason": "Sin datos suficientes"
-            }
-
-        # Consolidación multi-TF
-        combined = combine_timeframes(tf_results, direction=signal.direction)
-        match_ratio = combined["match_ratio"]
-
-        # Reglas
-        rec = recommendation_from_ratio(match_ratio, signal.direction)
-
-        # Registrar log
-        db_service.add_analysis_log(
-            signal_id=signal.id,
-            match_ratio=match_ratio,
-            recommendation=rec["reason"],
-            details=str(combined)
+        summary = format_analysis_summary(
+            symbol=signal.symbol,
+            direction=signal.direction,
+            match_ratio=analysis["match_ratio"],
+            technical_score=analysis["technical_score"],
+            grade=analysis["grade"],
+            decision=analysis["decision"],
+            emoji=analysis["global_confidence"],
         )
 
         return {
-            "allowed": rec["allowed"],
-            "quality": rec["quality"],
-            "match_ratio": match_ratio,
-            "reason": rec["reason"],
-            "tf_results": tf_results,
-            "combined": combined,
+            "signal": signal,
+            "analysis": analysis,
+            "summary": summary,
         }
 
     except Exception as e:
-        logger.error(f"❌ Error en analyze_signal: {e}")
+        logger.error(f"❌ Error en analyze_signal(): {e}")
         return {
-            "allowed": False,
-            "match_ratio": 0,
-            "reason": "Error interno en motor técnico"
+            "signal": signal,
+            "analysis": {"allowed": False, "decision": "error", "error": str(e)},
+            "summary": "Error interno ejecutando análisis técnico.",
         }
 
 
 # ============================================================
-# 🔵 6. ANALISIS DE REACTIVACIÓN
+# ♻️ ANÁLISIS DE REACTIVACIÓN
 # ============================================================
 
-def analyze_reactivation(signal: Signal) -> Dict[str, Any]:
-    """
-    Igual que analyze_signal(), pero más estricto.
-    """
+def analyze_reactivation(signal: Signal) -> Dict:
+    """Evalúa si una señal pendiente debe reactivarse (Motor A+)."""
+    try:
+        logger.info(f"♻️ Reactivación: {signal.symbol} ({signal.direction})")
 
-    result = analyze_signal(signal)
-    ratio = result.get("match_ratio", 0)
+        analysis = run_unified_analysis(
+            symbol=signal.symbol,
+            direction_hint=normalize_direction(signal.direction),
+            request_context="signal_reactivation",     # ✔ Etiqueta A+
+        )
 
-    return {
-        **result,
-        "reactivated": ratio >= 70   # regla
-    }
+        return {
+            "signal": signal,
+            "analysis": analysis,
+            "summary": f"Reactivación → {analysis['decision']} ({analysis['global_confidence']})",
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error en analyze_reactivation(): {e}")
+        return {
+            "signal": signal,
+            "analysis": {"allowed": False, "decision": "error", "error": str(e)},
+            "summary": "Error técnico evaluando reactivación.",
+        }
 
 
 # ============================================================
-# 🔵 7. REVERSIÓN DE POSICIÓN (para operaciones abiertas)
+# 🔄 ANÁLISIS DE POSICIONES ABIERTAS
 # ============================================================
 
-def analyze_reversal(symbol: str, direction: str) -> Dict[str, Any]:
-    """
-    Útil para positions_controller.
-    Indica si la tendencia general cambió en contra.
-    """
+def analyze_open_position(symbol: str, direction: str) -> Dict:
+    """Evalúa reversiones y continuaciones sobre posiciones abiertas."""
+    try:
+        logger.info(f"🔍 Analizando posición abierta: {symbol} ({direction})")
 
-    # Mirar 1h + 4h
-    data = fetch_multi_tf_data(symbol, ["1h", "4h"])
+        analysis = run_unified_analysis(
+            symbol=symbol,
+            direction_hint=normalize_direction(direction),
+            request_context="open_position",       # ✔ Etiqueta A+
+        )
 
-    if "1h" not in data or "4h" not in data:
-        return {"reversal": False, "reason": "Insuficiente data"}
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "analysis": analysis,
+            "summary": f"Posición → {analysis['decision']} ({analysis['global_confidence']})",
+        }
 
-    r1 = analyze_timeframe(data["1h"])
-    r4 = analyze_timeframe(data["4h"])
-
-    if not r1 or not r4:
-        return {"reversal": False}
-
-    if direction == "long":
-        if r1["trend"] == "bearish" and r4["trend"] == "bearish":
-            return {"reversal": True, "reason": "Tendencia general bajista"}
-
-    if direction == "short":
-        if r1["trend"] == "bullish" and r4["trend"] == "bullish":
-            return {"reversal": True, "reason": "Tendencia general alcista"}
-
-    return {"reversal": False}
+    except Exception as e:
+        logger.error(f"❌ Error en analyze_open_position(): {e}")
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "analysis": {"allowed": False, "decision": "error", "error": str(e)},
+            "summary": "Error técnico evaluando la posición.",
+        }

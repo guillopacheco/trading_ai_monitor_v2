@@ -11,6 +11,8 @@ puedan enviar mensajes sin generar ciclos.
 
 import logging
 from telethon import TelegramClient
+from telethon import events
+from controllers.telegram_router import route_incoming_message
 from config import (
     API_ID,
     API_HASH,
@@ -76,3 +78,24 @@ async def send_message(text: str, chat_id: int = None):
 
     except Exception as e:
         logger.error(f"❌ Error enviando mensaje Telegram: {e}")
+
+# ============================================================
+# 🔵 Captura de mensajes entrantes
+# ============================================================
+
+@client.on(events.NewMessage())
+async def _handle_incoming_message(event):
+    """
+    Captura cualquier mensaje recibido (canal VIP + usuario).
+    Los envía al router principal.
+    """
+    try:
+        raw_text = event.raw_text.strip()
+        if not raw_text:
+            return
+
+        # Enviar al router
+        route_incoming_message(raw_text)
+
+    except Exception as e:
+        logger.error(f"❌ Error manejando mensaje entrante: {e}")
