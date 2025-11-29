@@ -1,174 +1,138 @@
 """
-bybit_service.py
-----------------
-Capa de servicio que abstrae completamente el uso de la API de Bybit.
+services/bybit_service.py
+-------------------------
+Cliente centralizado para la API pública de Bybit (REST v5).
 
-Objetivos:
-- Ser la única forma en que otros módulos acceden a datos de mercado,
-  posiciones abiertas y operación de órdenes.
-- Mantener compatibilidad directa con el módulo bybit_client.py.
-- Entregar una API estable y documentada, independiente del motor técnico.
-- Manejo centralizado de errores, reconexión y validación de parámetros.
+✔ OHLCV para indicadores
+✔ Precio actual
 
-Este módulo NO contiene lógica técnica (tendencias, divergencias, entradas).
-Solo conecta con Bybit.
+La API privada (posiciones reales, órdenes) se puede integrar después.
 """
 
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, List, Dict
 
-from services.bybit_client import (
-    get_ohlcv_data,
-    get_symbol_price,
-    get_positions,
-    place_order_market,
-    close_position_market,
-)
+import requests
+import pandas as pd
+
+from config import BYBIT_ENDPOINT, BYBIT_CATEGORY
 
 logger = logging.getLogger("bybit_service")
 
 
-# ================================================================
-# 🔵 Servicio: Datos de Mercado
-# ================================================================
-async def fetch_ohlcv(symbol: str, timeframe: str, limit: int = 200) -> Optional[List[Dict]]:
-    """
-    Obtiene OHLCV desde Bybit a través de bybit_client.
-    Este método encapsula validación y manejo de errores.
+# ============================================================
+# 🔵 OHLCV (velas)
+# ============================================================
 
-    Returns:
-        Lista de velas o None si falla.
+def get_ohlcv(
+    symbol: str,
+    interval: str = "60",
+    limit: int = 200,
+) -> Optional[pd.DataFrame]:
     """
+    Devuelve OHLCV como DataFrame ordenado por tiempo ascendente.
+
+    interval (Bybit):
+        "1"   = 1m
+        "3"   = 3m
+        "5"   = 5m
+        "15"  = 15m
+        "30"  = 30m
+        "60"  = 1h
+        "240" = 4h
+        "D"   = 1D
+    """
+    url = f"{BYBIT_ENDPOINT}/v5/market/kline"
+    params = {
+        "category": BYBIT_CATEGORY,
+        "symbol": symbol.upper(),
+        "interval": interval,
+        "limit": limit,
+    }
+
     try:
-        data = get_ohlcv_data(symbol, timeframe, limit)
-        if not data:
-            logger.warning(f"⚠️ No se recibieron datos OHLCV para {symbol} ({timeframe}).")
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
+
+        if data.get("retCode") != 0:
+            logger.warning(f"⚠️ Bybit error OHLCV {symbol} ({interval}): {data}")
             return None
-        return data
+
+        rows = data["result"].get("list", [])
+        if not rows:
+            logger.warning(f"⚠️ Bybit devolvió lista vacía para {symbol} ({interval})")
+            return None
+
+        df = pd.DataFrame(
+            rows,
+            columns=[
+                "timestamp",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "turnover",
+            ],
+        )
+
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype("int64"), unit="ms")
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(float)
+
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        return df
+
     except Exception as e:
-        logger.error(f"❌ Error obteniendo OHLCV de Bybit: {e}")
+        logger.error(f"❌ Error obteniendo OHLCV de {symbol} ({interval}): {e}")
         return None
 
 
-async def fetch_price(symbol: str) -> Optional[float]:
+# ============================================================
+# 🔵 Precio actual
+# ============================================================
+
+def get_symbol_price(symbol: str) -> Optional[float]:
     """
-    Devuelve el precio actual del símbolo.
+    Devuelve el último precio del símbolo (lastPrice).
     """
+    url = f"{BYBIT_ENDPOINT}/v5/market/tickers"
+    params = {
+        "category": BYBIT_CATEGORY,
+        "symbol": symbol.upper(),
+    }
+
     try:
-        price = get_symbol_price(symbol)
-        return float(price)
+        r = requests.get(url, params=params, timeout=8)
+        data = r.json()
+
+        if data.get("retCode") != 0:
+            logger.warning(f"⚠️ Bybit error tickers {symbol}: {data}")
+            return None
+
+        items = data["result"].get("list", [])
+        if not items:
+            return None
+
+        price = float(items[0]["lastPrice"])
+        return price
+
     except Exception as e:
         logger.error(f"❌ Error obteniendo precio de {symbol}: {e}")
         return None
 
 
-# ================================================================
-# 🔵 Servicio: Posiciones
-# ================================================================
-async def fetch_positions() -> List[Dict[str, Any]]:
+# ============================================================
+# 🔵 Posiciones abiertas (placeholder)
+# ============================================================
+
+def get_open_positions() -> List[Dict]:
     """
-    Devuelve la lista de posiciones abiertas en Bybit.
+    Placeholder para integrarse con la API privada de Bybit.
+
+    Actualmente devuelve lista vacía para NO romper el flujo.
+
+    En el futuro:
+        - integrar /v5/position/list con API key/secret.
     """
-    try:
-        pos = get_positions()
-        if pos is None:
-            return []
-        return pos
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo posiciones: {e}")
-        return []
-
-
-async def fetch_position(symbol: str) -> Optional[Dict[str, Any]]:
-    """
-    Devuelve la posición actual de un símbolo específico.
-    """
-    try:
-        positions = get_positions()
-        if not positions:
-            return None
-
-        for p in positions:
-            if p.get("symbol") == symbol:
-                return p
-
-        return None
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo posición para {symbol}: {e}")
-        return None
-
-
-# ================================================================
-# 🔵 Servicio: Órdenes (capa segura para automatización futura)
-# ================================================================
-async def open_market_order(symbol: str, side: str, size: float, leverage: int = 20) -> Optional[Dict]:
-    """
-    Abre una posición de mercado con apalancamiento.
-
-    Args:
-        symbol  → ejemplo: "BTCUSDT"
-        side    → "Buy" o "Sell"
-        size    → cantidad en contrato
-        leverage → normalmente 20 para futuros
-
-    Returns:
-        dict con detalles de la orden o None si falla
-    """
-    try:
-        order = place_order_market(symbol, side, size, leverage)
-        logger.info(f"🟢 Orden de mercado enviada: {symbol} {side} x{leverage} size={size}")
-        return order
-    except Exception as e:
-        logger.error(f"❌ Error enviando orden de mercado: {e}")
-        return None
-
-
-async def close_market_order(symbol: str, side: str, size: float) -> Optional[Dict]:
-    """
-    Cierra una posición de mercado.
-
-    Args:
-        side = "Buy" o "Sell" según la dirección del cierre
-
-    Returns:
-        dict o None
-    """
-    try:
-        order = close_position_market(symbol, side, size)
-        logger.info(f"🟡 Orden de cierre enviada: {symbol} {side} size={size}")
-        return order
-    except Exception as e:
-        logger.error(f"❌ Error cerrando posición: {e}")
-        return None
-
-
-# ================================================================
-# 🔵 Utilidades
-# ================================================================
-async def is_symbol_active(symbol: str) -> bool:
-    """
-    Comprueba si hay datos y precio para el símbolo.
-    """
-    price = await fetch_price(symbol)
-    if price is None:
-        return False
-
-    ohlcv = await fetch_ohlcv(symbol, "1h", limit=3)
-    if ohlcv is None:
-        return False
-
-    return True
-
-
-# ================================================================
-# 🔵 Prueba manual
-# ================================================================
-if __name__ == "__main__":
-    import asyncio
-
-    async def test():
-        print(await fetch_price("BTCUSDT"))
-        print(await fetch_ohlcv("BTCUSDT", "1h"))
-        print(await fetch_positions())
-
-    asyncio.run(test())
+    return []

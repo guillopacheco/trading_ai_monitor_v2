@@ -1,108 +1,68 @@
 """
-scheduler_service.py
---------------------
-Orquestador general de tareas asíncronas en Trading AI Monitor v2.
+services/scheduler_service.py
+-----------------------------
+Scheduler central de tareas periódicas.
 
-Responsabilidades:
-- Gestionar monitores (posiciones, reactivaciones, etc.)
-- Encender/apagar tareas de forma segura
-- Centralizar el control de ciclos periódicos
-- Evitar que main.py se vuelva inmanejable
+✔ Ciclo de reactivación de señales
+✔ Ciclo de monitoreo de posiciones
 """
 
-import asyncio
 import logging
+import asyncio
 
-from controllers.positions_controller import PositionsMonitor
-# En el futuro: from controllers.reactivation_controller import ReactivationMonitor
+from controllers.reactivation_controller import run_reactivation_cycle
+from controllers.positions_controller import check_positions
 
 logger = logging.getLogger("scheduler_service")
 
 
 # ============================================================
-# 🔵 ESTRUCTURA DE ESTADO GLOBAL
+# 🔁 CICLO DE REACTIVACIÓN
 # ============================================================
-class SchedulerService:
-    def __init__(self):
-        self.tasks = {}           # {"positions": task_obj, ...}
-        self.monitors = {}        # {"positions": monitor_instance}
 
-        # Instancias de monitores
-        self.monitors["positions"] = PositionsMonitor()
+async def reactivation_loop():
+    """
+    Corre cada 15 minutos.
+    """
+    while True:
+        try:
+            logger.info("♻️ Ejecutando ciclo de reactivación…")
+            await run_reactivation_cycle()
+        except Exception as e:
+            logger.error(f"❌ Error en ciclo de reactivación: {e}")
 
-        # FUTURO:
-        # self.monitors["reactivations"] = ReactivationMonitor()
-
-    # ========================================================
-    # 🔵 INICIAR UN MONITOR
-    # ========================================================
-    async def start_monitor(self, name: str):
-        if name not in self.monitors:
-            logger.error(f"❌ Monitor desconocido: {name}")
-            return False
-
-        if name in self.tasks:
-            logger.warning(f"⚠️ Monitor {name} ya está activo.")
-            return True
-
-        monitor = self.monitors[name]
-
-        logger.info(f"▶️ Iniciando monitor: {name}")
-        await monitor.start()
-
-        # Guardar la tarea para poder detenerla
-        async def runner():
-            try:
-                await monitor.task
-            except asyncio.CancelledError:
-                logger.info(f"🛑 Monitor {name} cancelado correctamente.")
-
-        self.tasks[name] = asyncio.create_task(runner())
-        return True
-
-    # ========================================================
-    # 🔵 DETENER UN MONITOR
-    # ========================================================
-    async def stop_monitor(self, name: str):
-        if name not in self.monitors:
-            logger.error(f"❌ Monitor desconocido: {name}")
-            return False
-
-        if name not in self.tasks:
-            logger.warning(f"⚠️ Monitor {name} ya está detenido.")
-            return False
-
-        logger.info(f"🛑 Deteniendo monitor: {name}")
-
-        monitor = self.monitors[name]
-        await monitor.stop()
-
-        # Cancelar la task asociada
-        task = self.tasks.pop(name)
-        task.cancel()
-
-        return True
-
-    # ========================================================
-    # 🔵 DETENER TODOS LOS MONITORES
-    # ========================================================
-    async def stop_all(self):
-        logger.info("🛑 Deteniendo todos los monitores…")
-
-        for name in list(self.tasks.keys()):
-            await self.stop_monitor(name)
-
-    # ========================================================
-    # 🔵 LISTA DE MONITORES ACTIVOS
-    # ========================================================
-    def get_status(self):
-        status = {}
-        for name, monitor in self.monitors.items():
-            status[name] = "ON" if name in self.tasks else "OFF"
-        return status
+        await asyncio.sleep(900)   # 15 min
 
 
 # ============================================================
-# 🔵 INSTANCIA GLOBAL
+# 🔁 CICLO DE POSICIONES
 # ============================================================
-scheduler = SchedulerService()
+
+async def positions_loop():
+    """
+    Corre cada 5 minutos.
+    """
+    while True:
+        try:
+            logger.info("🔍 Revisando posiciones abiertas…")
+            await check_positions()
+        except Exception as e:
+            logger.error(f"❌ Error en ciclo de posiciones: {e}")
+
+        await asyncio.sleep(300)   # 5 min
+
+
+# ============================================================
+# ▶ INICIO DEL SCHEDULER
+# ============================================================
+
+async def start_scheduler():
+    """
+    Inicia ambos loops en paralelo.
+    """
+    logger.info("🕒 Iniciando scheduler…")
+
+    asyncio.create_task(reactivation_loop())
+    asyncio.create_task(positions_loop())
+
+    logger.info("🕒 Scheduler activo (reactivación + posiciones).")

@@ -1,121 +1,93 @@
 """
-telegram_service.py
---------------------
-Servicio oficial para manejar toda la interacción con Telegram usando Telethon.
+services/telegram_service.py
+----------------------------
+Capa central de comunicación con Telegram.
 
-Objetivos:
-- Encapsular totalmente Telethon.
-- Proveer una API limpia para envío de mensajes y escucha de señales/comandos.
-- Evitar que la app dependa directamente de la lógica de Telethon.
-- Reemplazar progresivamente telegram_reader.py y command_bot.py.
+✔ Cliente de usuario (Telethon) para:
+    - Leer señales del canal VIP
+    - Recibir comandos por chat privado
+    - Enviar mensajes al usuario
 
-Componentes:
-- send_message(text)
-- start_signal_listener(callback)
-- start_command_listener(callback)
+No contiene lógica de análisis ni de DB.
 """
 
-import asyncio
 import logging
 from telethon import TelegramClient, events
 
 from config import (
-    TELEGRAM_API_ID,
-    TELEGRAM_API_HASH,
-    TELEGRAM_BOT_TOKEN,
-    SIGNAL_CHANNEL_ID,
-    USER_CHAT_ID,
+    API_ID,
+    API_HASH,
+    TELEGRAM_SESSION,
+    TELEGRAM_CHANNEL_ID,
+    TELEGRAM_USER_ID,
 )
+
+from controllers.signal_listener import on_new_signal
+from controllers.commands_controller import handle_command
+from utils.helpers import is_command
 
 logger = logging.getLogger("telegram_service")
 
-# ============================================================
-# 🔵 INICIALIZAR CLIENTE TELEGRAM
-# ============================================================
-
-# Cliente para el bot (comandos + envío)
-bot_client = TelegramClient("bot_session", TELEGRAM_API_ID, TELEGRAM_API_HASH)
-
-# Cliente para lectura de señales en canal VIP
-signal_client = TelegramClient("signal_session", TELEGRAM_API_ID, TELEGRAM_API_HASH)
+# Cliente global de Telethon (sesión de usuario)
+client = TelegramClient(
+    TELEGRAM_SESSION,
+    API_ID,
+    API_HASH
+)
 
 
-# ============================================================
-# 🔵 MÉTODO: ENVIAR MENSAJES
-# ============================================================
-async def send_message(text: str, chat_id: int = None):
+async def send_message(text: str) -> bool:
     """
-    Envía un mensaje usando el bot.
+    Envía un mensaje al usuario configurado (TELEGRAM_USER_ID).
     """
-    if chat_id is None:
-        chat_id = USER_CHAT_ID  # por defecto, el canal privado del usuario
-
     try:
-        await bot_client.send_message(chat_id, text)
-        logger.info(f"📤 Mensaje enviado a {chat_id}")
+        await client.send_message(TELEGRAM_USER_ID, text)
+        return True
     except Exception as e:
-        logger.error(f"❌ Error enviando mensaje: {e}")
+        logger.error(f"❌ Error enviando mensaje a Telegram: {e}")
+        return False
 
 
-# ============================================================
-# 🔵 ESCUCHA DE SEÑALES VIP
-# ============================================================
-async def start_signal_listener(callback):
+@client.on(events.NewMessage)
+async def handler(event):
     """
-    Escucha mensajes del canal VIP y entrega cada mensaje a `callback(message_text)`.
+    Dispatcher general de mensajes:
 
-    callback: función async que recibe el texto y procesa la señal.
+    - Si viene del canal VIP → se trata como señal.
+    - Si es un mensaje privado / comando → va a commands_controller.
     """
+    try:
+        chat_id = event.chat_id
+        text = event.raw_text or ""
 
-    @signal_client.on(events.NewMessage(chats=SIGNAL_CHANNEL_ID))
-    async def handler(event):
-        try:
-            text = event.raw_text
-            logger.info(f"📥 Señal recibida del canal VIP:\n{text}")
-            await callback(text)   # controlador de señales
-        except Exception as e:
-            logger.error(f"❌ Error procesando señal Telegram: {e}")
+        # Señales del canal VIP
+        if chat_id == TELEGRAM_CHANNEL_ID:
+            logger.info("📥 Señal recibida desde canal VIP.")
+            await on_new_signal(event)
+            return
 
-    logger.info("📡 Listener de señales iniciado.")
-    await signal_client.start(bot_token=TELEGRAM_BOT_TOKEN)
-    await signal_client.run_until_disconnected()
+        # Comandos desde el chat privado
+        if is_command(text):
+            logger.info(f"💬 Comando recibido: {text}")
+            await handle_command(text)
+            return
+
+    except Exception as e:
+        logger.error(f"❌ Error en handler de Telegram: {e}")
 
 
-# ============================================================
-# 🔵 ESCUCHA DE COMANDOS DEL BOT
-# ============================================================
-async def start_command_listener(callback):
+async def start_telegram_service():
     """
-    Escucha comandos enviados al bot. Cada comando se entrega a `callback(command, params)`.
-
-    callback: async, recibe (command: str, params: str)
+    Inicializa el cliente de Telegram (sesión de usuario).
     """
-
-    @bot_client.on(events.NewMessage(pattern=r"^/"))
-    async def handler(event):
-        try:
-            text = event.raw_text.strip()
-            parts = text.split(" ", 1)
-
-            command = parts[0]
-            params = parts[1] if len(parts) > 1 else ""
-
-            logger.info(f"🤖 Comando recibido: {command} {params}")
-            await callback(command, params)
-        except Exception as e:
-            logger.error(f"❌ Error procesando comando: {e}")
-
-    logger.info("🤖 Listener de comandos iniciado.")
-    await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
-    await bot_client.run_until_disconnected()
+    logger.info("📡 Iniciando servicio de Telegram (sesión de usuario)…")
+    await client.start()  # Usa API_ID / API_HASH / TELEGRAM_SESSION
+    me = await client.get_me()
+    logger.info(f"🤖 Telegram conectado como: {me.username or me.id}")
 
 
-# ============================================================
-# 🔵 MODO INDIVIDUAL (TEST)
-# ============================================================
-if __name__ == "__main__":
-    async def test():
-        await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
-        await send_message("Telegram service funcionando correctamente.")
-
-    asyncio.run(test())
+def get_client() -> TelegramClient:
+    """
+    Devuelve el cliente Telethon para ser usado en main.py (run_until_disconnected).
+    """
+    return client

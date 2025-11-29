@@ -1,37 +1,41 @@
 """
-db_service.py
---------------
+services/db_service.py
+----------------------
 Servicio de acceso a la base de datos SQLite.
 
-Reemplaza completamente cualquier referencia antigua a:
+Reemplaza:
+    - database.py
     - signal_manager_db.py
-    - signal_manager.py
 
-Provee funciones limpias y centralizadas para:
-    - Crear señales
-    - Obtener señales pendientes
-    - Registrar análisis
-    - Guardar logs de posiciones
+Responsable de:
+    ✔ crear tablas
+    ✔ guardar señales
+    ✔ leer señales pendientes
+    ✔ registrar análisis
+    ✔ registrar logs de posiciones
 """
 
 import sqlite3
 from typing import List, Dict, Any, Optional
-from config import DB_PATH
 
+from config import DB_PATH
 import logging
+
 logger = logging.getLogger("db_service")
 
 
 # ============================================================
-# 🔵 CONEXIÓN
+# 🔵 Conexión
 # ============================================================
+
 def _conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
 # ============================================================
-# 🔵 INICIALIZACIÓN DE TABLAS
+# 🔵 Inicialización
 # ============================================================
+
 def init_db():
     conn = _conn()
     cursor = conn.cursor()
@@ -74,12 +78,13 @@ def init_db():
 
     conn.commit()
     conn.close()
-    logger.info("🗄 DB inicializada correctamente.")
+    logger.info(f"🗄 DB inicializada correctamente en {DB_PATH}")
 
 
 # ============================================================
 # 🔵 CRUD: SEÑALES
 # ============================================================
+
 def create_signal(data: Dict[str, Any]) -> Optional[int]:
     """
     Inserta una señal nueva en la base de datos.
@@ -97,9 +102,8 @@ def create_signal(data: Dict[str, Any]) -> Optional[int]:
             data.get("entry"),
             ",".join(str(t) for t in data.get("tp_list", [])),
             data.get("sl"),
-            "pending"
+            data.get("status", "pending"),
         ])
-
         signal_id = cursor.lastrowid
         conn.commit()
         return signal_id
@@ -121,29 +125,28 @@ def get_pending_signals() -> List[Dict[str, Any]]:
         FROM signals
         WHERE status = 'pending'
     """)
-
     rows = cursor.fetchall()
     conn.close()
 
-    signals = []
+    result = []
     for r in rows:
-        signals.append({
+        result.append({
             "id": r[0],
             "symbol": r[1],
             "direction": r[2],
             "entry": r[3],
-            "tp_list": [float(x) for x in r[4].split(",") if x],
-            "sl": r[5]
+            "tp_list": [float(x) for x in (r[4] or "").split(",") if x],
+            "sl": r[5],
         })
-
-    return signals
+    return result
 
 
 def set_signal_reactivated(signal_id: int):
     conn = _conn()
     cursor = conn.cursor()
     cursor.execute("""
-        UPDATE signals SET status='active', updated_at=CURRENT_TIMESTAMP
+        UPDATE signals
+        SET status='active', updated_at=CURRENT_TIMESTAMP
         WHERE id=?
     """, [signal_id])
     conn.commit()
@@ -154,7 +157,8 @@ def set_signal_ignored(signal_id: int):
     conn = _conn()
     cursor = conn.cursor()
     cursor.execute("""
-        UPDATE signals SET status='ignored', updated_at=CURRENT_TIMESTAMP
+        UPDATE signals
+        SET status='ignored', updated_at=CURRENT_TIMESTAMP
         WHERE id=?
     """, [signal_id])
     conn.commit()
@@ -165,7 +169,8 @@ def set_signal_match_ratio(signal_id: int, ratio: float):
     conn = _conn()
     cursor = conn.cursor()
     cursor.execute("""
-        UPDATE signals SET match_ratio=?, updated_at=CURRENT_TIMESTAMP
+        UPDATE signals
+        SET match_ratio=?, updated_at=CURRENT_TIMESTAMP
         WHERE id=?
     """, [ratio, signal_id])
     conn.commit()
@@ -173,32 +178,29 @@ def set_signal_match_ratio(signal_id: int, ratio: float):
 
 
 # ============================================================
-# 🔵 LOGS TÉCNICOS
+# 🔵 Logs técnicos
 # ============================================================
+
 def add_analysis_log(signal_id: int, match_ratio: float, recommendation: str, details: str):
     conn = _conn()
     cursor = conn.cursor()
-
     cursor.execute("""
         INSERT INTO analysis_logs (signal_id, match_ratio, recommendation, details)
         VALUES (?, ?, ?, ?)
     """, [signal_id, match_ratio, recommendation, details])
-
     conn.commit()
     conn.close()
 
 
-def get_logs(limit: int = 20):
+def get_logs(limit: int = 20) -> List[Dict[str, Any]]:
     conn = _conn()
     cursor = conn.cursor()
-
     cursor.execute("""
         SELECT signal_id, match_ratio, recommendation, timestamp
         FROM analysis_logs
         ORDER BY id DESC
         LIMIT ?
     """, [limit])
-
     rows = cursor.fetchall()
     conn.close()
 
@@ -210,21 +212,19 @@ def get_logs(limit: int = 20):
             "recommendation": r[2],
             "timestamp": r[3],
         })
-
     return logs
 
 
 # ============================================================
-# 🔵 LOGS DE POSICIONES
+# 🔵 Logs de posiciones
 # ============================================================
+
 def add_position_log(symbol: str, direction: str, pnl_pct: float, timestamp: str):
     conn = _conn()
     cursor = conn.cursor()
-
     cursor.execute("""
         INSERT INTO position_logs (symbol, direction, pnl_pct, timestamp)
         VALUES (?, ?, ?, ?)
     """, [symbol, direction, pnl_pct, timestamp])
-
     conn.commit()
     conn.close()
