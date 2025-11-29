@@ -200,3 +200,39 @@ def format_parsed_signal(parsed: dict) -> str:
         f"▪ TPs: `{tps_formatted}`\n"
         f"▪ SL: `{sl_formatted}`"
     )
+
+# ============================================================
+# 📌 FORMATO DE ENCABEZADO DE SEÑAL
+# ============================================================
+
+def format_signal_intro(symbol: str, direction: str) -> str:
+    arrow = "📈 LONG" if direction.lower() == "long" else "📉 SHORT"
+    return f"📌 *Señal detectada* — {symbol}\n{arrow}"
+
+
+# ============================================================
+# 📌 RESUMEN PREMIUM DEL ANÁLISIS TÉCNICO
+# ============================================================
+
+def format_analysis_summary(
+    symbol: str,
+    direction: str,
+    match_ratio: float,
+    technical_score: float,
+    grade: str,
+    decision: str,
+    emoji: str,
+) -> str:
+    """
+    Resumen estándar para enviar a Telegram.
+    """
+    dir_txt = "LONG 📈" if direction.lower() == "long" else "SHORT 📉"
+
+    return (
+        f"🎯 *Análisis de {symbol}*\n"
+        f"Dirección: *{dir_txt}*\n\n"
+        f"📊 *Match Ratio:* {match_ratio:.1f}%\n"
+        f"📈 *Puntaje Técnico:* {technical_score:.1f}/100\n"
+        f"💠 *Calificación:* {grade}\n\n"
+        f"🔎 *Decisión:* {decision.upper()} {emoji}\n"
+    )
