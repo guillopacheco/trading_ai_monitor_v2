@@ -11,6 +11,7 @@ import logging
 from utils.logger import configure_logging
 from services.telegram_service import start_telegram, client
 from services.scheduler_service import start_scheduler
+from services.db_service import init_db
 
 # 🔵 IMPORTA EL ROUTER (MUY IMPORTANTE)
 import controllers.telegram_router  # ← registra handlers al cargar
@@ -22,6 +23,8 @@ logger = logging.getLogger("MAIN")
 async def main():
     configure_logging()
     logger.info("🚀 Iniciando Trading AI Monitor...")
+    # Inicializar DB
+    init_db()
 
     # 1. Telegram
     await start_telegram()

@@ -23,6 +23,47 @@ import logging
 
 logger = logging.getLogger("db_service")
 
+# ============================================================
+# 🔵 Creación automática de tablas
+# ============================================================
+
+def init_db():
+    """
+    Crea las tablas necesarias si no existen.
+    Ejecutar desde main.py antes de iniciar el scheduler.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Tabla de señales
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            entry REAL NOT NULL,
+            tp_list TEXT,
+            sl REAL,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+
+    # Tabla para logs de análisis (opcional)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS analysis_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER,
+            message TEXT,
+            created_at TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+    print("📦 Base de datos verificada (tablas OK).")
 
 # ============================================================
 # 🔵 Conexión
