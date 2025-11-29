@@ -1,75 +1,68 @@
 """
 controllers/signal_controller.py
-Controlador que maneja señales después del parser
+--------------------------------
+Controlador encargado del procesamiento de señales nuevas recibidas.
+
+Flujo:
+    telegram_router → process_new_signal → db_service + signal_engine + telegram_service
 """
 
+from __future__ import annotations
 import logging
-from core.signal_engine import (
-    analyze_signal,
-    analyze_reactivation,
-    analyze_open_position,
-)
+
 from services.db_service import (
     save_new_signal,
-    save_analysis_result,
+    save_analysis_log,
 )
-# ============================================================
-# SAFE SEND BRIDGE — evita ciclos de importación
-# ============================================================
-def safe_send(msg: str):
-    try:
-        from services.telegram_service import send_message
-        send_message(msg)
-    except Exception:
-        pass
+
+from core.signal_engine import (
+    analyze_signal,
+)
+
+from services.telegram_service import safe_send
+
+from utils.helpers import now_ts
 
 logger = logging.getLogger("signal_controller")
 
 
-# ============================================================
-# PROCESAR SEÑAL NUEVA
-# ============================================================
+# ==================================================================
+# 🟦 Procesamiento de señal nueva
+# ==================================================================
 
 def process_new_signal(signal_obj):
-    """Procesa una señal nueva del canal VIP."""
-    save_new_signal(signal_obj)
+    """
+    Procesa una señal recién llegada del canal VIP.
 
-    result = analyze_signal(signal_obj)
+    Pasos:
+        1. Guardar señal cruda en DB
+        2. Ejecutar motor técnico
+        3. Guardar análisis en DB
+        4. Enviar respuesta a Telegram
+    """
 
-    # guardar log técnico
-    save_analysis_result(signal_obj.symbol, result["analysis"])
+    logger.info(f"📩 Procesando nueva señal: {signal_obj.symbol}")
 
-    # enviar mensaje al usuario
-    safe_send(result["summary"])
+    # 1️⃣ Guardar la señal original en DB
+    signal_id = save_new_signal(signal_obj)
+    logger.info(f"🗄 Señal guardada con ID {signal_id}")
 
-    return result
+    # 2️⃣ Correr motor técnico A+
+    analysis = analyze_signal(signal_obj)
 
+    # 3️⃣ Guardar análisis (para historial completo)
+    save_analysis_log(
+        signal_id=signal_id,
+        timestamp=now_ts(),
+        result=analysis.get("raw", {}),
+        allowed=analysis.get("allowed", False),
+        reason=analysis.get("reason", "Sin motivo"),
+    )
 
-# ============================================================
-# REACTIVACIÓN
-# ============================================================
+    # 4️⃣ Enviar mensaje a Telegram
+    try:
+        safe_send(analysis["message"])
+    except Exception as e:
+        logger.error(f"❌ Error enviando resultado a Telegram: {e}")
 
-def process_reactivation(signal_obj):
-    """Evalúa si una señal pendiente debe reactivarse."""
-    result = analyze_reactivation(signal_obj)
-
-    save_analysis_result(signal_obj.symbol, result["analysis"])
-
-    safe_send(result["summary"])
-
-    return result
-
-
-# ============================================================
-# POSICIÓN ABIERTA
-# ============================================================
-
-def process_open_position(symbol, direction, loss_pct):
-    result = analyze_open_position(symbol, direction)
-
-    save_analysis_result(symbol, result["analysis"])
-
-    # enviar resumen
-    safe_send(result["summary"])
-
-    return result
+    return analysis
