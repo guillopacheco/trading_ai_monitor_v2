@@ -77,3 +77,42 @@ def now_ts() -> str:
     Formato: 'YYYY-MM-DD HH:MM:SS'
     """
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+# ============================================================
+# 🔵 Detectar si un texto es un comando (/start, /help, etc.)
+# ============================================================
+
+def is_command(text: str) -> bool:
+    """
+    Determina si un mensaje es un comando de Telegram.
+    Un comando válido comienza por '/' y contiene solo letras o letras+números.
+
+    Ejemplos aceptados:
+        /start
+        /help
+        /analizar
+        /historial
+        /signal
+        /revisar
+        /detener
+
+    Retorna True / False.
+    """
+    if not text:
+        return False
+
+    text = text.strip()
+
+    # Comienza por "/"
+    if not text.startswith("/"):
+        return False
+
+    # Estructura mínima /palabra
+    if len(text) < 2:
+        return False
+
+    # Comando válido: /algo
+    command = text.split()[0]
+
+    # Ejemplo: "/analizar", "/state", "/ping"
+    return command[1:].isalnum()
