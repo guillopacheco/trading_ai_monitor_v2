@@ -106,3 +106,55 @@ def format_reversal_analysis(symbol: str, direction: str, match: float, grade: s
         f"Grado: {grade}\n"
         f"Decisión: {decision}\n"
     )
+
+"""
+utils/formatters.py
+-------------------
+Formateadores de texto usados por el motor técnico y los controllers.
+"""
+
+# ============================================================
+# 🔵 Format: match ratio
+# ============================================================
+
+def format_match_ratio_text(match_ratio: float) -> str:
+    """
+    Devuelve texto formateado del match ratio, con emoji según fuerza.
+    """
+    ratio = round(match_ratio, 2)
+
+    if ratio >= 80:
+        emoji = "🟢"
+    elif ratio >= 65:
+        emoji = "🟡"
+    elif ratio >= 50:
+        emoji = "🟠"
+    else:
+        emoji = "🔴"
+
+    return f"{emoji} *Match Ratio:* `{ratio}%`"
+
+
+# ============================================================
+# 🔵 Format: recommendation
+# ============================================================
+
+def format_recommendation_text(rec: dict) -> str:
+    """
+    Formatea recomendación:
+        { allowed: bool, quality: "A/B/C/D", reason: "..."}
+    """
+    allowed = rec.get("allowed", False)
+    quality = rec.get("quality", "?")
+    reason = rec.get("reason", "")
+
+    if allowed:
+        status_emoji = "✅"
+    else:
+        status_emoji = "⚠️"
+
+    return (
+        f"{status_emoji} *Recomendación:* `{quality}`\n"
+        f"└ {reason}"
+    )
+    
