@@ -3,6 +3,7 @@ utils/helpers.py
 -----------------
 Funciones pequeñas y reutilizables para toda la aplicación.
 """
+from datetime import datetime
 
 # ============================================================
 # 🔤 Normalizar símbolo
@@ -65,3 +66,14 @@ def parse_tp_list(values):
         except:
             pass
     return sorted(list(set(out)))
+
+# ============================================================
+# 🔵 Timestamp utilitario
+# ============================================================
+
+def now_ts() -> str:
+    """
+    Devuelve timestamp estándar para logs y DB
+    Formato: 'YYYY-MM-DD HH:MM:SS'
+    """
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
