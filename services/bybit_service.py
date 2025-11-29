@@ -1,46 +1,83 @@
 """
 services/bybit_service.py
 -------------------------
-Cliente centralizado para la API pública de Bybit (REST v5).
-
-✔ OHLCV para indicadores
-✔ Precio actual
-
-La API privada (posiciones reales, órdenes) se puede integrar después.
+Cliente UNIFICADO Bybit (API v5)
+✔ Funciona con claves privadas
+✔ Permite leer posiciones reales
+✔ Obtiene OHLCV
+✔ Obtiene balances
+✔ Obtiene órdenes
 """
 
-import logging
-from typing import Optional, List, Dict
-
+import time
+import hmac
+import hashlib
 import requests
+import logging
 import pandas as pd
+from urllib.parse import urlencode
 
-from config import BYBIT_ENDPOINT, BYBIT_CATEGORY
+from config import (
+    BYBIT_API_KEY,
+    BYBIT_API_SECRET,
+    BYBIT_ENDPOINT,
+    BYBIT_CATEGORY,
+)
 
 logger = logging.getLogger("bybit_service")
 
 
 # ============================================================
-# 🔵 OHLCV (velas)
+# 🔐 Firma para API Bybit v5
 # ============================================================
 
-def get_ohlcv(
-    symbol: str,
-    interval: str = "60",
-    limit: int = 200,
-) -> Optional[pd.DataFrame]:
+def _sign(params: dict) -> str:
     """
-    Devuelve OHLCV como DataFrame ordenado por tiempo ascendente.
+    Firma HMAC-SHA256 requerida por Bybit v5
+    """
+    qs = "&".join([f"{k}={v}" for k, v in sorted(params.items())])
+    sig = hmac.new(
+        BYBIT_API_SECRET.encode(),
+        qs.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    return sig
 
-    interval (Bybit):
-        "1"   = 1m
-        "3"   = 3m
-        "5"   = 5m
-        "15"  = 15m
-        "30"  = 30m
-        "60"  = 1h
-        "240" = 4h
-        "D"   = 1D
+
+def _private_get(endpoint: str, params: dict) -> dict:
+    """
+    Request GET firmada para API privada de Bybit v5
+    """
+    ts = str(int(time.time() * 1000))
+
+    base = {
+        "api_key": BYBIT_API_KEY,
+        "timestamp": ts,
+        "recvWindow": "5000",
+    }
+
+    full = {**base, **params}
+    signature = _sign(full)
+    full["sign"] = signature
+
+    url = f"{BYBIT_ENDPOINT}/v5/{endpoint}?{urlencode(full)}"
+
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return data
+    except Exception as e:
+        logger.error(f"❌ Error en API privada {endpoint}: {e}")
+        return {"retCode": -1, "retMsg": str(e), "result": {}}
+
+
+# ============================================================
+# 📊 OHLCV público
+# ============================================================
+
+def get_ohlcv(symbol: str, interval: str = "60", limit: int = 200):
+    """
+    Velas OHLCV de Bybit (API pública)
     """
     url = f"{BYBIT_ENDPOINT}/v5/market/kline"
     params = {
@@ -55,84 +92,128 @@ def get_ohlcv(
         data = r.json()
 
         if data.get("retCode") != 0:
-            logger.warning(f"⚠️ Bybit error OHLCV {symbol} ({interval}): {data}")
+            logger.warning(f"⚠️ OHLCV error {symbol}: {data}")
             return None
 
         rows = data["result"].get("list", [])
         if not rows:
-            logger.warning(f"⚠️ Bybit devolvió lista vacía para {symbol} ({interval})")
             return None
 
         df = pd.DataFrame(
             rows,
-            columns=[
-                "timestamp",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "turnover",
-            ],
+            columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"]
         )
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"].astype("int64"), unit="ms")
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = df[col].astype(float)
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="ms")
+        for c in ["open", "high", "low", "close", "volume"]:
+            df[c] = df[c].astype(float)
 
-        df = df.sort_values("timestamp").reset_index(drop=True)
-        return df
+        return df.sort_values("timestamp")
 
     except Exception as e:
-        logger.error(f"❌ Error obteniendo OHLCV de {symbol} ({interval}): {e}")
+        logger.error(f"❌ Error OHLCV {symbol}: {e}")
         return None
 
 
 # ============================================================
-# 🔵 Precio actual
+# 💼 Balance de cuenta
 # ============================================================
 
-def get_symbol_price(symbol: str) -> Optional[float]:
+def get_account_balance():
     """
-    Devuelve el último precio del símbolo (lastPrice).
+    Devuelve balances de cuenta USDT
     """
-    url = f"{BYBIT_ENDPOINT}/v5/market/tickers"
+    data = _private_get("account/wallet-balance", {"accountType": "UNIFIED"})
+
+    if data.get("retCode") != 0:
+        return {"error": data.get("retMsg")}
+
+    return data["result"]["list"][0]
+
+
+# ============================================================
+# 📈 POSICIONES ABIERTAS
+# ============================================================
+
+def get_open_positions():
+    """
+    Obtiene posiciones abiertas reales.
+    Devuelve lista limpia compatible con positions_controller.
+    """
+
     params = {
-        "category": BYBIT_CATEGORY,
-        "symbol": symbol.upper(),
+        "category": "linear",
+        "settleCoin": "USDT",
     }
+
+    data = _private_get("position/list", params)
+
+    if data.get("retCode") != 0:
+        logger.error(f"❌ Error posiciones: {data}")
+        return []
+
+    positions = data.get("result", {}).get("list", [])
+
+    cleaned = []
+    for p in positions:
+        size = float(p.get("size", 0))
+        if size <= 0:
+            continue
+
+        # fallback cuando entryPrice viene vacío
+        entry = p.get("entryPrice")
+        if not entry or entry == "0":
+            avg = p.get("avgPrice")
+            if avg and float(avg) > 0:
+                p["entryPrice"] = avg
+
+        cleaned.append(p)
+
+    return cleaned
+
+
+# ============================================================
+# 🔵 ÓRDENES ABIERTAS
+# ============================================================
+
+def get_open_orders():
+    """
+    Devuelve órdenes abiertas en Bybit.
+    """
+    params = {
+        "category": "linear",
+        "settleCoin": "USDT",
+        "openOnly": "1",
+    }
+
+    data = _private_get("order/realtime", params)
+    if data.get("retCode") != 0:
+        return []
+
+    return data.get("result", {}).get("list", [])
+
+
+# ============================================================
+# 🔵 Precio actual del símbolo
+# ============================================================
+
+def get_symbol_price(symbol: str):
+    url = f"{BYBIT_ENDPOINT}/v5/market/tickers"
+    params = {"category": BYBIT_CATEGORY, "symbol": symbol.upper()}
 
     try:
         r = requests.get(url, params=params, timeout=8)
         data = r.json()
 
         if data.get("retCode") != 0:
-            logger.warning(f"⚠️ Bybit error tickers {symbol}: {data}")
             return None
 
         items = data["result"].get("list", [])
         if not items:
             return None
 
-        price = float(items[0]["lastPrice"])
-        return price
+        return float(items[0]["lastPrice"])
 
     except Exception as e:
-        logger.error(f"❌ Error obteniendo precio de {symbol}: {e}")
+        logger.error(f"❌ Error precio {symbol}: {e}")
         return None
-
-
-# ============================================================
-# 🔵 Posiciones abiertas (placeholder)
-# ============================================================
-
-def get_open_positions() -> List[Dict]:
-    """
-    Placeholder para integrarse con la API privada de Bybit.
-
-    Actualmente devuelve lista vacía para NO romper el flujo.
-
-    En el futuro:
-        - integrar /v5/position/list con API key/secret.
-    """
-    return []
