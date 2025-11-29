@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
-
+from services.telegram_bridge import safe_send
 from services.db_service import (
     get_pending_signals,
     set_signal_reactivated,
@@ -32,8 +32,8 @@ logger = logging.getLogger("reactivation_controller")
 
 def safe_send(msg: str):
     try:
-        from services.telegram_service import send_message  # import diferido
-        send_message(msg)
+        from services.telegram_service import safe_send  # import diferido
+        safe_send(msg)
     except Exception as e:
         logger.error(f"❌ Error enviando mensaje desde reactivation_controller: {e}")
 

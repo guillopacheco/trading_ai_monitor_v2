@@ -17,7 +17,7 @@ from services.db_service import (
 
 from core.signal_engine import analyze_signal
 
-from services.telegram_service import safe_send
+from services.telegram_bridge import safe_send
 from utils.helpers import now_ts
 
 logger = logging.getLogger("signal_controller")
