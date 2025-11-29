@@ -16,6 +16,8 @@ Responsable de:
 """
 
 import sqlite3
+import json
+import time
 from typing import List, Dict, Any, Optional
 
 from config import DB_PATH
@@ -269,3 +271,73 @@ def add_position_log(symbol: str, direction: str, pnl_pct: float, timestamp: str
     """, [symbol, direction, pnl_pct, timestamp])
     conn.commit()
     conn.close()
+
+# ============================================================
+# 📌 GUARDAR NUEVA SEÑAL
+# ============================================================
+
+def save_new_signal(signal_obj):
+    """
+    Guarda una señal nueva en la tabla signals.
+    Solo guarda datos básicos: symbol, direction, entry_price, timestamp.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute(
+            """
+            INSERT INTO signals (symbol, direction, entry_price, raw_text, timestamp, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                signal_obj.symbol,
+                signal_obj.direction,
+                signal_obj.entry_price,
+                signal_obj.raw_text,
+                int(signal_obj.timestamp),
+                "new",
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        logger.error(f"❌ Error guardando señal nueva: {e}")
+
+
+# ============================================================
+# 📌 GUARDAR RESULTADO DE ANÁLISIS
+# ============================================================
+
+def save_analysis_result(symbol: str, analysis: dict):
+    """
+    Guarda la salida completa del motor técnico para historial.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute(
+            """
+            INSERT INTO analysis_logs (symbol, decision, grade, match_ratio, technical_score, context, timestamp, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                symbol,
+                analysis.get("decision"),
+                analysis.get("grade"),
+                float(analysis.get("match_ratio", 0)),
+                float(analysis.get("technical_score", 0)),
+                analysis.get("context", ""),
+                int(analysis.get("timestamp", time.time())),
+                json.dumps(analysis),
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        logger.error(f"❌ Error guardando análisis técnico: {e}")
