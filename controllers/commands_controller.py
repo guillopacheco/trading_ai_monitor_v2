@@ -23,11 +23,17 @@ Comandos incluidos:
 
 import logging
 from typing import Optional
-
-from services.telegram_service import send_message
 from services import db_service
 from core.signal_engine import analyze_signal
 from controllers.signal_controller import process_new_signal
+
+# Bridge seguro para evitar ciclos de importación
+def safe_send(msg: str):
+    try:
+        from services.telegram_service import safe_send  # import diferido
+        safe_send(msg)
+    except Exception:
+        pass
 
 logger = logging.getLogger("commands_controller")
 
@@ -36,7 +42,6 @@ SYSTEM_STATE = {
     "monitor_active": False,
     "monitor_task": None,
 }
-
 
 # ============================================================
 # 🔵 FUNCIÓN PRINCIPAL DEL CONTROLADOR
@@ -52,7 +57,7 @@ async def handle_command(command: str, params: str):
             await _cmd_help()
 
         elif command == "/ping":
-            await send_message("🏓 Pong!")
+            await safe_send("🏓 Pong!")
 
         elif command == "/analizar":
             await _cmd_analizar(params)
@@ -70,11 +75,11 @@ async def handle_command(command: str, params: str):
             await _cmd_signal_manual(params)
 
         else:
-            await send_message(f"❓ Comando desconocido: {command}")
+            await safe_send(f"❓ Comando desconocido: {command}")
 
     except Exception as e:
         logger.error(f"❌ Error ejecutando comando {command}: {e}")
-        await send_message("❌ Error ejecutando el comando.")
+        await safe_send("❌ Error ejecutando el comando.")
 
 
 # ============================================================
@@ -91,7 +96,7 @@ async def _cmd_start():
         " /historial — muestra últimos análisis\n"
         " /help — ver ayuda completa\n"
     )
-    await send_message(msg)
+    await safe_send(msg)
 
 
 # ============================================================
@@ -108,7 +113,7 @@ async def _cmd_help():
         "/historial — ver últimos 50 logs\n"
         "/ping — test de respuesta\n"
     )
-    await send_message(msg)
+    await safe_send(msg)
 
 
 # ============================================================
@@ -116,12 +121,12 @@ async def _cmd_help():
 # ============================================================
 async def _cmd_analizar(params: str):
     if not params:
-        return await send_message("⚠️ Debes indicar un par. Ejemplo:\n/analizar BTCUSDT")
+        return await safe_send("⚠️ Debes indicar un par. Ejemplo:\n/analizar BTCUSDT")
 
     symbol = params.strip().upper()
     direction = "long"  # análisis neutral, pero requerido por motor
 
-    await send_message(f"🔍 Analizando {symbol}…")
+    await safe_send(f"🔍 Analizando {symbol}…")
 
     analysis = await analyze_signal(symbol, direction)
 
@@ -132,7 +137,7 @@ async def _cmd_analizar(params: str):
         f"Decisión: {analysis['decision']}\n\n"
         f"Detalles:\n{analysis['details']}"
     )
-    await send_message(msg)
+    await safe_send(msg)
 
 
 # ============================================================
@@ -140,10 +145,10 @@ async def _cmd_analizar(params: str):
 # ============================================================
 async def _cmd_revisar():
     if SYSTEM_STATE["monitor_active"]:
-        return await send_message("⚠️ El monitor ya está activo.")
+        return await safe_send("⚠️ El monitor ya está activo.")
 
     SYSTEM_STATE["monitor_active"] = True
-    await send_message("📡 Monitor de posiciones activado.")
+    await safe_send("📡 Monitor de posiciones activado.")
 
     # Aquí se conectará al positions_controller futuramente.
     # Por ahora solo placeholder.
@@ -155,11 +160,11 @@ async def _cmd_revisar():
 # ============================================================
 async def _cmd_detener():
     if not SYSTEM_STATE["monitor_active"]:
-        return await send_message("⚠️ El monitor ya está detenido.")
+        return await safe_send("⚠️ El monitor ya está detenido.")
 
     SYSTEM_STATE["monitor_active"] = False
 
-    await send_message("🛑 Monitor de posiciones detenido.")
+    await safe_send("🛑 Monitor de posiciones detenido.")
 
 
 # ============================================================
@@ -169,7 +174,7 @@ async def _cmd_historial():
     logs = db_service.get_logs(limit=20)
 
     if not logs:
-        return await send_message("📭 No hay registros.")
+        return await safe_send("📭 No hay registros.")
 
     text = "🗄 **Últimos análisis técnicos:**\n\n"
     for log in logs:
@@ -178,7 +183,7 @@ async def _cmd_historial():
             f"{log['recommendation']} ({log['match_ratio']}%)\n"
         )
 
-    await send_message(text)
+    await safe_send(text)
 
 
 # ============================================================
@@ -190,12 +195,12 @@ async def _cmd_signal_manual(params: str):
     """
 
     if not params or len(params) < 5:
-        return await send_message("⚠️ Debes incluir una señal.\nEj: `/signal LONG BTCUSDT 0.1234`")
+        return await safe_send("⚠️ Debes incluir una señal.\nEj: `/signal LONG BTCUSDT 0.1234`")
 
     # Aquí debería ir un parser robusto, pero por ahora hacemos uno simple.
     text = params.strip()
 
-    await send_message("📩 Procesando señal manual…")
+    await safe_send("📩 Procesando señal manual…")
 
     try:
         # TODO: reemplazar en el futuro por un parser oficial
@@ -215,4 +220,4 @@ async def _cmd_signal_manual(params: str):
 
     except Exception as e:
         logger.error(f"❌ Error procesando señal manual: {e}")
-        await send_message("❌ No se pudo procesar la señal.")
+        await safe_send("❌ No se pudo procesar la señal.")
