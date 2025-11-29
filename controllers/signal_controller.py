@@ -21,8 +21,8 @@ from core.signal_engine import (
 )
 from services import db_service
 from utils.formatters import (
-    format_signal_header,
-    format_full_analysis,
+    format_signal_intro,
+    format_analysis_summary,
 )
 from services.telegram_service import send_message
 
@@ -60,7 +60,7 @@ def process_new_signal(raw_text: str):
     result = analyze_signal(sig)
 
     # 4. Preparar mensaje formateado
-    header = format_signal_header(sig.symbol, sig.direction)
+    header = format_signal_intro(signal.symbol, signal.direction)
     detail = format_full_analysis(result["analysis"])
     final_msg = f"{header}\n{detail}"
 

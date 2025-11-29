@@ -19,7 +19,7 @@ from models.signal import Signal
 from core.technical_brain_unified import run_unified_analysis
 from utils.helpers import normalize_direction
 from utils.formatters import (
-    format_signal_header,
+    format_signal_intro,
     format_analysis_summary,
 )
 
