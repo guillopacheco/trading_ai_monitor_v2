@@ -158,3 +158,45 @@ def format_recommendation_text(rec: dict) -> str:
         f"└ {reason}"
     )
     
+# ============================================================
+# 🔵 Format: mensaje introductorio de nueva señal
+# ============================================================
+
+def format_signal_intro(symbol: str, direction: str) -> str:
+    """
+    Formato para cuando llega una nueva señal del canal VIP.
+    """
+    direction_arrow = "📈" if direction == "long" else "📉"
+
+    return (
+        f"📩 *Nueva señal detectada*\n"
+        f"▪ *Par:* `{symbol}`\n"
+        f"▪ *Dirección:* {direction_arrow} `{direction.upper()}`\n"
+    )
+
+
+# ============================================================
+# 🔵 Format: datos del parser de señal
+# ============================================================
+
+def format_parsed_signal(parsed: dict) -> str:
+    """
+    Muestra lo que se pudo extraer del texto crudo.
+    """
+    symbol = parsed.get("symbol")
+    direction = parsed.get("direction")
+    entry = parsed.get("entry")
+    tp_list = parsed.get("tp_list", [])
+    sl = parsed.get("sl")
+
+    tps_formatted = ", ".join([str(tp) for tp in tp_list]) if tp_list else "N/A"
+    sl_formatted = sl if sl else "N/A"
+
+    return (
+        f"📝 *Detalles de la señal:*\n"
+        f"▪ Par: `{symbol}`\n"
+        f"▪ Dirección: `{direction}`\n"
+        f"▪ Entrada: `{entry}`\n"
+        f"▪ TPs: `{tps_formatted}`\n"
+        f"▪ SL: `{sl_formatted}`"
+    )

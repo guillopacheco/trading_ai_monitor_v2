@@ -17,8 +17,11 @@ from models.signal import Signal
 from utils.parser import parse_signal_text
 from utils.formatters import (
     format_signal_intro,
-    format_analysis_result
+    format_parsed_signal,
+    format_match_ratio_text,
+    format_recommendation_text,
 )
+
 
 logger = logging.getLogger("signal_controller")
 
