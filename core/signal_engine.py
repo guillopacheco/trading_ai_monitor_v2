@@ -1,15 +1,13 @@
 """
 core/signal_engine.py
 ---------------------
-Motor de análisis de señales → Orquesta el Motor Técnico A+
+Motor de análisis → Orquesta el Motor Técnico A+.
 
-Este módulo NO habla directamente con Telegram.
-Tampoco accede a la DB.
-
-Flujo:
-    signal_controller     → analyze_signal()
-    reactivation_controller → analyze_signal_for_reactivation()
-    technical_brain_unified → motor técnico A+
+Este módulo NO se comunica con Telegram ni accede a la base de datos.
+Se limita a:
+    - Recibir objetos de señal / posición
+    - Ejecutar run_unified_analysis()
+    - Formatear parcialmente la respuesta
 """
 
 from __future__ import annotations
@@ -28,13 +26,13 @@ logger = logging.getLogger("signal_engine")
 
 
 # ==================================================================
-# 🟦 1) Análisis completo de señal nueva
+# 🟦 1) Análisis completo de señal NUEVA
 # ==================================================================
 
 def analyze_signal(signal_obj) -> Dict[str, Any]:
     """
-    Analiza una nueva señal recibida del canal VIP.
-    Retorna un dict estructurado listo para enviar a Telegram.
+    Analiza una señal nueva del canal VIP.
+    Devuelve un dict estructurado.
     """
 
     try:
@@ -42,32 +40,33 @@ def analyze_signal(signal_obj) -> Dict[str, Any]:
             symbol=signal_obj.symbol,
             direction=signal_obj.direction,
             entry_price=signal_obj.entry,
-            is_reactivation=False
+            is_reactivation=False,
+            is_position_check=False,
         )
     except Exception as e:
         logger.error(f"❌ Error en analyze_signal: {e}")
         return {
             "allowed": False,
             "reason": f"Error del motor técnico: {e}",
-            "message": "❌ Error analizando la señal."
+            "message": "❌ Error analizando la señal.",
+            "raw": {},
         }
 
-    # Formateo final
+    # Formato del mensaje
     header = format_signal_intro(signal_obj)
     summary = format_analysis_summary(result)
-
-    final_msg = f"{header}\n{summary}"
+    msg = f"{header}\n{summary}"
 
     return {
         "allowed": result.get("allowed", False),
         "reason": result.get("reason", "Sin motivo"),
         "raw": result,
-        "message": final_msg,
+        "message": msg,
     }
 
 
 # ==================================================================
-# 🟧 2) Análisis específico para REACTIVACIÓN
+# 🟧 2) Análisis de REACTIVACIÓN
 # ==================================================================
 
 def analyze_signal_for_reactivation(signal_obj) -> Dict[str, Any]:
@@ -80,14 +79,63 @@ def analyze_signal_for_reactivation(signal_obj) -> Dict[str, Any]:
             symbol=signal_obj.symbol,
             direction=signal_obj.direction,
             entry_price=signal_obj.entry,
-            is_reactivation=True
+            is_reactivation=True,
+            is_position_check=False,
         )
     except Exception as e:
         logger.error(f"❌ Error en analyze_signal_for_reactivation: {e}")
         return {
             "allowed": False,
             "reason": f"Error del motor técnico: {e}",
+            "raw": {}
         }
 
     return result
 
+
+# ==================================================================
+# 🟨 3) Análisis para POSICIONES ABIERTAS (operaciones activas)
+# ==================================================================
+
+def analyze_open_position(position_obj) -> Dict[str, Any]:
+    """
+    Analiza una posición abierta utilizando el Motor Técnico A+.
+
+    position_obj debe incluir:
+        - symbol
+        - side (BUY/SELL)
+        - entryPrice
+    """
+
+    symbol = position_obj.get("symbol")
+    side = position_obj.get("side", "").lower()
+    entry_price = position_obj.get("entryPrice")
+
+    direction = "long" if side == "buy" else "short"
+
+    try:
+        result = run_unified_analysis(
+            symbol=symbol,
+            direction=direction,
+            entry_price=entry_price,
+            is_reactivation=False,
+            is_position_check=True,  # señalamos que es una operación activa
+        )
+    except Exception as e:
+        logger.error(f"❌ Error en analyze_open_position: {e}")
+        return {
+            "reversal": False,
+            "allowed": False,
+            "reason": f"Error del motor técnico: {e}",
+            "raw": {},
+        }
+
+    # Detecta reversión severa según motor A+
+    reversal = result.get("reversal_detected", False)
+
+    return {
+        "reversal": reversal,
+        "allowed": result.get("allowed", True),
+        "reason": result.get("reason", "Sin motivo"),
+        "raw": result
+    }
