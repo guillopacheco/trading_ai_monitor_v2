@@ -1,34 +1,62 @@
 """
 utils/logger.py
 ----------------
-Inicializa el sistema de logging centralizado para toda la aplicación.
+Configuración central del sistema de logging.
+Todos los módulos usan el logger configurado aquí.
 """
 
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 
 
-def setup_logging(log_file: str = "trading_ai.log"):
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+# ============================================================
+# 🔵 CONFIGURAR LOGGING GLOBAL
+# ============================================================
 
-    # Console output
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    console.setFormatter(formatter)
+def configure_logging():
+    """
+    Configuración unificada del sistema de logs.
+    Se invoca una vez desde main.py.
+    """
 
-    # File output
+    # Crear carpeta logs/ si no existe
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+    # Evitar múltiples configuraciones si ya existe un handler
+    if logging.getLogger().hasHandlers():
+        logging.getLogger().handlers.clear()
+
+    # -----------------------------
+    # Consola (stream handler)
+    # -----------------------------
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter(log_format))
+
+    # -----------------------------
+    # Archivo con rotación
+    # -----------------------------
     file_handler = RotatingFileHandler(
-        log_file, maxBytes=5_000_000, backupCount=2, encoding="utf-8"
+        "logs/trading_bot.log",
+        maxBytes=5_000_000,   # 5 MB
+        backupCount=3
     )
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(logging.Formatter(log_format))
 
-    logger.addHandler(console)
-    logger.addHandler(file_handler)
+    # -----------------------------
+    # Logger global
+    # -----------------------------
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[console_handler, file_handler]
+    )
 
-    logger.info("📘 Logging inicializado correctamente.")
+    logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("telethon").setLevel(logging.WARNING)
+
+    logging.info("📘 Logging configurado correctamente (archivo + consola).")
