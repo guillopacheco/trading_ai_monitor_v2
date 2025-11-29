@@ -13,9 +13,8 @@ import logging
 from core.signal_engine import analyze_signal
 from services import db_service
 from services.telegram_service import send_message
-
 from models.signal import Signal
-from utils.helpers import parse_signal_text
+from utils.parser import parse_signal_text
 from utils.formatters import (
     format_signal_intro,
     format_analysis_result
