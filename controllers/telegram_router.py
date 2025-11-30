@@ -1,23 +1,49 @@
-"""
-controllers/telegram_router.py
--------------------------------
-Recibe mensajes desde telegram_service y los enruta correctamente.
-"""
-
 import logging
-from utils.helpers import is_command
+
 from controllers.signal_listener import on_new_signal
 from controllers.commands_controller import execute_command
+from utils.helpers import is_command, extract_command
+from services.telegram_service import safe_send
 
 logger = logging.getLogger("telegram_router")
 
 
-def route_incoming_message(raw_text: str):
-    """Determina si el mensaje es comando o señal normal."""
+async def route_incoming_message(text: str):
+    """
+    Router oficial de mensajes entrantes desde Telegram.
+    Distingue entre comandos y señales VIP.
+    """
 
-    if is_command(raw_text):
-        execute_command(raw_text)
+    if not text or not isinstance(text, str):
         return
 
-    # Sino, es señal
-    on_new_signal(raw_text)
+    # ---------------------------------------------------
+    # 🔍 1) Detectar comando (/analizar, /help, /revisar…)
+    # ---------------------------------------------------
+    if is_command(text):
+        cmd, args = extract_command(text)
+
+        logger.info(f"📥 Comando detectado: {cmd} {args}")
+
+        try:
+            # 🔥🔥 AGREGADO: ahora SÍ se hace await
+            await execute_command(cmd, args)
+
+        except Exception as e:
+            logger.error(f"❌ Error ejecutando comando {cmd}: {e}", exc_info=True)
+            await safe_send(f"❌ Error ejecutando comando {cmd}.\n{e}")
+
+        return
+
+    # ---------------------------------------------------
+    # 🔍 2) Señal normal del canal VIP
+    # ---------------------------------------------------
+    logger.info(f"📩 Señal recibida desde router: {text[:60]}...")
+
+    try:
+        # 🔥🔥 AGREGADO: ahora SÍ se hace await
+        await on_new_signal(text)
+
+    except Exception as e:
+        logger.error(f"❌ Error procesando señal: {e}", exc_info=True)
+        await safe_send(f"❌ Error procesando señal.\n{e}")
