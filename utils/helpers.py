@@ -3,8 +3,10 @@ utils/helpers.py
 -----------------
 Funciones pequeñas y reutilizables para toda la aplicación.
 """
-from datetime import datetime
 
+import re
+from typing import Tuple, List
+from datetime import datetime, timezone
 # ============================================================
 # 🔤 Normalizar símbolo
 # ============================================================
@@ -144,4 +146,26 @@ def extract_command(text: str):
     # Argumentos restantes
     args = parts[1:] if len(parts) > 1 else []
 
+    return cmd, args
+
+def now_ts() -> str:
+    """Devuelve timestamp ISO en UTC (para logs/DB)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def is_command(text: str) -> bool:
+    """Devuelve True si el mensaje parece un comando (/algo)."""
+    return text.strip().startswith("/")
+
+
+def extract_command(text: str) -> Tuple[str, List[str]]:
+    """
+    Extrae el comando y argumentos de un mensaje tipo:
+        /analizar CUDISUSDT
+    """
+    parts = text.strip().split()
+    if not parts:
+        return "", []
+    cmd = parts[0].lower()
+    args = parts[1:]
     return cmd, args
