@@ -8,6 +8,8 @@ import logging
 from utils.logger import configure_logging
 from services.telegram_service import start_telegram, client
 from services.scheduler_service import start_scheduler
+from services.db_service import init_db
+
 
 
 async def main():
@@ -17,6 +19,9 @@ async def main():
     configure_logging()
     logger = logging.getLogger("MAIN")
     logger.info("🚀 Iniciando Trading AI Monitor...")
+
+    # 🗄 Asegurar esquema de DB
+    init_db()
 
     # ---------------------------------------------
     # 2) Iniciar Telegram (usuario + bot)
