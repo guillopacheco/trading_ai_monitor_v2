@@ -11,6 +11,7 @@ import logging
 from utils.logger import configure_logging
 from services.telegram_service import start_telegram
 from services.scheduler_service import start_scheduler
+from services.db_service import init_db  # ← NECESARIO
 
 
 async def main():
@@ -20,10 +21,13 @@ async def main():
 
     logger.info("🚀 Iniciando Trading AI Monitor...")
 
+    # 🔧 Crear tablas si no existen
+    init_db()
+
     # Obtener loop actual
     loop = asyncio.get_running_loop()
 
-    # Iniciar Telegram (usuario + bot)
+    # Iniciar Telegram
     await start_telegram()
     logger.info("📡 Telegram iniciado.")
 
@@ -33,7 +37,7 @@ async def main():
 
     logger.info("📡 Sistema en ejecución. Esperando eventos de Telegram...")
 
-    # Mantener app viva
+    # Mantener la app viva
     while True:
         await asyncio.sleep(3600)
 
