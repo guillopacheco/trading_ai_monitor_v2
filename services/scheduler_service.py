@@ -1,44 +1,61 @@
 """
 services/scheduler_service.py
------------------------------
-Scheduler: tareas periódicas (reactivación + revisión de posiciones)
+------------------------------
+Servicio encargado de ejecutar ciclos periódicos:
+ - Reactivación de señales
+ - Monitoreo de posiciones abiertas
+
+Usa asyncio.create_task para correr loops en paralelo.
 """
 
-from __future__ import annotations
-import logging
 import asyncio
+import logging
 
 from controllers.reactivation_controller import run_reactivation_cycle
-from controllers.positions_controller import check_open_positions
+from controllers.positions_controller import check_positions  # ✔ FIX
 
 logger = logging.getLogger("scheduler_service")
 
 
-async def scheduler_loop():
-    """
-    Loop del scheduler ejecutado cada 60 segundos.
-    """
-    logger.info("🕒 Scheduler activo (reactivación + posiciones).")
+# ============================================================
+# 🔹 LOOP: ciclo de reactivación
+# ============================================================
 
+async def _reactivation_loop():
     while True:
         try:
             logger.info("♻️ Ejecutando ciclo de reactivación…")
-            run_reactivation_cycle()
+            await run_reactivation_cycle()
         except Exception as e:
             logger.error(f"❌ Error en ciclo de reactivación: {e}")
+        await asyncio.sleep(60)  # cada 60 segundos
 
+
+# ============================================================
+# 🔹 LOOP: ciclo de revisión de posiciones
+# ============================================================
+
+async def _positions_loop():
+    while True:
         try:
             logger.info("🔍 Revisando posiciones abiertas…")
-            await check_open_positions()
+            await check_positions()
         except Exception as e:
             logger.error(f"❌ Error revisando posiciones: {e}")
+        await asyncio.sleep(45)  # cada 45 segundos
 
-        await asyncio.sleep(60)
 
+# ============================================================
+# 🔹 FUNCIÓN PRINCIPAL
+# ============================================================
 
-def start_scheduler(loop: asyncio.AbstractEventLoop):
+async def start_scheduler(loop: asyncio.AbstractEventLoop):
     """
-    Registra el scheduler en el event loop principal.
+    Registra ambos loops como tareas en segundo plano.
     """
-    loop.create_task(scheduler_loop())
     logger.info("🕒 Iniciando scheduler…")
+
+    loop.create_task(_reactivation_loop())
+    loop.create_task(_positions_loop())
+
+    logger.info("🕒 Scheduler activo (reactivación + posiciones).")
