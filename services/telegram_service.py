@@ -1,12 +1,23 @@
 import logging
 from telethon import TelegramClient, events
-from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN
+from config import (
+    API_ID,
+    API_HASH,
+    TELEGRAM_SESSION,
+    TELEGRAM_CHANNEL_ID,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_USER_ID,
+)
+
 from controllers.telegram_router import route_incoming_message
 
 logger = logging.getLogger("telegram_service")
 
-client = TelegramClient("session_user", TELEGRAM_API_ID, TELEGRAM_API_HASH)
-
+client = TelegramClient(
+    TELEGRAM_SESSION,
+    API_ID,
+    API_HASH,
+)
 
 async def start_telegram():
     """Inicia conexión Telegram."""
