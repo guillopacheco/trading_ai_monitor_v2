@@ -10,7 +10,7 @@ from services.db_service import (
     set_signal_reactivated,    # ✔ nombre correcto
     add_reactivation_record,   # ✔ existe
 )
-from core.signal_engine import analyze_signal_for_reactivation
+from core.signal_engine import analyze_reactivation
 from services.telegram_service import safe_send
 
 log = logging.getLogger("reactivation_controller")
@@ -41,11 +41,12 @@ async def run_reactivation_cycle():
         log.info(f"🔎 Evaluando reactivación: {symbol} ({direction})")
 
         try:
-            result = await analyze_signal_for_reactivation(
+            result = await analyze_reactivation(
                 symbol=symbol,
                 direction=direction,
                 entry_price=entry_price,
             )
+
         except Exception as e:
             log.error(f"❌ Error analizando reactivación para {symbol}: {e}")
             continue
