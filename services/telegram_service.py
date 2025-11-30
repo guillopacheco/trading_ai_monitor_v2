@@ -33,6 +33,15 @@ client = TelegramClient(
     API_HASH
 )
 
+# ============================================================
+# 🛡 send seguro — evita errores en otros módulos
+# ============================================================
+async def safe_send(text: str):
+    """Enviar mensaje usando el BOT de forma segura, sin romper el flujo."""
+    try:
+        await client.send_message(TELEGRAM_USER_ID, text)
+    except Exception as e:
+        log.error(f"❌ Error enviando mensaje seguro: {e}")
 
 # ============================================================
 # 🔵 Inicialización de Telegram (usuario + bot)
