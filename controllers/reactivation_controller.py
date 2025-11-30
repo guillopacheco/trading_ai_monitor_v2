@@ -7,13 +7,14 @@ Controlador para reactivación de señales pendientes.
 import logging
 from services.db_service import (
     get_pending_signals,
-    mark_signal_reactivated,
-    add_reactivation_record,
+    set_signal_reactivated,    # ✔ nombre correcto
+    add_reactivation_record,   # ✔ existe
 )
 from core.signal_engine import analyze_signal_for_reactivation
 from services.telegram_service import safe_send
 
 log = logging.getLogger("reactivation_controller")
+
 
 # ===================================================================
 # 🔄 REVISAR TODAS LAS PENDIENTES
@@ -32,12 +33,12 @@ async def run_reactivation_cycle():
         return
 
     for sig in signals:
+        signal_id = sig["id"]
         symbol = sig["symbol"]
         direction = sig["direction"]
-        entry_price = sig["entry_price"]  # ✔ columna correcta
-        signal_id = sig["id"]
+        entry_price = sig["entry_price"]
 
-        log.info(f"🔎 Evaluando posible reactivación: {symbol} ({direction})")
+        log.info(f"🔎 Evaluando reactivación: {symbol} ({direction})")
 
         try:
             result = await analyze_signal_for_reactivation(
@@ -46,24 +47,24 @@ async def run_reactivation_cycle():
                 entry_price=entry_price,
             )
         except Exception as e:
-            log.error(f"❌ Error analizando reactivación en {symbol}: {e}")
+            log.error(f"❌ Error analizando reactivación para {symbol}: {e}")
             continue
 
-        if not result or not result["allowed"]:
+        if not result or not result.get("allowed"):
             log.info(f"⏳ Señal {symbol} aún no apta para reactivación.")
             continue
 
         # ===========================================================
         # 🔥 Señal reactivada
         # ===========================================================
-        mark_signal_reactivated(signal_id)
-        add_reactivation_record(signal_id, "Motor A+ confirmó reactivación")
+        set_signal_reactivated(signal_id)                 # ✔ función real
+        add_reactivation_record(signal_id, "OK para reactivar")  # ✔ función real
 
         msg = (
             f"♻️ **REACTIVACIÓN AUTOMÁTICA**\n\n"
             f"📌 *{symbol}* ({direction.upper()})\n"
             f"💠 Condiciones técnicas ahora favorables.\n"
-            f"🔥 Recomendación: **evaluar entrada inmediata**.\n"
+            f"🔥 *Recomendación: evaluar entrada inmediata.*\n"
         )
 
         try:
