@@ -76,6 +76,15 @@ def init_db():
         );
     """)
 
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS reactivations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signal_id INTEGER,
+        reason TEXT,
+        timestamp INTEGER
+    )
+""")
+
     conn.commit()
     conn.close()
 
@@ -248,3 +257,28 @@ def _make_signal_obj(row):
             self.raw_text = raw_text
 
     return SignalObj(*row)
+
+# =======================================================
+# 🟦 REACTIVACIONES (nueva tabla: reactivations)
+# =======================================================
+def add_reactivation_record(signal_id: int, reason: str):
+    """Registrar un evento de reactivación."""
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO reactivations(signal_id, reason, timestamp)
+            VALUES (?, ?, strftime('%s', 'now'))
+        """, (signal_id, reason))
+        conn.commit()
+
+
+def get_reactivation_records(signal_id: int):
+    """Obtener historial de reactivaciones de una señal."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, signal_id, reason, timestamp
+            FROM reactivations
+            WHERE signal_id = ?
+            ORDER BY id DESC
+        """, (signal_id,)).fetchall()
+        return rows
+
