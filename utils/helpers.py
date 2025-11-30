@@ -116,3 +116,32 @@ def is_command(text: str) -> bool:
 
     # Ejemplo: "/analizar", "/state", "/ping"
     return command[1:].isalnum()
+
+# ============================================================
+# 🔧 Extraer comando y argumentos
+# ============================================================
+
+def extract_command(text: str):
+    """
+    Convierte un mensaje como:
+        '/analizar BTCUSDT'
+        '/help'
+        '/signal #CUDISUSDT long 0.00234'
+
+    En:
+        cmd  = 'analizar'
+        args = ['BTCUSDT']
+    """
+
+    if not text or not text.startswith("/"):
+        return "", []
+
+    parts = text.strip().split()
+
+    # Comando sin '/'
+    cmd = parts[0][1:].lower()
+
+    # Argumentos restantes
+    args = parts[1:] if len(parts) > 1 else []
+
+    return cmd, args

@@ -104,7 +104,7 @@ async def _handle_incoming_message(event):
             return
 
         # Enviar al router
-        route_incoming_message(raw_text)
+        await route_incoming_message(raw_text)
 
     except Exception as e:
         logger.error(f"❌ Error manejando mensaje entrante: {e}")
