@@ -1,51 +1,60 @@
 """
-controllers/commands_controller.py
-----------------------------------
+commands_controller.py (versión integrada A+)
+--------------------------------------------
 Controlador de comandos del bot.
 
-No importa directamente telegram_service al inicio para evitar ciclos.
-Usa un bridge seguro (safe_send) que hace import diferido cuando se necesita.
+✔ Totalmente conectado al Motor Técnico A+
+✔ Sin dependencias circulares
+✔ Usa import diferido para Telegram
 """
 
 from __future__ import annotations
-
 import logging
 
 logger = logging.getLogger("commands_controller")
 
 
 # ============================================================
-# 📡 Bridge seguro hacia telegram_service (evita ciclos)
+# 📡 Bridge seguro hacia telegram_service
 # ============================================================
 
 def safe_send(msg: str) -> None:
-    """
-    Envía un mensaje al usuario usando telegram_service.send_message,
-    pero hace el import de forma diferida para evitar import circular.
-    """
+    """Envía mensajes sin generar ciclos."""
     try:
-        from services.telegram_service import send_message  # type: ignore
+        from services.telegram_service import send_message
         send_message(msg)
     except Exception as e:
-        # No romper la app por un fallo de notificación
-        logger.error(f"❌ Error en safe_send (commands_controller): {e}")
+        logger.error(f"❌ Error en safe_send: {e}")
 
 
 # ============================================================
-# 🧠 Ejecutor de comandos
+# 🧠 Ejecutar análisis manual usando el Motor Técnico A+
+# ============================================================
+
+def run_manual_analysis(symbol: str) -> None:
+    """Ejecuta el análisis técnico completo del Motor A+."""
+    try:
+        from core.signal_engine import analyze_symbol  # import diferido
+    except Exception as e:
+        safe_send(f"❌ Error importando el motor técnico: {e}")
+        return
+
+    try:
+        result = analyze_symbol(symbol)
+    except Exception as e:
+        safe_send(f"❌ Error ejecutando análisis técnico: {e}")
+        return
+
+    # Enviar directamente el texto generado por el motor
+    safe_send(result.get("message", "⚠️ Hubo un error generando el análisis."))
+
+
+# ============================================================
+# 🧠 Ejecutar comando
 # ============================================================
 
 def execute_command(text: str) -> None:
-    """
-    Punto de entrada único para TODOS los comandos tipo /comando.
-
-    Se asume que `text` es el mensaje completo recibido, por ejemplo:
-        "/start"
-        "/help"
-        "/ping"
-        "/analizar BTCUSDT"
-    """
-
+    """Procesa TODOS los comandos."""
     if not text:
         return
 
@@ -55,59 +64,56 @@ def execute_command(text: str) -> None:
 
     logger.info(f"📥 Comando recibido: {cmd} {args}")
 
-    # ------------------------------
+    # ---------------------------------------------------------
     # /start
-    # ------------------------------
+    # ---------------------------------------------------------
     if cmd == "/start":
         safe_send(
             "👋 *Bienvenido a Trading AI Monitor v2*\n\n"
-            "Envíame comandos como:\n"
-            "• `/help` → ver ayuda\n"
-            "• `/ping` → comprobar estado del bot\n"
-            "• `/analizar BTCUSDT` → (próximamente) analizar un par concreto\n"
+            "Comandos:\n"
+            "• `/help`\n"
+            "• `/analizar BTCUSDT`\n"
+            "• `/ping`\n"
         )
         return
 
-    # ------------------------------
+    # ---------------------------------------------------------
     # /help
-    # ------------------------------
+    # ---------------------------------------------------------
     if cmd == "/help":
         safe_send(
-            "📚 *Ayuda — Comandos disponibles*\n\n"
-            "• `/start` → mensaje de bienvenida\n"
+            "📚 *Ayuda — Comandos*\n\n"
+            "• `/start` → bienvenida\n"
             "• `/help` → esta ayuda\n"
-            "• `/ping` → comprobar estado\n"
-            "• `/analizar {par}` → (en desarrollo) análisis manual\n"
+            "• `/analizar PAR` → análisis técnico instantáneo\n"
+            "• `/ping` → estado del bot\n"
         )
         return
 
-    # ------------------------------
+    # ---------------------------------------------------------
     # /ping
-    # ------------------------------
+    # ---------------------------------------------------------
     if cmd == "/ping":
-        safe_send("🏓 Pong! El bot está en línea y funcionando.")
+        safe_send("🏓 Pong! El bot está activo.")
         return
 
-    # ------------------------------
-    # /analizar {par}  (placeholder)
-    # ------------------------------
+    # ---------------------------------------------------------
+    # /analizar
+    # ---------------------------------------------------------
     if cmd == "/analizar":
         if not args:
             safe_send("⚠️ Usa: `/analizar BTCUSDT`")
             return
 
-        par = args[0].upper()
-        # Aquí en futuras iteraciones conectaremos con signal_engine.analyze_open_position
-        safe_send(
-            f"🔍 Análisis manual solicitado para *{par}*.\n"
-            "Esta función está en proceso de integración con el Motor Técnico A+."
-        )
+        symbol = args[0].upper()
+        safe_send(f"🔍 *Analizando {symbol}...* (Motor Técnico A+)")
+        run_manual_analysis(symbol)
         return
 
-    # ------------------------------
-    # Comando no reconocido
-    # ------------------------------
+    # ---------------------------------------------------------
+    # No reconocido
+    # ---------------------------------------------------------
     safe_send(
         f"❓ Comando no reconocido: `{cmd}`\n"
-        "Usa `/help` para ver la lista de comandos disponibles."
+        "Usa `/help` para más información."
     )
