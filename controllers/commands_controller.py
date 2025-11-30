@@ -1,28 +1,29 @@
 """
-commands_controller.py (versión integrada A+)
---------------------------------------------
-Controlador de comandos del bot.
+commands_controller.py (versión async corregida)
+-----------------------------------------------
+Controlador de comandos del bot (async-safe).
 
-✔ Totalmente conectado al Motor Técnico A+
-✔ Sin dependencias circulares
-✔ Usa import diferido para Telegram
+✔ safe_send() YA no genera advertencias
+✔ execute_command() ahora es async
+✔ send_message() se await-ea correctamente
 """
 
 from __future__ import annotations
 import logging
+import asyncio
 
 logger = logging.getLogger("commands_controller")
 
 
 # ============================================================
-# 📡 Bridge seguro hacia telegram_service
+# 📡 Bridge seguro hacia telegram_service (async)
 # ============================================================
 
-def safe_send(msg: str) -> None:
-    """Envía mensajes sin generar ciclos."""
+async def safe_send(msg: str):
+    """Envía mensajes al bot de forma segura, evitando ciclos y warnings."""
     try:
-        from services.telegram_service import send_message
-        send_message(msg)
+        from services.telegram_service import send_message  # async
+        await send_message(msg)
     except Exception as e:
         logger.error(f"❌ Error en safe_send: {e}")
 
@@ -31,30 +32,29 @@ def safe_send(msg: str) -> None:
 # 🧠 Ejecutar análisis manual usando el Motor Técnico A+
 # ============================================================
 
-def run_manual_analysis(symbol: str) -> None:
+async def run_manual_analysis(symbol: str):
     """Ejecuta el análisis técnico completo del Motor A+."""
     try:
-        from core.signal_engine import analyze_symbol  # import diferido
+        from core.signal_engine import analyze_symbol  # async-safe
     except Exception as e:
-        safe_send(f"❌ Error importando el motor técnico: {e}")
+        await safe_send(f"❌ Error importando el motor técnico: {e}")
         return
 
     try:
         result = analyze_symbol(symbol)
     except Exception as e:
-        safe_send(f"❌ Error ejecutando análisis técnico: {e}")
+        await safe_send(f"❌ Error ejecutando análisis técnico: {e}")
         return
 
-    # Enviar directamente el texto generado por el motor
-    safe_send(result.get("message", "⚠️ Hubo un error generando el análisis."))
+    await safe_send(result.get("message", "⚠️ Hubo un error generando el análisis."))
 
 
 # ============================================================
-# 🧠 Ejecutar comando
+# 🧠 Ejecutar comando (ASYNC)
 # ============================================================
 
-def execute_command(text: str) -> None:
-    """Procesa TODOS los comandos."""
+async def execute_command(text: str):
+    """Procesa TODOS los comandos del bot (async)."""
     if not text:
         return
 
@@ -68,7 +68,7 @@ def execute_command(text: str) -> None:
     # /start
     # ---------------------------------------------------------
     if cmd == "/start":
-        safe_send(
+        await safe_send(
             "👋 *Bienvenido a Trading AI Monitor v2*\n\n"
             "Comandos:\n"
             "• `/help`\n"
@@ -81,7 +81,7 @@ def execute_command(text: str) -> None:
     # /help
     # ---------------------------------------------------------
     if cmd == "/help":
-        safe_send(
+        await safe_send(
             "📚 *Ayuda — Comandos*\n\n"
             "• `/start` → bienvenida\n"
             "• `/help` → esta ayuda\n"
@@ -94,7 +94,7 @@ def execute_command(text: str) -> None:
     # /ping
     # ---------------------------------------------------------
     if cmd == "/ping":
-        safe_send("🏓 Pong! El bot está activo.")
+        await safe_send("🏓 Pong! El bot está activo.")
         return
 
     # ---------------------------------------------------------
@@ -102,18 +102,18 @@ def execute_command(text: str) -> None:
     # ---------------------------------------------------------
     if cmd == "/analizar":
         if not args:
-            safe_send("⚠️ Usa: `/analizar BTCUSDT`")
+            await safe_send("⚠️ Usa: `/analizar BTCUSDT`")
             return
 
         symbol = args[0].upper()
-        safe_send(f"🔍 *Analizando {symbol}...* (Motor Técnico A+)")
-        run_manual_analysis(symbol)
+        await safe_send(f"🔍 *Analizando {symbol}...* (Motor Técnico A+)")
+        await run_manual_analysis(symbol)
         return
 
     # ---------------------------------------------------------
     # No reconocido
     # ---------------------------------------------------------
-    safe_send(
+    await safe_send(
         f"❓ Comando no reconocido: `{cmd}`\n"
         "Usa `/help` para más información."
     )
