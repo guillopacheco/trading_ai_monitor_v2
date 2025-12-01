@@ -39,7 +39,7 @@ def get_connection():
 # 🏗️ Inicializar base de datos
 # ============================================================
 
-def init_database():
+def init_db():
     """Crea las tablas necesarias si no existen."""
     try:
         conn = get_connection()

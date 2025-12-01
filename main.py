@@ -6,7 +6,7 @@ import asyncio
 import logging
 
 from core.logger_config import configure_logging
-from database import init_db
+from core.database import init_db
 
 # Servicios técnicos
 from signals_service.signal_reactivation_sync import start_reactivation_loop
