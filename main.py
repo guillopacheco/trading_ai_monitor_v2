@@ -1,50 +1,66 @@
 """
-main.py — Punto de entrada del Trading AI Monitor
+main.py — Punto de entrada unificado del Trading AI Monitor
 """
 
 import asyncio
 import logging
 
-from utils.logger import configure_logging
-from services.telegram_service import start_telegram, client
-from services.scheduler_service import start_scheduler
-from services.db_service import init_db
+from core.logger_config import configure_logging
+from database import init_db
 
+# Servicios técnicos
+from signals_service.signal_reactivation_sync import start_reactivation_loop
+from positions_service.operation_tracker import start_operation_tracker
+from positions_service.position_reversal_monitor import start_reversal_monitor
+
+# Servicios de Telegram
+from telegram_service.telegram_reader import start_telegram_reader
+from telegram_service.command_bot import start_command_bot
 
 
 async def main():
-    # ---------------------------------------------
+
+    # ---------------------------------------------------
     # 1) Configurar logging
-    # ---------------------------------------------
+    # ---------------------------------------------------
     configure_logging()
     logger = logging.getLogger("MAIN")
-    logger.info("🚀 Iniciando Trading AI Monitor...")
+    logger.info("🚀 Trading AI Monitor iniciando...")
 
-    # 🗄 Asegurar esquema de DB
+    # ---------------------------------------------------
+    # 2) Inicializar DB
+    # ---------------------------------------------------
     init_db()
 
-    # ---------------------------------------------
-    # 2) Iniciar Telegram (usuario + bot)
-    # ---------------------------------------------
-    await start_telegram()
-    logger.info("📡 Telegram iniciado.")
+    # ---------------------------------------------------
+    # 3) Iniciar servicios Telegram (lector + bot)
+    # ---------------------------------------------------
+    logger.info("📡 Iniciando telegram_reader y command_bot...")
+    reader_task = asyncio.create_task(start_telegram_reader())
+    bot_task = asyncio.create_task(start_command_bot())
 
-    # ---------------------------------------------
-    # 3) Registrar Scheduler
-    # ---------------------------------------------
-    loop = asyncio.get_running_loop()
-    await start_scheduler(loop)   # ✔ ESTE ERA EL ERROR
-    logger.info("🕒 Scheduler registrado.")
+    # ---------------------------------------------------
+    # 4) Iniciar servicios de análisis técnico
+    # ---------------------------------------------------
+    logger.info("🧠 Iniciando servicios técnicos...")
 
-    # ---------------------------------------------
-    # 4) Mantener app ejecutándose
-    # ---------------------------------------------
-    logger.info("📡 Sistema en ejecución. Esperando eventos de Telegram...")
-    await client.run_until_disconnected()
+    reactivation_task = asyncio.create_task(start_reactivation_loop())
+    operations_task = asyncio.create_task(start_operation_tracker())
+    reversal_task = asyncio.create_task(start_reversal_monitor())
+
+    logger.info("✅ Todos los servicios iniciados correctamente.")
+
+    # ---------------------------------------------------
+    # 5) Mantener servicios activos
+    # ---------------------------------------------------
+    await asyncio.gather(
+        reader_task,
+        bot_task,
+        reactivation_task,
+        operations_task,
+        reversal_task,
+    )
 
 
-# ---------------------------------------------
-# Ejecutar main()
-# ---------------------------------------------
 if __name__ == "__main__":
     asyncio.run(main())
