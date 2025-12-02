@@ -29,7 +29,7 @@ from services.technical_engine.motor_wrapper import (
     analyze_and_format,
 )
 
-from services.signals_service.signal_reactivation_sync import start_reactivation_loop
+from services.signals_service.signal_reactivation_sync import start_reactivation_monitor, run_reactivation_cycle
 from services.positions_service.operation_tracker import start_operation_tracker
 from services.positions_service.position_reversal_monitor import start_reversal_monitor
 
@@ -148,7 +148,7 @@ async def reactivacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("♻️ Revisando señales pendientes...")
 
     try:
-        stats = await _process_pending_signals()
+        stats = await run_reactivation_cycle()
         msg = (
             f"♻️ *Revisión completada*\n"
             f"• Señales revisadas: {stats.get('checked', 0)}\n"
