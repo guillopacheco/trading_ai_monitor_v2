@@ -149,3 +149,21 @@ async def monitor_open_positions():
 
         except Exception as e:
             logger.error(f"❌ Error evaluando operación {pos}: {e}")
+
+# ============================================================
+# 🏁 Servicio programado — usado por main.py
+# ============================================================
+
+async def start_operation_tracker():
+    """
+    Bucle que ejecuta monitor_open_positions() cada 20 segundos.
+    """
+    logger.info("🔄 Iniciando start_operation_tracker()...")
+
+    while True:
+        try:
+            await monitor_open_positions()
+        except Exception as e:
+            logger.error(f"❌ Error en start_operation_tracker: {e}")
+        await asyncio.sleep(20)  # intervalo estándar
+
