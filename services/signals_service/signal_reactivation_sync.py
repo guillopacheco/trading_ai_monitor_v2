@@ -18,8 +18,6 @@ Compatibilidad:
 import asyncio
 import logging
 
-from motor_wrapper import analyze
-
 from services.technical_engine.motor_wrapper import analyze
 from services.signals_service.signal_manager_db import (
     get_pending_signals,
