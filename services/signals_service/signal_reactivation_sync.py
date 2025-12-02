@@ -26,12 +26,10 @@ from services.signals_service.signal_manager_db import (
     update_signal_match_ratio,
     save_analysis_log
 )
-from services.signals_service.smart_reactivation_validator import evaluate_reactivation
+from services.signals_service.smart_reactivation_validator import validate_reactivation_intelligently
 
 from services.telegram_service.notifier import send_message
 from core.helpers import normalize_symbol
-
-
 
 logger = logging.getLogger("signal_reactivation_sync")
 
@@ -138,6 +136,18 @@ async def _process_pending_signals():
             update_signal_match_ratio(signal_id, match_ratio)
         except Exception as e:
             logger.error(f"⚠️ Error actualizando match_ratio en DB: {e}")
+
+        # Evaluación adicional con el motor antiguo inteligente (compatibilidad)
+        intel = validate_reactivation_intelligently(
+            symbol=symbol,
+            side=direction,
+            entry_price=sig["entry_price"],
+        )
+
+        if not intel.get("allowed", False):
+            logger.info(f"⏳ Señal {symbol} bloqueada por motor inteligente: {intel.get('decision')}")
+            continue
+
 
         # 5) Evaluar reactivación
         allowed, reason = _can_reactivate(analysis, direction)
