@@ -15,20 +15,23 @@ Compatibilidad:
 - start_reactivation_monitor() → usado por main.py
 - run_reactivation_cycle()     → usado por command_bot (/reactivacion)
 """
-
 import asyncio
 import logging
 
 import motor_wrapper
-from services.technical_engine.technical_engine import analyze
-from config import SIGNAL_RECHECK_INTERVAL_MINUTES
-from notifier import send_message
-from signal_manager_db import (
-    get_pending_signals_for_reactivation,
-    mark_signal_reactivated,
+
+from services.technical_engine.motor_wrapper import analyze
+from services.signals_service.signal_manager_db import (
+    get_pending_signals,
+    save_signal_reactivation,
     update_signal_match_ratio,
-    save_analysis_log,
 )
+from services.signals_service.smart_reactivation_validator import evaluate_reactivation
+
+from services.telegram_service.notifier import send_message
+from core.helpers import normalize_symbol
+
+
 
 logger = logging.getLogger("signal_reactivation_sync")
 

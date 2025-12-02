@@ -20,12 +20,13 @@ import asyncio
 import logging
 from typing import Tuple
 
-from bybit_client import get_open_positions
-from notifier import send_message
-from services.technical_engine.technical_engine import analyze
+from services.technical_engine.motor_wrapper import analyze
+from services.bybit_service.bybit_client import get_open_positions
+from services.telegram_service.notifier import send_message
+
+from core.helpers import calculate_roi, calculate_loss_pct_from_roi
 
 logger = logging.getLogger("position_reversal_monitor")
-
 
 # ============================================================
 # 🧮 Cambio porcentual sin apalancamiento
@@ -48,7 +49,6 @@ def _price_change_percent(entry: float, mark: float, direction: str) -> float:
         return change
     except Exception:
         return 0.0
-
 
 # ============================================================
 # 🚨 Lógica moderna de reversión
@@ -105,7 +105,6 @@ def _is_reversal(direction: str, analysis: dict, loss_pct: float) -> Tuple[bool,
         return True, f"Match técnico muy bajo ({match_ratio:.1f}% < {internal_thr}%)."
 
     return False, "Condiciones aún estables."
-
 
 # ============================================================
 # 🚨 Monitor principal

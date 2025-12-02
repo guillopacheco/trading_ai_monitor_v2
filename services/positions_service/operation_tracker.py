@@ -12,18 +12,19 @@ Funciones principales:
 Compatible con modo REAL y SIMULACIÓN.
 --------------------------------------------------------------------
 """
-
 import logging
 import asyncio
 from typing import Dict, Any
 
-# ========================
-# NUEVAS IMPORTACIONES
-# ========================
-from services.technical_engine.technical_engine import analyze
-from helpers import calculate_roi
-from bybit_client import get_open_positions
-from notifier import send_message
+from services.technical_engine.motor_wrapper import analyze
+from services.bybit_service.bybit_client import get_open_positions
+from services.telegram_service.notifier import send_message
+
+from core.helpers import (
+    calculate_roi,
+    calculate_loss_pct_from_roi,
+    calculate_pnl
+)
 
 logger = logging.getLogger("operation_tracker")
 

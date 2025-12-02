@@ -19,11 +19,14 @@ import logging
 import asyncio
 from telethon import events, TelegramClient
 
-from config import TELEGRAM_CHANNEL_ID
-from helpers import normalize_symbol, normalize_direction
-from database import save_signal
-from notifier import send_message
-from motor_wrapper import analyze_for_signal
+from services.technical_engine.motor_wrapper import (
+    analyze_for_signal,
+    analyze_and_format,
+)
+from services.signals_service.signal_manager_db import save_signal
+from services.telegram_service.notifier import send_message
+
+from core.helpers import normalize_symbol, normalize_direction
 
 logger = logging.getLogger("telegram_reader")
 

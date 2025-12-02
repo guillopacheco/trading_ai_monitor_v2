@@ -24,18 +24,18 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes
 )
-from services.technical_engine.technical_engine import analyze
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
-from notifier import send_message
-from database import get_signals, clear_old_records
-from operation_tracker import monitor_open_positions
-from position_reversal_monitor import monitor_reversals
-from signal_reactivation_sync import _process_pending_signals
+from services.technical_engine.motor_wrapper import (
+    analyze,
+    analyze_and_format,
+)
 
+from services.signals_service.signal_reactivation_sync import start_reactivation_loop
+from services.positions_service.operation_tracker import start_operation_tracker
+from services.positions_service.position_reversal_monitor import start_reversal_monitor
 
-# Motor técnico oficial
-from trend_system_final import analyze_and_format
-from helpers import normalize_symbol, normalize_direction
+from services.telegram_service.notifier import send_message
+from core.helpers import normalize_symbol, normalize_direction
+
 
 logger = logging.getLogger("command_bot")
 

@@ -8,14 +8,14 @@ import logging
 from core.logger_config import configure_logging
 from core.database import init_db
 
-# Servicios técnicos
-from signals_service.signal_reactivation_sync import start_reactivation_loop
-from positions_service.operation_tracker import start_operation_tracker
-from positions_service.position_reversal_monitor import start_reversal_monitor
+from services.signals_service.signal_reactivation_sync import start_reactivation_loop
+from services.positions_service.operation_tracker import start_operation_tracker
+from services.positions_service.position_reversal_monitor import start_reversal_monitor
 
-# Servicios de Telegram
-from telegram_service.telegram_reader import start_telegram_reader
-from telegram_service.command_bot import start_command_bot
+from services.telegram_service.telegram_reader import start_telegram_reader
+from services.telegram_service.command_bot import start_command_bot
+
+
 
 
 async def main():
