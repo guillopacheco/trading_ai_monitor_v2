@@ -216,6 +216,25 @@ async def monitor_reversals(interval_seconds: int = 600, run_once: bool = False)
 
         await asyncio.sleep(interval_seconds)
 
+# ============================================================
+# 🏁 Servicio oficial para main.py
+# ============================================================
+
+async def start_reversal_monitor(interval_seconds: int = 600):
+    """
+    Función oficial esperada por main.py.
+    Ejecuta monitor_reversals() en loop infinito.
+    """
+    logger.info("🔄 Iniciando start_reversal_monitor()...")
+
+    while True:
+        try:
+            await monitor_reversals(interval_seconds=interval_seconds, run_once=False)
+        except Exception as e:
+            logger.error(f"❌ Error en start_reversal_monitor: {e}")
+
+        await asyncio.sleep(interval_seconds)
+
 
 if __name__ == "__main__":
     import logging
