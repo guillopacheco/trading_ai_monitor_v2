@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta  # ya se usa en otros módulos del proyecto
 
-from bybit_client import get_ohlcv_data  # mismo cliente usado en indicators.py
+from services.bybit_service.bybit_client import get_ohlcv_data
 
 logger = logging.getLogger("smart_reactivation")
 

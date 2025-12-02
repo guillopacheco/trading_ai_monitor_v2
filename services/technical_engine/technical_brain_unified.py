@@ -20,9 +20,11 @@ Entrega siempre un único diccionario estándar.
 
 import logging
 import pprint
-from config import DEBUG_MODE     # ✔ AQUÍ
+from config import DEBUG_MODE
+
 from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
 from services.technical_engine.smart_entry_validator import evaluate_entry
+from services.technical_engine.smart_divergences import detect_smart_divergences
 from services.technical_engine.indicators import *
 
 logger = logging.getLogger("technical_brain_unified")

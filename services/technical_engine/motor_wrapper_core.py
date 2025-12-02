@@ -22,7 +22,6 @@ trend_system_final.py en analyze_and_format().
 """
 
 from __future__ import annotations
-
 import logging
 from typing import Dict, Any, List, Tuple
 

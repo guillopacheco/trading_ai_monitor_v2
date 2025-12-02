@@ -4,13 +4,13 @@ indicators.py (actualizado 2025-11 con selección dinámica de temporalidades)
 Cálculo técnico multi-temporalidad + divergencias avanzadas + selección automática
 de las 3 mejores temporalidades disponibles para trading de futuros (20x).
 """
-
 import pandas as pd
 import numpy as np
 import pandas_ta as ta
 import logging
+
 from services.bybit_service.bybit_client import get_ohlcv_data
-from smart_divergences import detect_smart_divergences
+from services.technical_engine.smart_divergences import detect_smart_divergences
 
 logger = logging.getLogger("indicators")
 

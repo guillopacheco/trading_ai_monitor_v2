@@ -10,6 +10,7 @@
 import logging
 import numpy as np
 import pandas as pd
+from services.bybit_service.bybit_client import get_ohlcv_data
 
 logger = logging.getLogger("smart_divergences")
 

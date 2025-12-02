@@ -20,9 +20,9 @@ entre análisis de señales, reactivaciones, seguimiento y /analizar.
 import logging
 import pprint
 
-from config import DEBUG_MODE              # ya existe en tu proyecto :contentReference[oaicite:3]{index=3}
-from motor_wrapper_core import get_multi_tf_snapshot  # snapshot multi-TF :contentReference[oaicite:4]{index=4}
-from smart_entry_validator import evaluate_entry      # Smart Entry integrado :contentReference[oaicite:5]{index=5}
+from config import DEBUG_MODE
+from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
+from services.technical_engine.smart_entry_validator import evaluate_entry
 
 logger = logging.getLogger("technical_engine")
 

@@ -17,14 +17,13 @@ No se rompe nada.
 """
 
 import logging
+
 from services.technical_engine.technical_brain_unified import (
     analyze_core,
     compute_bias,
     compute_divergences,
     compute_score,
-    # … cualquier función que realmente use trend_system_final
 )
-
 
 logger = logging.getLogger("trend_system_final")
 

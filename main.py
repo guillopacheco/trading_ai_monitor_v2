@@ -15,9 +15,6 @@ from services.positions_service.position_reversal_monitor import start_reversal_
 from services.telegram_service.telegram_reader import start_telegram_reader
 from services.telegram_service.command_bot import start_command_bot
 
-
-
-
 async def main():
 
     # ---------------------------------------------------
