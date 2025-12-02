@@ -18,37 +18,16 @@ No se rompe nada.
 
 import logging
 
-from services.technical_engine.technical_brain_unified import (
-    analyze_core,
-    compute_bias,
-    compute_divergences,
-    compute_score,
-)
+from services.technical_engine.technical_brain_unified import run_unified_analysis
 
 logger = logging.getLogger("trend_system_final")
-
 
 # ============================================================
 # 📌 FUNCIÓN BASE (utilizada por motor_wrapper)
 # ============================================================
 
-def analyze_trend_core(symbol: str, direction: str = None, context: str = "entry"):
-    """
-    API central que usa motor_wrapper.py.
-    Devuelve un diccionario con el análisis técnico unificado.
-    """
-    try:
-        result = run_unified_analysis(symbol, direction, context=context)
-        return result
-    except Exception as e:
-        logger.error(f"❌ Error en analyze_trend_core: {e}")
-        return {
-            "symbol": symbol,
-            "direction_hint": direction,
-            "allowed": False,
-            "decision": "error",
-            "decision_reasons": [str(e)],
-        }
+def analyze_trend_core(symbol: str, direction_hint: str = None, context: str = "entry"):
+    return run_unified_analysis(symbol, direction_hint, context)
 
 
 # ============================================================
