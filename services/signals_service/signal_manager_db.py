@@ -2,7 +2,6 @@
 signal_manager_db.py — Módulo oficial para gestionar señales en SQLite
 -----------------------------------------------------------------------
 
-Este módulo reemplaza completamente al antiguo.
 Compatible con:
 - telegram_reader.py (save_signal)
 - signal_reactivation_sync.py
@@ -19,41 +18,28 @@ Columnas usadas en tabla `signals`:
     status TEXT ('pending', 'reactivated', 'ignored')
     created_at TEXT
     reactivated_at TEXT
-
-Funciones incluidas:
-✔ get_pending_signals_for_reactivation()
-✔ mark_signal_reactivated()
-✔ update_signal_match_ratio()
-✔ save_analysis_log()
 """
 
 import sqlite3
 import logging
 from datetime import datetime
-from config import DATABASE_PATH
+from core.database import get_db_connection
 
 logger = logging.getLogger("signal_manager_db")
 
 
 # ------------------------------------------------------------
-# 📌 Conexión segura
-# ------------------------------------------------------------
-def _get_conn():
-    return sqlite3.connect(DATABASE_PATH, check_same_thread=False)
-
-
-# ------------------------------------------------------------
-# 📌 Obtener señales pendientes
+# 📌 Obtener señales pendientes para reactivación
 # ------------------------------------------------------------
 def get_pending_signals_for_reactivation():
     """
-    Devuelve una lista de señales con:
-    status = 'pending'
-    entry_price != NULL
+    Devuelve señales con:
+    - status='pending'
+    - entry_price != NULL
     """
 
     try:
-        conn = _get_conn()
+        conn = get_db_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -66,7 +52,6 @@ def get_pending_signals_for_reactivation():
         """)
 
         rows = cur.fetchall()
-        conn.close()
 
         signals = []
         for r in rows:
@@ -88,11 +73,11 @@ def get_pending_signals_for_reactivation():
 
 
 # ------------------------------------------------------------
-# 📌 Marcar una señal como reactivada
+# 📌 Marcar señal como reactivada
 # ------------------------------------------------------------
 def mark_signal_reactivated(signal_id: int):
     try:
-        conn = _get_conn()
+        conn = get_db_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -103,35 +88,32 @@ def mark_signal_reactivated(signal_id: int):
         """, (datetime.utcnow().isoformat(), signal_id))
 
         conn.commit()
-        conn.close()
 
         logger.info(f"♻️ Señal {signal_id} marcada como reactivada.")
 
     except Exception as e:
         logger.error(f"❌ Error en mark_signal_reactivated: {e}")
 
+
 # ------------------------------------------------------------
-# 📌 Marcar una señal como NO reactivada
+# 📌 Marcar señal como NO reactivada
 # ------------------------------------------------------------
 def mark_signal_not_reactivated(signal_id: int, reason: str = "", extra: dict = None):
     """
-    Marca una señal como 'ignored' (no reactivada) y opcionalmente
-    guarda un registro de motivo o datos adicionales.
+    Cambia la señal a 'ignored' y registra un log opcional.
     """
     try:
-        conn = _get_conn()
+        conn = get_db_connection()
         cur = conn.cursor()
 
-        # Marcar como ignorada
         cur.execute("""
             UPDATE signals
             SET status = 'ignored'
             WHERE id = ?
         """, (signal_id,))
-
         conn.commit()
 
-        # Guardar log para análisis posterior
+        # Log opcional
         try:
             details = ""
             if reason:
@@ -146,20 +128,20 @@ def mark_signal_not_reactivated(signal_id: int, reason: str = "", extra: dict = 
             conn.commit()
 
         except Exception as e2:
-            logger.error(f"⚠️ Error guardando log de no activación: {e2}")
+            logger.error(f"⚠️ Error guardando log de ignorar señal: {e2}")
 
-        conn.close()
         logger.info(f"⏳ Señal {signal_id} marcada como NO reactivada.")
 
     except Exception as e:
         logger.error(f"❌ Error en mark_signal_not_reactivated: {e}")
 
+
 # ------------------------------------------------------------
-# 📌 Actualizar match_ratio en tabla signals
+# 📌 Actualizar match_ratio
 # ------------------------------------------------------------
 def update_signal_match_ratio(signal_id: int, match_ratio: float):
     try:
-        conn = _get_conn()
+        conn = get_db_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -169,22 +151,20 @@ def update_signal_match_ratio(signal_id: int, match_ratio: float):
         """, (match_ratio, signal_id))
 
         conn.commit()
-        conn.close()
 
     except Exception as e:
         logger.error(f"❌ Error en update_signal_match_ratio: {e}")
 
 
 # ------------------------------------------------------------
-# 📌 Guardar registro de análisis técnico
+# 📌 Guardar log de análisis
 # ------------------------------------------------------------
 def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, details: str = ""):
     """
     Guarda un registro histórico del análisis técnico de una señal.
     """
-
     try:
-        conn = _get_conn()
+        conn = get_db_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -193,7 +173,6 @@ def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, d
         """, (signal_id, match_ratio, recommendation, details))
 
         conn.commit()
-        conn.close()
 
     except Exception as e:
         logger.error(f"❌ Error guardando en signal_analysis_log: {e}")
