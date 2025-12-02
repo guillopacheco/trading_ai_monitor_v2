@@ -23,7 +23,7 @@ Columnas usadas en tabla `signals`:
 import sqlite3
 import logging
 from datetime import datetime
-from core.database import get_db_connection
+from core.database import get_connection
 
 logger = logging.getLogger("signal_manager_db")
 
@@ -39,7 +39,7 @@ def get_pending_signals_for_reactivation():
     """
 
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -77,7 +77,7 @@ def get_pending_signals_for_reactivation():
 # ------------------------------------------------------------
 def mark_signal_reactivated(signal_id: int):
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -103,7 +103,7 @@ def mark_signal_not_reactivated(signal_id: int, reason: str = "", extra: dict = 
     Cambia la señal a 'ignored' y registra un log opcional.
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -141,7 +141,7 @@ def mark_signal_not_reactivated(signal_id: int, reason: str = "", extra: dict = 
 # ------------------------------------------------------------
 def update_signal_match_ratio(signal_id: int, match_ratio: float):
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
@@ -164,7 +164,7 @@ def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, d
     Guarda un registro histórico del análisis técnico de una señal.
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
