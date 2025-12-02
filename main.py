@@ -37,9 +37,9 @@ async def main():
     # 3) Inicializar cliente Telegram (Telethon)
     # ---------------------------------------------------
     client = TelegramClient(
-        TELEGRAM_SESSION_NAME,
-        TELEGRAM_API_ID,
-        TELEGRAM_API_HASH
+        TELEGRAM_SESSION,
+        API_ID,
+        API_HASH
     )
     await client.start()
 
