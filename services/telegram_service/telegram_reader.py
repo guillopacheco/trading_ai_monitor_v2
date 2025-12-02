@@ -18,6 +18,7 @@ import re
 import logging
 import asyncio
 from telethon import events, TelegramClient
+from config import TELEGRAM_CHANNEL_ID
 
 from services.technical_engine.motor_wrapper import (
     analyze_for_signal,
