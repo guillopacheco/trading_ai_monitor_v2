@@ -125,3 +125,6 @@ if __name__ == "__main__":
     print("📘 Validando configuración...")
     validate_config()
     print("✔ Configuración OK.")
+
+# Intervalo en minutos para revisar señales pendientes
+SIGNAL_RECHECK_INTERVAL_MINUTES = 5

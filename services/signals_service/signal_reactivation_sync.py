@@ -30,6 +30,8 @@ from services.signals_service.smart_reactivation_validator import validate_react
 
 from services.telegram_service.notifier import send_message
 from core.helpers import normalize_symbol
+from config import SIGNAL_RECHECK_INTERVAL_MINUTES
+
 
 logger = logging.getLogger("signal_reactivation_sync")
 
