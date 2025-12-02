@@ -139,3 +139,7 @@ MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 
+# Modo de análisis del motor técnico
+# Opciones: "normal" / "aggressive" / "conservative"
+ANALYSIS_MODE = os.getenv("ANALYSIS_MODE", "normal")
+
