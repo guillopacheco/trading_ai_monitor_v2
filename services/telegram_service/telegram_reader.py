@@ -18,7 +18,7 @@ import re
 import logging
 import asyncio
 from telethon import events, TelegramClient
-from trading_ai_monitor_v2.config import TELEGRAM_CHANNEL_ID, SIMULATION_MODE
+from config import TELEGRAM_CHANNEL_ID, SIMULATION_MODE
 
 from services.technical_engine.motor_wrapper import (
     analyze_for_signal,
