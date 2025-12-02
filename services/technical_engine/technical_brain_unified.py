@@ -22,7 +22,7 @@ import logging
 import pprint
 from config import DEBUG_MODE     # ✔ AQUÍ
 from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
-from services.technical_engine.smart_entry_validator import evaluate_entry_smart
+from services.technical_engine.smart_entry_validator import evaluate_entry
 from services.technical_engine.indicators import *
 
 logger = logging.getLogger("technical_brain_unified")
