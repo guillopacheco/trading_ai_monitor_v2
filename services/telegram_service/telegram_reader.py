@@ -31,7 +31,6 @@ from core.helpers import normalize_symbol, normalize_direction
 
 logger = logging.getLogger("telegram_reader")
 
-
 # ============================================================
 # 🔍 Expresiones regulares robustas
 # ============================================================
@@ -251,6 +250,11 @@ def attach_listeners(client: TelegramClient):
 # ============================================================
 # 🚀 Inicializar lector
 # ============================================================
-def start_telegram_reader(client: TelegramClient):
+async def start_telegram_reader(client: TelegramClient):
     attach_listeners(client)
     logger.info("📡 Lector de señales activo y escuchando canal VIP.")
+
+    # Mantener activo el listener de Telethon
+    while True:
+        await asyncio.sleep(3600)
+
