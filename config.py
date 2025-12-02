@@ -128,3 +128,9 @@ if __name__ == "__main__":
 
 # Intervalo en minutos para revisar señales pendientes
 SIGNAL_RECHECK_INTERVAL_MINUTES = 5
+
+# Parámetros EMA usados por el motor técnico
+EMA_SHORT_PERIOD = 10
+EMA_MID_PERIOD   = 30
+EMA_LONG_PERIOD  = 50
+

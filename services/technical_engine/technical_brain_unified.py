@@ -26,6 +26,8 @@ from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
 from services.technical_engine.smart_entry_validator import evaluate_entry
 from services.technical_engine.smart_divergences import detect_smart_divergences
 from services.technical_engine.indicators import *
+from config import EMA_SHORT_PERIOD, EMA_MID_PERIOD, EMA_LONG_PERIOD
+
 
 logger = logging.getLogger("technical_brain_unified")
 
