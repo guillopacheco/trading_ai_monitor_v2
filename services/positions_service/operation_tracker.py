@@ -9,26 +9,26 @@ Funciones principales:
 ✔ Evalúa pérdida, tendencia y sesgo smart
 ✔ Produce recomendaciones claras: mantener / cerrar / revertir
 ✔ Envía alertas automáticas vía notifier.send_message()
-Compatible con modo REAL y SIMULACIÓN.
+✔ Compatible con modo REAL y SIMULACIÓN.
 --------------------------------------------------------------------
 """
 import logging
 import asyncio
 from typing import Dict, Any
 
-from services.technical_engine.motor_wrapper import analyze
+from services.technical_engine.trend_system_final import analyze_trend_core
 from services.bybit_service.bybit_client import get_open_positions
 from services.telegram_service.notifier import send_message
 
 from core.helpers import (
     calculate_roi,
     calculate_loss_pct_from_roi,
-    calculate_pnl
+    calculate_pnl,
 )
 
 logger = logging.getLogger("operation_tracker")
 
-# Niveles de pérdida considerados críticos
+# Niveles de pérdida considerados críticos (ROI con apalancamiento)
 LOSS_LEVELS = [-20, -30, -50, -70]
 
 
@@ -42,10 +42,6 @@ def compute_loss_level(roi: float) -> int | None:
             return lvl
     return None
 
-
-# ============================================================
-# 🧠 Recomendación basada en trend_system_final
-# ============================================================
 
 # ============================================================
 # 🚨 Monitor principal de operaciones
@@ -80,7 +76,7 @@ async def monitor_open_positions():
                 logger.warning(f"⚠️ Entrada inválida: {pos}")
                 continue
 
-            # ROI real (with leverage)
+            # ROI real (con apalancamiento)
             roi = calculate_roi(
                 entry_price=entry,
                 current_price=mark,
@@ -88,26 +84,28 @@ async def monitor_open_positions():
                 leverage=lev,
             )
 
+            # Pérdida sin apalancamiento aproximada
+            loss_pct = calculate_loss_pct_from_roi(roi, lev)
+
             logger.info(
                 f"🔎 {symbol} | {direction.upper()} x{lev} | ROI={roi:.2f}% | Entry={entry} Mark={mark}"
             )
 
             loss_level = compute_loss_level(roi)
             if loss_level is None:
-                # Operación sin pérdidas críticas
+                # Operación sin pérdidas críticas → no molestamos
                 continue
 
             # =======================================================
             # 🔍 Análisis técnico profundo via trend_system_final
             # =======================================================
-            analysis = analyze(
+            analysis = analyze_trend_core(
                 symbol=symbol,
-                direction_hint=direction,
+                direction=direction,
                 context="operation",
-                roi=roi,                  # ROI con apalancamiento
-                loss_pct=roi / lev        # pérdida sin apalancamiento (aprox)
+                roi=roi,          # ROI con apalancamiento
+                loss_pct=loss_pct # pérdida aproximada sin apalancamiento
             )
-
 
             # =======================================================
             # 🎯 Recomendación final
@@ -129,7 +127,6 @@ async def monitor_open_positions():
             if reasons:
                 suggestion += "\n📝 Motivos:\n - " + "\n - ".join(reasons)
 
-
             # =======================================================
             # 📩 Notificación al usuario
             # =======================================================
@@ -150,6 +147,7 @@ async def monitor_open_positions():
         except Exception as e:
             logger.error(f"❌ Error evaluando operación {pos}: {e}")
 
+
 # ============================================================
 # 🏁 Servicio programado — usado por main.py
 # ============================================================
@@ -166,4 +164,3 @@ async def start_operation_tracker():
         except Exception as e:
             logger.error(f"❌ Error en start_operation_tracker: {e}")
         await asyncio.sleep(20)  # intervalo estándar
-

@@ -1,6 +1,7 @@
 """
 trend_system_final.py — versión UNIFICADA 2025-11
 -------------------------------------------------
+
 Este módulo ya NO realiza análisis técnico por sí mismo.
 Ahora actúa como FACHADA hacia el motor técnico unificado:
 
@@ -8,26 +9,66 @@ Ahora actúa como FACHADA hacia el motor técnico unificado:
 
 Se mantiene 100% compatible con motor_wrapper.py y resto de la app:
 
-✔ analyze_trend_core()  → usado por motor_wrapper
+✔ analyze_trend_core()  → usado por motor_wrapper y operation_tracker
 ✔ analyze_and_format()  → usado por Telegram (textos)
 ✔ get_thresholds()      → usado por reactivación/monitoreo
 
-No se rompe nada.
 -------------------------------------------------
 """
 
 import logging
+from typing import Optional
 
-from services.technical_engine.technical_brain_unified import run_unified_analysis
+from services.technical_engine.technical_brain_unified import (
+    run_unified_analysis,
+    get_thresholds,
+)
 
 logger = logging.getLogger("trend_system_final")
 
+
 # ============================================================
-# 📌 FUNCIÓN BASE (utilizada por motor_wrapper)
+# 📌 FUNCIÓN BASE (utilizada por motor_wrapper y operation_tracker)
 # ============================================================
 
-def analyze_trend_core(symbol: str, direction_hint: str = None, context: str = "entry"):
-    return run_unified_analysis(symbol, direction_hint, context)
+def analyze_trend_core(
+    symbol: str,
+    direction: Optional[str] = None,
+    context: str = "entry",
+    roi: Optional[float] = None,
+    loss_pct: Optional[float] = None,
+):
+    """
+    API central que usan motor_wrapper.py y operation_tracker.py.
+    Devuelve un diccionario con el análisis técnico unificado.
+
+    Parámetros:
+    - symbol: par (ej. "BTCUSDT")
+    - direction: "long"/"short" (hint de dirección)
+    - context: "entry", "reactivation", "reversal", "operation"
+    - roi: ROI con apalancamiento (opcional, solo para context="operation")
+    - loss_pct: pérdida sin apalancamiento (opcional, solo para context="operation")
+    """
+    try:
+        result = run_unified_analysis(
+            symbol,
+            direction,
+            context=context,
+            roi=roi,
+            loss_pct=loss_pct,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"❌ Error en analyze_trend_core: {e}")
+        return {
+            "symbol": symbol,
+            "direction_hint": direction,
+            "allowed": False,
+            "decision": "error",
+            "decision_reasons": [str(e)],
+            "roi": roi,
+            "loss_pct": loss_pct,
+        }
 
 
 # ============================================================
@@ -91,7 +132,7 @@ def analyze_and_format(symbol: str, direction: str = None):
         f"• Match Ratio: {match_ratio:.1f}%",
         f"• Score Técnico: {tech_score:.1f}",
         f"• Smart Bias: {smart_bias}",
-        f"• Calidad Entrada: {entry_grade} ({entry_mode.upper()})"
+        f"• Calidad Entrada: {entry_grade} ({entry_mode.upper()})",
     ]
 
     # ============================
@@ -102,7 +143,6 @@ def analyze_and_format(symbol: str, direction: str = None):
         tfs_list.append(f"{k}: {v.capitalize()}")
 
     temporalidades = " • ".join(tfs_list)
-
     tf_block = f"🕒 **Temporalidades**\n{temporalidades}"
 
     # ============================
@@ -163,18 +203,19 @@ def analyze_and_format(symbol: str, direction: str = None):
         "",
         motivos_block,
         "",
-        sugerencia
+        sugerencia,
     ]
 
     return "\n".join(part for part in parts if part.strip())
 
 
 # ============================================================
-# ⚙️ GET THRESHOLDS (API pública)
+# ⚙️ GET THRESHOLDS (api pública)
 # ============================================================
 
 def _get_thresholds():
     return get_thresholds()
+
 
 # Compatibilidad con motor_wrapper
 get_thresholds_public = _get_thresholds

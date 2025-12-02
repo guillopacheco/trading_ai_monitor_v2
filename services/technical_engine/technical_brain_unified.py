@@ -20,14 +20,13 @@ Entrega siempre un único diccionario estándar.
 
 import logging
 import pprint
-from config import DEBUG_MODE
+from typing import Optional
 
+from config import DEBUG_MODE, EMA_SHORT_PERIOD, EMA_MID_PERIOD, EMA_LONG_PERIOD
 from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
 from services.technical_engine.smart_entry_validator import evaluate_entry
 from services.technical_engine.smart_divergences import detect_smart_divergences
 from services.technical_engine.indicators import *
-from config import EMA_SHORT_PERIOD, EMA_MID_PERIOD, EMA_LONG_PERIOD
-
 
 logger = logging.getLogger("technical_brain_unified")
 
@@ -44,11 +43,18 @@ THRESHOLDS = {
         "min_match": 50,
         "min_score": 45,
     },
+    # Uso interno genérico
     "internal": {
         "min_match": 45,
         "min_score": 40,
-    }
+    },
+    # Nuevo contexto para operaciones abiertas
+    "operation": {
+        "min_match": 45,
+        "min_score": 40,
+    },
 }
+
 
 def get_thresholds():
     """Exporta thresholds compatibles con motor_wrapper."""
@@ -80,14 +86,15 @@ def _confidence_label(c):
         return "medium"
     return "low"
 
+
 def _debug_report(symbol, direction_hint, snapshot, entry, final):
     """
     Genera un reporte detallado del proceso técnico.
     Solo aparece si DEBUG_MODE = True.
     """
-    logger.info("\n" + "="*70)
+    logger.info("\n" + "=" * 70)
     logger.info(f"🟦 DEBUG REPORT — {symbol} ({direction_hint})")
-    logger.info("="*70)
+    logger.info("=" * 70)
 
     # ---------- SNAPSHOT ----------
     logger.info("\n📌 SNAPSHOT MULTI-TF (raw):")
@@ -110,16 +117,27 @@ def _debug_report(symbol, direction_hint, snapshot, entry, final):
     except Exception:
         logger.info(str(final))
 
-    logger.info("="*70 + "\n")
+    logger.info("=" * 70 + "\n")
+
 
 # ============================================================
 # 🧠 Motor técnico unificado
 # ============================================================
 
-def run_unified_analysis(symbol: str, direction_hint: str = None, context: str = "entry"):
+def run_unified_analysis(
+    symbol: str,
+    direction_hint: Optional[str] = None,
+    context: str = "entry",
+    roi: Optional[float] = None,
+    loss_pct: Optional[float] = None,
+):
     """
     Motor técnico principal.
     Produce una estructura final consistente que usa toda la app.
+
+    Parámetros extra:
+    - roi: ROI con apalancamiento (porcentaje, ej -55.0)
+    - loss_pct: pérdida sin apalancamiento (aprox), útil para lógica de riesgo.
     """
 
     try:
@@ -153,11 +171,12 @@ def run_unified_analysis(symbol: str, direction_hint: str = None, context: str =
         entry_reasons = entry.get("entry_reasons", [])
 
         # --------------------------------------------------------
-        # 3) DECISIÓN PRINCIPAL (entrada / reactivación / reversión)
+        # 3) DECISIÓN PRINCIPAL (entrada / reactivación / reversión / operación)
         # --------------------------------------------------------
         decision = "wait"
         decision_reasons = []
         allowed = False
+        risk_level = None  # solo se usa en contexto "operation"
 
         # Selección threshold según contexto
         ctx_thr = THRESHOLDS.get(context, THRESHOLDS["entry"])
@@ -225,7 +244,79 @@ def run_unified_analysis(symbol: str, direction_hint: str = None, context: str =
                 decision = "wait"
                 decision_reasons.append("Reversión fuerte detectada → esperar")
 
-        # ---------- C. REVERSIÓN (monitoreo) ----------
+        # ---------- C. OPERACIONES ABIERTAS (monitor de riesgo) ----------
+        elif context == "operation":
+            # ROI y pérdida sin apalancamiento
+            # ROI suele venir en %, ej: -55.0
+            base_loss = loss_pct
+            if base_loss is None and roi is not None:
+                # aproximación: pérdida sin apalancamiento ≈ roi / leverage
+                # (ya viene calculado en operation_tracker, pero dejamos fallback)
+                base_loss = roi
+
+            # Clasificación gruesa del nivel de pérdida
+            if base_loss is not None:
+                if base_loss <= -70:
+                    risk_level = "critical"
+                elif base_loss <= -50:
+                    risk_level = "high"
+                elif base_loss <= -30:
+                    risk_level = "medium"
+                elif base_loss <= -20:
+                    risk_level = "low"
+                else:
+                    risk_level = "very-low"
+
+            decision = "hold"
+            allowed = False
+
+            # Beneficio alto: sugerir mantener salvo señales claras de giro
+            if roi is not None and roi >= 30:
+                decision_reasons.append("Beneficio elevado, sin necesidad de cierre inmediato.")
+
+            # Si la pérdida es baja o muy baja → mantener, salvo reversión muy fuerte
+            if risk_level in (None, "very-low", "low"):
+                decision = "hold"
+                allowed = False
+                if risk_level is not None:
+                    decision_reasons.append("Pérdida controlada, estructura no crítica.")
+
+                if "reversal" in smart_bias and grade in ("C", "D"):
+                    # Hay reversión potencial pero pérdida aún manejable
+                    decision = "watch"
+                    allowed = True
+                    decision_reasons.append("Señales de reversión con pérdida moderada → vigilar de cerca.")
+
+            # Pérdida media → vigilar activamente
+            elif risk_level == "medium":
+                decision = "watch"
+                allowed = True
+                decision_reasons.append("Pérdida moderada, requiere vigilancia activa.")
+
+                # Si además la estructura técnica es floja
+                if match_ratio < min_match or technical_score < min_score or grade == "D":
+                    decision = "close"
+                    decision_reasons.append(
+                        "Pérdida moderada + estructura técnica débil → cerrar para proteger capital."
+                    )
+
+            # Pérdida alta o crítica
+            elif risk_level in ("high", "critical"):
+                # Si hay señales fuertes de giro
+                if "reversal" in smart_bias or grade == "D":
+                    decision = "revert"
+                    allowed = True
+                    decision_reasons.append(
+                        "Pérdida elevada + señales fuertes de reversión → considerar revertir posición."
+                    )
+                else:
+                    decision = "close"
+                    allowed = True
+                    decision_reasons.append(
+                        "Pérdida elevada sin soporte técnico suficiente → cerrar posición."
+                    )
+
+        # ---------- D. REVERSIÓN (monitoreo puro) ----------
         elif context == "reversal":
             decision = "neutral"
             allowed = False
@@ -255,11 +346,13 @@ def run_unified_analysis(symbol: str, direction_hint: str = None, context: str =
                     "match_ratio": match_ratio,
                     "grade": grade,
                     "confidence": confidence,
+                    "risk_level": risk_level,
+                    "roi": roi,
+                    "loss_pct": loss_pct,
                 }
                 _debug_report(symbol, direction_hint, snapshot, entry_block, final_block)
             except Exception as e:
                 logger.warning(f"⚠️ Error generando debug report: {e}")
-
 
         # --------------------------------------------------------
         # 4) ESTRUCTURA FINAL
@@ -294,6 +387,11 @@ def run_unified_analysis(symbol: str, direction_hint: str = None, context: str =
             "entry_allowed": entry_allowed,
             "entry_reasons": entry_reasons,
 
+            # Datos de operación (solo si context="operation")
+            "roi": roi,
+            "loss_pct": loss_pct,
+            "operation_risk_level": risk_level,
+
             # Debug
             "debug": {
                 "raw_snapshot": snapshot,
@@ -310,5 +408,7 @@ def run_unified_analysis(symbol: str, direction_hint: str = None, context: str =
             "allowed": False,
             "decision": "error",
             "decision_reasons": [str(e)],
-            "debug": {"error": str(e)}
+            "roi": roi,
+            "loss_pct": loss_pct,
+            "debug": {"error": str(e), "context": context},
         }
