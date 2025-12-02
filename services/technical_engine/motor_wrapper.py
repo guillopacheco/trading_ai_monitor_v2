@@ -15,7 +15,6 @@ La API pública NO cambia.
 import logging
 
 from services.technical_engine.trend_system_final import analyze_trend_core
-from services.technical_engine.technical_engine import format_analysis
 
 logger = logging.getLogger("motor_wrapper")
 
