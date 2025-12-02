@@ -29,7 +29,18 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 
+
+
 from services.bybit_service.bybit_client import get_ohlcv_data
+from config import (
+    EMA_SHORT_PERIOD,
+    EMA_LONG_PERIOD,
+    MACD_FAST,
+    MACD_SLOW,
+    MACD_SIGNAL,
+    ANALYSIS_MODE
+)
+
 
 logger = logging.getLogger("motor_wrapper")
 
