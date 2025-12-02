@@ -5,6 +5,9 @@ main.py — Punto de entrada unificado del Trading AI Monitor
 import asyncio
 import logging
 
+from telethon import TelegramClient
+from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_NAME
+
 from core.logger_config import configure_logging
 from core.database import init_db
 
@@ -14,16 +17,7 @@ from services.positions_service.position_reversal_monitor import start_reversal_
 
 from services.telegram_service.telegram_reader import start_telegram_reader
 from services.telegram_service.command_bot import start_command_bot
-from telethon import TelegramClient
-from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_NAME
 
-client = TelegramClient(
-    TELEGRAM_SESSION_NAME,
-    TELEGRAM_API_ID,
-    TELEGRAM_API_HASH
-)
-
-await client.start()
 
 async def main():
 
@@ -40,26 +34,35 @@ async def main():
     init_db()
 
     # ---------------------------------------------------
-    # 3) Iniciar servicios Telegram (lector + bot)
+    # 3) Inicializar cliente Telegram (Telethon)
+    # ---------------------------------------------------
+    client = TelegramClient(
+        TELEGRAM_SESSION_NAME,
+        TELEGRAM_API_ID,
+        TELEGRAM_API_HASH
+    )
+    await client.start()
+
+    # ---------------------------------------------------
+    # 4) Iniciar servicios Telegram
     # ---------------------------------------------------
     logger.info("📡 Iniciando telegram_reader y command_bot...")
     reader_task = asyncio.create_task(start_telegram_reader(client))
-    bot_task   = asyncio.create_task(start_command_bot(client))
-
+    bot_task    = asyncio.create_task(start_command_bot(client))
 
     # ---------------------------------------------------
-    # 4) Iniciar servicios de análisis técnico
+    # 5) Iniciar servicios técnicos
     # ---------------------------------------------------
     logger.info("🧠 Iniciando servicios técnicos...")
 
     reactivation_task = asyncio.create_task(start_reactivation_monitor())
-    operations_task = asyncio.create_task(start_operation_tracker())
-    reversal_task = asyncio.create_task(start_reversal_monitor())
+    operations_task   = asyncio.create_task(start_operation_tracker())
+    reversal_task     = asyncio.create_task(start_reversal_monitor())
 
     logger.info("✅ Todos los servicios iniciados correctamente.")
 
     # ---------------------------------------------------
-    # 5) Mantener servicios activos
+    # 6) Mantener servicios activos
     # ---------------------------------------------------
     await asyncio.gather(
         reader_task,
@@ -68,7 +71,6 @@ async def main():
         operations_task,
         reversal_task,
     )
-
 
 if __name__ == "__main__":
     asyncio.run(main())
