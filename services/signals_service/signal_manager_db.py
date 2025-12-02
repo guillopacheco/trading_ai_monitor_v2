@@ -176,3 +176,44 @@ def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, d
 
     except Exception as e:
         logger.error(f"❌ Error guardando en signal_analysis_log: {e}")
+
+# ------------------------------------------------------------
+# 📌 Guardar una señal nueva (usado por telegram_reader)
+# ------------------------------------------------------------
+def save_signal(data: dict):
+    """
+    Inserta una nueva señal en la tabla 'signals'.
+    data = {
+        "symbol": str,
+        "direction": str,
+        "entry_price": float,
+        "take_profits": list,
+        "leverage": int,
+        "recommendation": str,
+        "match_ratio": float,
+    }
+    """
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO signals
+            (symbol, direction, leverage, entry_price, take_profits, match_ratio, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+        """, (
+            data["symbol"],
+            data["direction"],
+            data.get("leverage", 20),
+            data["entry_price"],
+            ",".join(str(tp) for tp in data.get("take_profits", []) if tp is not None),
+            data.get("match_ratio", 0.0),
+            datetime.utcnow().isoformat()
+        ))
+
+        conn.commit()
+        logger.info(f"💾 Señal guardada: {data['symbol']} ({data['direction']})")
+
+    except Exception as e:
+        logger.error(f"❌ Error guardando señal: {e}")
