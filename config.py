@@ -134,3 +134,8 @@ EMA_SHORT_PERIOD = 10
 EMA_MID_PERIOD   = 30
 EMA_LONG_PERIOD  = 50
 
+# Parámetros MACD usados por el motor técnico
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+
