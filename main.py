@@ -6,7 +6,7 @@ import asyncio
 import logging
 
 from telethon import TelegramClient
-from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_SESSION_NAME
+from config import API_ID, API_HASH, TELEGRAM_SESSION
 
 from core.logger_config import configure_logging
 from core.database import init_db
