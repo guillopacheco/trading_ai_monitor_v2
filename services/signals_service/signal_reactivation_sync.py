@@ -20,9 +20,11 @@ import logging
 
 from services.technical_engine.motor_wrapper import analyze
 from services.signals_service.signal_manager_db import (
-    get_pending_signals,
-    save_signal_reactivation,
+    get_pending_signals_for_reactivation,
+    mark_signal_reactivated,
+    mark_signal_not_reactivated,
     update_signal_match_ratio,
+    save_analysis_log
 )
 from services.signals_service.smart_reactivation_validator import evaluate_reactivation
 
