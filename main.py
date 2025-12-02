@@ -8,7 +8,7 @@ import logging
 from core.logger_config import configure_logging
 from core.database import init_db
 
-from services.signals_service.signal_reactivation_sync import start_reactivation_loop
+from services.signals_service.signal_reactivation_sync import start_reactivation_monitor
 from services.positions_service.operation_tracker import start_operation_tracker
 from services.positions_service.position_reversal_monitor import start_reversal_monitor
 
@@ -41,7 +41,7 @@ async def main():
     # ---------------------------------------------------
     logger.info("🧠 Iniciando servicios técnicos...")
 
-    reactivation_task = asyncio.create_task(start_reactivation_loop())
+    reactivation_task = asyncio.create_task(start_reactivation_monitor())
     operations_task = asyncio.create_task(start_operation_tracker())
     reversal_task = asyncio.create_task(start_reversal_monitor())
 
