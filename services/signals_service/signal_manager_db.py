@@ -24,6 +24,7 @@ import sqlite3
 import logging
 from datetime import datetime
 from core.database import get_connection
+import json
 
 logger = logging.getLogger("signal_manager_db")
 
@@ -159,23 +160,40 @@ def update_signal_match_ratio(signal_id: int, match_ratio: float):
 # ------------------------------------------------------------
 # 📌 Guardar log de análisis
 # ------------------------------------------------------------
-def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, details: str = ""):
+
+def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, details=None):
     """
     Guarda un registro histórico del análisis técnico de una señal.
+
+    details puede ser:
+    - str
+    - dict
+    - list
+    - None
     """
+
     try:
         conn = get_connection()
         cur = conn.cursor()
 
+        # 🔄 Normalizar detalles
+        if isinstance(details, (dict, list)):
+            details_str = json.dumps(details, ensure_ascii=False)
+        elif details is None:
+            details_str = ""
+        else:
+            details_str = str(details)
+
         cur.execute("""
             INSERT INTO signal_analysis_log (signal_id, match_ratio, recommendation, details)
             VALUES (?, ?, ?, ?)
-        """, (signal_id, match_ratio, recommendation, details))
+        """, (signal_id, match_ratio, recommendation, details_str))
 
         conn.commit()
 
     except Exception as e:
         logger.error(f"❌ Error guardando en signal_analysis_log: {e}")
+
 
 # ------------------------------------------------------------
 # 📌 Guardar una señal nueva (usado por telegram_reader)
