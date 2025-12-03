@@ -1,513 +1,357 @@
 """
 smart_reactivation_validator.py
 --------------------------------
-Módulo de VALIDACIÓN DE REACTIVACIÓN INTELIGENTE.
+Módulo de VALIDACIÓN DE REACTIVACIÓN INTELIGENTE (v2 unificado).
 
 Objetivo:
-- Evitar reactivaciones tipo QUSDT (TP2 alcanzado y luego se muere el movimiento).
-- Distinguir entre:
-    - Reactivar (la tendencia sigue fuerte a favor).
-    - Esperar (hay dudas / rebote técnico).
-    - Cancelar reactivación (alto riesgo de reversión).
+- Usar el MISMO motor técnico unificado que el resto de la app.
+- Dejar de hacer consultas OHLCV independientes.
+- Relajar la exigencia de tener siempre 15m + 1h:
+    * Si faltan 15m o 1h, se usan los timeframes disponibles.
+    * Solo se bloquea si REALMENTE no hay datos.
 
-Se apoya en:
-- Tendencia por EMAs (rápida / lenta).
-- Momentum (MACD, RSI, estocástico).
-- Contexto de volatilidad (ATR / elasticidad de Bollinger).
-- Posición del precio respecto a bandas / EMAs.
-- “Hint” opcional de divergencias (texto ya calculado por el motor principal).
-
-API principal:
-    validate_reactivation_intelligently(...)
-Devuelve un dict listo para ser interpretado por signal_reactivation_sync.
+Flujo:
+1) Llama a motor_wrapper.analyze_for_reactivation(symbol, side) (o fallback a analyze()).
+2) Usa el snapshot multi–TF (ya con fallback desde motor_wrapper_core).
+3) Evalúa:
+    - Alineación de tendencia mayor vs lado de la señal.
+    - Sesgo inteligente (smart_bias).
+    - Puntuación técnica global.
+    - Decisión base del motor (allowed/decision).
+4) Devuelve:
+    - decision: "reactivate" | "wait" | "cancel"
+    - score: 0–100
+    - reasons: lista de explicaciones.
+    - scores/metrics: detalle para logs y depuración.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass, asdict
-from typing import Literal, Optional, Dict, Any, List, Tuple
-
 import logging
-import numpy as np
-import pandas as pd
-import pandas_ta as ta  # ya se usa en otros módulos del proyecto
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, List, Optional
 
-from services.bybit_service.bybit_client import get_ohlcv_data
+from services.technical_engine import motor_wrapper
 
 logger = logging.getLogger("smart_reactivation")
 
-Side = Literal["LONG", "SHORT"]
-Decision = Literal["reactivar", "esperar", "cancelar"]
 
-
-# ============================================================================
-# 🔹 Dataclasses de resultado
-# ============================================================================
-
-@dataclass
-class ReactivationScores:
-    trend_score: float
-    momentum_score: float
-    volatility_score: float
-    exhaustion_penalty: float
-    divergence_penalty: float
-    total_score: float
-
+# ============================================================
+# 📦 Dataclass de salida
+# ============================================================
 
 @dataclass
 class ReactivationDecision:
     symbol: str
-    side: Side
-    decision: Decision
+    side: str
+    decision: str
     score: float
     reasons: List[str]
-    scores: ReactivationScores
+    scores: Dict[str, float]
     metrics: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        # scores como dict simple
-        d["scores"] = asdict(self.scores)
-        return d
+        return asdict(self)
 
 
-# ============================================================================
-# 🔹 Utilidades técnicas internas
-# ============================================================================
+# ============================================================
+# 🧮 Utilidades internas
+# ============================================================
 
-def _load_ohlcv(symbol: str, tf: str, limit: int = 200) -> Optional[pd.DataFrame]:
+def _side_to_trend_code(side: str) -> Optional[str]:
     """
-    Envuelve get_ohlcv_data para obtener datos limpios.
-    Se asume que get_ohlcv_data ya devuelve columnas:
-    ['open','high','low','close','volume', ...] y un índice datetime.
+    Convierte el lado de la señal a código de tendencia del motor.
+    long  -> "bull"
+    short -> "bear"
     """
-    try:
-        df = get_ohlcv_data(symbol, tf, limit=limit)
-    except Exception as e:
-        logger.error(f"❌ Error al obtener OHLCV {symbol} ({tf}): {e}")
+    if not side:
         return None
-
-    if df is None or df.empty:
-        logger.warning(f"⚠️ Sin datos OHLCV para {symbol} ({tf})")
-        return None
-
-    # Aseguramos orden por tiempo
-    df = df.sort_index()
-    return df
+    s = side.lower()
+    if s.startswith("long") or s.startswith("buy"):
+        return "bull"
+    if s.startswith("short") or s.startswith("sell"):
+        return "bear"
+    return None
 
 
-def _add_indicators(df: pd.DataFrame,
-                    ema_fast: int = 10,
-                    ema_slow: int = 30) -> pd.DataFrame:
-    """Añade EMAs, RSI, MACD, Estocástico, ATR, Bandas de Bollinger."""
-    out = df.copy()
-
-    # EMAs
-    out["ema_fast"] = ta.ema(out["close"], length=ema_fast)
-    out["ema_slow"] = ta.ema(out["close"], length=ema_slow)
-
-    # RSI
-    out["rsi"] = ta.rsi(out["close"], length=14)
-
-    # MACD estándar
-    macd = ta.macd(out["close"], fast=12, slow=26, signal=9)
-    if macd is not None:
-        out["macd"] = macd["MACD_12_26_9"]
-        out["macd_signal"] = macd["MACDs_12_26_9"]
-        out["macd_hist"] = macd["MACDh_12_26_9"]
-
-    # Estocástico
-    stoch = ta.stoch(out["high"], out["low"], out["close"], k=14, d=3, smooth_k=3)
-    if stoch is not None:
-        out["stoch_k"] = stoch["STOCHk_14_3_3"]
-        out["stoch_d"] = stoch["STOCHd_14_3_3"]
-
-    # ATR
-    out["atr"] = ta.atr(out["high"], out["low"], out["close"], length=14)
-
-    # Bandas de Bollinger (20, 2)
-    bb = ta.bbands(out["close"], length=20, std=2)
-    if bb is not None:
-        out["bb_lower"] = bb[f"BBL_20_2.0"]
-        out["bb_mid"] = bb[f"BBM_20_2.0"]
-        out["bb_upper"] = bb[f"BBU_20_2.0"]
-        out["bb_width"] = (out["bb_upper"] - out["bb_lower"]) / out["bb_mid"]
-
-    return out
+def _classify_grade(score: float) -> str:
+    """Convierte puntaje global 0–100 a etiqueta simple."""
+    if score >= 75:
+        return "strong"
+    if score >= 55:
+        return "medium"
+    return "weak"
 
 
-def _trend_direction(row: pd.Series, side: Side) -> float:
-    """
-    Devuelve un valor de -1 a +1 indicando qué tan alineada está la
-    micro-tendencia con el side pedido.
-    """
-    ema_fast = row.get("ema_fast")
-    ema_slow = row.get("ema_slow")
-    if pd.isna(ema_fast) or pd.isna(ema_slow):
-        return 0.0
-
-    # si estamos en LONG, queremos ema_fast > ema_slow
-    # si estamos en SHORT, queremos ema_fast < ema_slow
-    diff = (ema_fast - ema_slow) / ema_slow if ema_slow != 0 else 0
-    if side == "LONG":
-        base = np.clip(diff * 10, -1, 1)
-    else:
-        base = np.clip(-diff * 10, -1, 1)
-    return float(base)
-
-
-def _trend_slope(df: pd.DataFrame, side: Side, lookback: int = 5) -> float:
-    """
-    Evalúa la pendiente de la EMA rápida en las últimas N velas.
-    Valor aproximado entre -1 y +1.
-    """
-    if len(df) < lookback + 1:
-        return 0.0
-    ema = df["ema_fast"].tail(lookback + 1).values
-    if np.any(np.isnan(ema)):
-        return 0.0
-    # cambio relativo
-    delta = ema[-1] - ema[0]
-    rel = delta / ema[0] if ema[0] != 0 else 0.0
-    # si el side es LONG, queremos pendiente positiva; SHORT, negativa
-    if side == "LONG":
-        val = np.clip(rel * 10, -1, 1)
-    else:
-        val = np.clip(-rel * 10, -1, 1)
-    return float(val)
-
-
-def _momentum_score(row: pd.Series, side: Side) -> float:
-    """
-    Momentum combinado:
-    - MACD hist
-    - RSI vs 50
-    - Estocástico (K y D) direccional
-    Devuelve valor aprox entre -1 y +1.
-    """
-    score = 0.0
-    # Peso MACD
-    macd_hist = row.get("macd_hist")
-    if not pd.isna(macd_hist):
-        if side == "LONG":
-            score += np.tanh(macd_hist * 8) * 0.5
-        else:
-            score += np.tanh(-macd_hist * 8) * 0.5
-
-    # Peso RSI
-    rsi = row.get("rsi")
-    if not pd.isna(rsi):
-        if side == "LONG":
-            score += ((rsi - 50) / 50.0) * 0.3  # >0 si RSI >50
-        else:
-            score += ((50 - rsi) / 50.0) * 0.3  # >0 si RSI <50
-
-    # Peso Estocástico (queremos que vaya a favor)
-    k = row.get("stoch_k")
-    d = row.get("stoch_d")
-    if not pd.isna(k) and not pd.isna(d):
-        # dirección actual (K vs D)
-        if side == "LONG":
-            score += 0.2 if k > d else -0.1
-        else:
-            score += 0.2 if k < d else -0.1
-
-    # normalizamos a [-1,1]
-    score = float(np.clip(score, -1, 1))
-    return score
-
-
-def _volatility_info(row: pd.Series) -> Tuple[float, float]:
-    """
-    Devuelve:
-    - ratio_atr = ATR / close (proxy de volatilidad).
-    - bb_width   (amplitud de Bollinger).
-    """
-    close = row.get("close")
-    atr = row.get("atr")
-    bb_width = row.get("bb_width")
-
-    ratio_atr = 0.0
-    if not pd.isna(atr) and not pd.isna(close) and close != 0:
-        ratio_atr = float(atr / close)
-
-    if pd.isna(bb_width):
-        bb_width = 0.0
-
-    return ratio_atr, float(bb_width)
-
-
-def _exhaustion_penalty(row: pd.Series, side: Side) -> float:
-    """
-    Penalización por agotamiento extremo.
-    - Si RSI > 75 en LONG → cuidado (probable corrección).
-    - Si RSI < 25 en SHORT → cuidado.
-    - Si precio tocando banda externa → también penaliza algo.
-    Devuelve un valor negativo (0 si no hay agotamiento).
-    """
-    rsi = row.get("rsi")
-    close = row.get("close")
-    bb_upper = row.get("bb_upper")
-    bb_lower = row.get("bb_lower")
-
-    penalty = 0.0
-
-    if not pd.isna(rsi):
-        if side == "LONG" and rsi > 75:
-            penalty -= 0.5
-        if side == "SHORT" and rsi < 25:
-            penalty -= 0.5
-
-    if not any(pd.isna([close, bb_upper, bb_lower])):
-        # Si estamos en LONG y pegados a banda superior → agotamiento alcista
-        if side == "LONG" and close >= bb_upper:
-            penalty -= 0.3
-        # Si estamos en SHORT y pegados a banda inferior → agotamiento bajista
-        if side == "SHORT" and close <= bb_lower:
-            penalty -= 0.3
-
-    return penalty
-
-
-def _divergence_penalty(divergences_hint: Optional[Dict[str, str]],
-                        side: Side) -> float:
-    """
-    Interpretación simple del texto de divergencias que ya
-    construye el motor técnico principal.
-
-    Ejemplos:
-      - "RSI: Alcista (1h)" en un SHORT  => penaliza.
-      - "MACD: Bajista (4h)" en un LONG  => penaliza.
-    """
-    if not divergences_hint:
-        return 0.0
-
-    text = " ".join(v for v in divergences_hint.values() if v)
-    text = text.lower()
-
-    penalty = 0.0
-    if side == "LONG":
-        # divergencias bajistas van en contra
-        if "bajista" in text:
-            penalty -= 0.6
-    else:  # SHORT
-        if "alcista" in text:
-            penalty -= 0.6
-
-    return penalty
-
-
-# ============================================================================
-# 🔹 Función principal de validación
-# ============================================================================
-
-def validate_reactivation_intelligently(
+def _eval_reactivation_from_snapshot(
     symbol: str,
-    side: Side,
-    entry_price: float,
-    tf_entry: str = "15m",
-    tf_confirm: str = "1h",
+    side: str,
+    motor_result: Dict[str, Any],
     divergences_hint: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
+) -> ReactivationDecision:
     """
-    Mega-módulo de VALIDACIÓN DE REACTIVACIÓN.
-
-    Parámetros
-    ----------
-    symbol : par en formato BYBIT, ej. "QUSDT".
-    side   : "LONG" o "SHORT" (dirección original de la señal).
-    entry_price : precio de entrada original de la señal.
-    tf_entry    : timeframe operativo principal (normalmente 15m).
-    tf_confirm  : timeframe superior de confirmación (normalmente 1h).
-    divergences_hint : dict opcional con texto de divergencias ya
-        calculadas por el motor principal. Ej:
-        {"RSI": "Alcista (1h)", "MACD": "Ninguna"}.
-
-    Retorna
-    -------
-    dict con campos:
-        - allowed (bool)
-        - decision ("reactivar" | "esperar" | "cancelar")
-        - score (0–100)
-        - reasons (lista de frases)
-        - scores (sub-scores internos)
-        - metrics (info técnica para logs / debug)
+    Núcleo de la lógica de reactivación, usando solo el resultado del motor unificado.
+    NO hace consultas a Bybit; solo interpreta snapshot + decisión base.
     """
 
-    # ------------------------------
-    # 1) Cargar datos
-    # ------------------------------
-    df_entry = _load_ohlcv(symbol, tf_entry, limit=200)
-    df_confirm = _load_ohlcv(symbol, tf_confirm, limit=200)
+    snapshot = motor_result.get("snapshot") or {}
+    tf_list: List[Dict[str, Any]] = snapshot.get("timeframes") or []
+    engine_decision = motor_result.get("decision") or {}
+    engine_allowed = bool(engine_decision.get("allowed", False))
+    engine_decision_code = engine_decision.get("decision", "wait")
 
-    if df_entry is None or df_confirm is None:
-        msg = "Sin datos suficientes en uno de los timeframes."
-        logger.warning(f"⚠️ {symbol}: {msg}")
-        result = ReactivationDecision(
-            symbol=symbol,
-            side=side,
-            decision="esperar",
-            score=0.0,
-            reasons=[msg],
-            scores=ReactivationScores(
-                trend_score=0,
-                momentum_score=0,
-                volatility_score=0,
-                exhaustion_penalty=0,
-                divergence_penalty=0,
-                total_score=0,
-            ),
-            metrics={},
-        )
-        return result.to_dict()
+    major_trend_code = snapshot.get("major_trend_code")
+    major_trend_label = snapshot.get("major_trend_label") or major_trend_code
+    smart_bias = snapshot.get("smart_bias_code") or snapshot.get("smart_bias")
+    technical_score = snapshot.get("technical_score")
+    snapshot_grade = snapshot.get("grade")
+    match_ratio = snapshot.get("match_ratio")
 
-    # ------------------------------
-    # 2) Calcular indicadores
-    # ------------------------------
-    df_entry = _add_indicators(df_entry)
-    df_confirm = _add_indicators(df_confirm)
-
-    last_e = df_entry.iloc[-1]
-    last_c = df_confirm.iloc[-1]
+    side_code = _side_to_trend_code(side)
 
     reasons: List[str] = []
+    scores: Dict[str, float] = {}
 
-    # ------------------------------
-    # 3) Trend score (entry + confirm)
-    # ------------------------------
-    trend_dir_e = _trend_direction(last_e, side)
-    trend_dir_c = _trend_direction(last_c, side)
-    slope_e = _trend_slope(df_entry, side, lookback=6)
-    slope_c = _trend_slope(df_confirm, side, lookback=4)
+    # --------------------------------------------------------
+    # 1) Validación mínima de datos
+    # --------------------------------------------------------
+    if not tf_list:
+        reasons.append("Sin datos suficientes en los timeframes analizados.")
+        decision = "wait"
+        total_score = 0.0
+        scores = {"trend_score": 0.0, "bias_score": 0.0, "tech_component": 0.0}
+        metrics = {
+            "major_trend": major_trend_label,
+            "smart_bias": smart_bias,
+            "technical_score": technical_score,
+            "snapshot_grade": snapshot_grade,
+            "match_ratio": match_ratio,
+            "n_timeframes": 0,
+            "engine_decision": engine_decision,
+        }
+        return ReactivationDecision(
+            symbol=symbol,
+            side=side,
+            decision=decision,
+            score=total_score,
+            reasons=reasons,
+            scores=scores,
+            metrics=metrics,
+        )
 
-    trend_score_raw = (trend_dir_e * 0.4 +
-                       trend_dir_c * 0.4 +
-                       slope_e * 0.1 +
-                       slope_c * 0.1)
-    # Escalamos a 0–40 puntos
-    trend_score = float(np.clip((trend_score_raw + 1) / 2 * 40, 0, 40))
+    # Número de TFs disponibles (ya con fallback manejado por motor_wrapper_core)
+    n_tfs = len(tf_list)
 
-    if trend_dir_e > 0 and trend_dir_c > 0:
-        reasons.append("Tendencia alineada en ambos timeframes.")
-    elif trend_dir_e > 0 or trend_dir_c > 0:
-        reasons.append("Tendencia mixta, parcialmente alineada.")
-    else:
-        reasons.append("Tendencia global en contra de la dirección de la señal.")
-
-    # ------------------------------
-    # 4) Momentum score (entry)
-    # ------------------------------
-    mom_raw = _momentum_score(last_e, side)
-    # 0–30 puntos
-    momentum_score = float(np.clip((mom_raw + 1) / 2 * 30, 0, 30))
-
-    if mom_raw > 0.3:
-        reasons.append("Momentum todavía fuerte a favor de la operación.")
-    elif mom_raw < -0.3:
-        reasons.append("Momentum debilitado / posible rebote en contra.")
-    else:
-        reasons.append("Momentum neutro o poco definido.")
-
-    # ------------------------------
-    # 5) Volatilidad / elasticidad
-    # ------------------------------
-    ratio_atr, bb_width = _volatility_info(last_e)
-    # ratio_atr típico entre 0.003 y 0.05 aprox
-    # Escalamos a 0–20, pero penalizamos extremos demasiado altos.
-    if ratio_atr <= 0:
-        vol_score = 10.0
-        reasons.append("Volatilidad desconocida, se asume neutra.")
-    else:
-        # preferimos una volatilidad moderada (~1–3%)
-        ideal = 0.015
-        dist = abs(ratio_atr - ideal) / ideal
-        vol_score = max(0.0, 20.0 * (1 - dist))
-        if dist < 0.5:
-            reasons.append("Volatilidad saludable para continuar el movimiento.")
+    # --------------------------------------------------------
+    # 2) Puntaje por alineación de tendencia
+    # --------------------------------------------------------
+    trend_score = 0.0
+    if side_code and major_trend_code:
+        if side_code == major_trend_code:
+            trend_score = 40.0
+            reasons.append("Tendencia mayor alineada con el lado de la señal.")
         else:
-            reasons.append("Volatilidad poco óptima (demasiado baja o demasiado alta).")
-
-    volatility_score = float(vol_score)
-
-    # ------------------------------
-    # 6) Agotamiento (RSI + bandas)
-    # ------------------------------
-    exhaustion_penalty = _exhaustion_penalty(last_e, side)
-    if exhaustion_penalty < 0:
-        reasons.append("Señales de agotamiento en la dirección de la operación.")
-
-    # ------------------------------
-    # 7) Divergencias (hint externo)
-    # ------------------------------
-    divergence_penalty = _divergence_penalty(divergences_hint, side)
-    if divergence_penalty < 0:
-        reasons.append("Divergencias técnicas activas en contra de la dirección.")
-
-    # ------------------------------
-    # 8) Composición de score final
-    # ------------------------------
-    total_score = (
-        trend_score +
-        momentum_score +
-        volatility_score +
-        exhaustion_penalty * 20 +   # cada -0.5 quita ~10 puntos
-        divergence_penalty * 25     # cada -0.6 quita ~15 puntos
-    )
-
-    # Recortamos a [0,100]
-    total_score = float(np.clip(total_score, 0, 100))
-
-    # ------------------------------
-    # 9) Decisión según score
-    # ------------------------------
-    if total_score >= 65:
-        decision: Decision = "reactivar"
-        reasons.append("Score alto: reactivación técnicamente sólida.")
-    elif total_score >= 40:
-        decision = "esperar"
-        reasons.append("Score medio: mejor esperar confirmaciones extra.")
+            trend_score = 10.0
+            reasons.append("Tendencia mayor en posible conflicto con el lado de la señal.")
     else:
-        decision = "cancelar"
-        reasons.append("Score bajo: alto riesgo de reversión, mejor no reactivar.")
+        trend_score = 20.0
+        reasons.append("Tendencia mayor poco definida; se evalúan más factores.")
 
-    scores = ReactivationScores(
-        trend_score=trend_score,
-        momentum_score=momentum_score,
-        volatility_score=volatility_score,
-        exhaustion_penalty=exhaustion_penalty,
-        divergence_penalty=divergence_penalty,
-        total_score=total_score,
-    )
+    # --------------------------------------------------------
+    # 3) Puntaje por smart_bias
+    # --------------------------------------------------------
+    bias_score = 0.0
+    if smart_bias:
+        sb = str(smart_bias).lower()
+        is_bull = "bull" in sb or "alcista" in sb
+        is_bear = "bear" in sb or "bajista" in sb
+        is_reversal = "reversal" in sb or "revers" in sb
 
-    # ------------------------------
-    # 10) Métricas para debug / logs
-    # ------------------------------
-    metrics: Dict[str, Any] = {
-        "tf_entry": tf_entry,
-        "tf_confirm": tf_confirm,
-        "entry_price": float(entry_price),
-        "close_entry_tf": float(last_e["close"]),
-        "rsi_entry": float(last_e.get("rsi", np.nan)),
-        "macd_hist_entry": float(last_e.get("macd_hist", np.nan)),
-        "stoch_k_entry": float(last_e.get("stoch_k", np.nan)),
-        "stoch_d_entry": float(last_e.get("stoch_d", np.nan)),
-        "ratio_atr": ratio_atr,
-        "bb_width": bb_width,
-        "trend_dir_entry": trend_dir_e,
-        "trend_dir_confirm": trend_dir_c,
-        "slope_entry": slope_e,
-        "slope_confirm": slope_c,
-        "divergences_hint": divergences_hint or {},
+        if side_code == "bull" and is_bull and not is_reversal:
+            bias_score = 40.0
+            reasons.append("Sesgo inteligente claramente alcista, a favor de un LONG.")
+        elif side_code == "bear" and is_bear and not is_reversal:
+            bias_score = 40.0
+            reasons.append("Sesgo inteligente claramente bajista, a favor de un SHORT.")
+        elif is_reversal:
+            bias_score = 10.0
+            reasons.append("El motor detecta contexto de posible reversión.")
+        else:
+            bias_score = 20.0
+            reasons.append("Sesgo inteligente mixto o neutro.")
+    else:
+        bias_score = 20.0
+        reasons.append("Sin sesgo inteligente claro; se ponderan más factores.")
+
+    # --------------------------------------------------------
+    # 4) Puntaje por technical_score global
+    # --------------------------------------------------------
+    if isinstance(technical_score, (int, float)):
+        tech_raw = max(0.0, min(float(technical_score), 100.0))
+        tech_component = tech_raw * 0.3  # máximo aporte 30 pts
+    else:
+        tech_component = 20.0
+        reasons.append("Puntuación técnica no disponible; se asume contexto medio.")
+
+    # Refuerzo leve por cantidad de TFs disponibles
+    if n_tfs >= 3:
+        tech_component += 5.0
+    elif n_tfs == 2:
+        tech_component += 2.0
+
+    # --------------------------------------------------------
+    # 5) Ajuste por divergencias (hint externo)
+    # --------------------------------------------------------
+    if divergences_hint:
+        # Ejemplo de estructura esperada:
+        # {"RSI": "bajista (1h)", "MACD": "ninguna"}
+        for k, v in divergences_hint.items():
+            if not v:
+                continue
+            v_low = v.lower()
+            if side_code == "bull" and "bajista" in v_low:
+                tech_component -= 10.0
+                reasons.append(f"Divergencia {k} bajista en contra de un LONG.")
+            if side_code == "bear" and "alcista" in v_low:
+                tech_component -= 10.0
+                reasons.append(f"Divergencia {k} alcista en contra de un SHORT.")
+
+    # --------------------------------------------------------
+    # 6) Puntaje total y clasificación
+    # --------------------------------------------------------
+    total_score = max(0.0, min(trend_score + bias_score + tech_component, 100.0))
+    global_grade = _classify_grade(total_score)
+
+    scores = {
+        "trend_score": round(trend_score, 2),
+        "bias_score": round(bias_score, 2),
+        "tech_component": round(tech_component, 2),
     }
 
-    decision_obj = ReactivationDecision(
+    # --------------------------------------------------------
+    # 7) Decisión final basada en score + motor
+    # --------------------------------------------------------
+    decision = "wait"
+
+    # Caso 1: contexto fuerte + motor lo permite -> reactivar
+    if (
+        global_grade == "strong"
+        and engine_allowed
+        and engine_decision_code in ("enter", "reactivate", "continue", "open")
+    ):
+        decision = "reactivate"
+        reasons.append("Contexto fuerte y motor técnico permite reactivar/entrar.")
+
+    # Caso 2: contexto muy débil o reversión fuerte en contra -> cancelar
+    elif global_grade == "weak":
+        decision = "cancel"
+        reasons.append("Contexto técnico débil o contradictorio; alta probabilidad de fallo.")
+
+    # Caso 3: contexto medio o motor indeciso -> esperar
+    else:
+        decision = "wait"
+        reasons.append("Contexto mixto; mejor esperar nueva revisión antes de reactivar.")
+
+    metrics = {
+        "major_trend": major_trend_label,
+        "major_trend_code": major_trend_code,
+        "smart_bias": smart_bias,
+        "technical_score": technical_score,
+        "snapshot_grade": snapshot_grade,
+        "global_grade": global_grade,
+        "match_ratio": match_ratio,
+        "n_timeframes": n_tfs,
+        "engine_decision": engine_decision,
+    }
+
+    return ReactivationDecision(
         symbol=symbol,
         side=side,
         decision=decision,
-        score=total_score,
+        score=round(total_score, 2),
         reasons=reasons,
         scores=scores,
         metrics=metrics,
     )
 
-    return decision_obj.to_dict()
+
+# ============================================================
+# 🌟 API PÚBLICA
+# ============================================================
+
+def evaluate_reactivation(
+    symbol: str,
+    side: str,
+    entry_price: Optional[float] = None,
+    divergences_hint: Optional[Dict[str, str]] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """
+    Punto único de entrada para validar reactivación.
+
+    Compatibilidad hacia atrás:
+    - Mantiene la misma firma básica (symbol, side, entry_price, divergences_hint, **kwargs).
+    - Devuelve un dict con:
+        {
+            "symbol": ...,
+            "side": ...,
+            "decision": "reactivate" | "wait" | "cancel",
+            "score": float,
+            "reasons": [...],
+            "scores": {...},
+            "metrics": {...}
+        }
+    """
+
+    logger.info(f"♻️ Evaluando reactivación inteligente para {symbol} ({side})…")
+
+    # 1) Intentar usar API dedicada de reactivación
+    try:
+        analyze_fn = getattr(motor_wrapper, "analyze_for_reactivation", None)
+        if callable(analyze_fn):
+            motor_result = analyze_fn(symbol, side)
+        else:
+            # Fallback: usar analyze() genérico
+            logger.warning(
+                "⚠️ motor_wrapper.analyze_for_reactivation no existe; usando analyze() genérico."
+            )
+            analyze_generic = getattr(motor_wrapper, "analyze", None)
+            if callable(analyze_generic):
+                motor_result = analyze_generic(symbol, side)
+            else:
+                raise RuntimeError(
+                    "motor_wrapper no expone analyze_for_reactivation ni analyze()."
+                )
+    except Exception as e:
+        logger.error(f"❌ Error llamando al motor unificado para reactivación: {e}")
+        # Fallback ultra conservador
+        fallback_decision = ReactivationDecision(
+            symbol=symbol,
+            side=side,
+            decision="wait",
+            score=0.0,
+            reasons=[f"Error interno del motor de reactivación: {e}"],
+            scores={"trend_score": 0.0, "bias_score": 0.0, "tech_component": 0.0},
+            metrics={},
+        )
+        return fallback_decision.to_dict()
+
+    # 2) Interpretar snapshot + decisión base del motor
+    try:
+        decision_obj = _eval_reactivation_from_snapshot(
+            symbol=symbol,
+            side=side,
+            motor_result=motor_result,
+            divergences_hint=divergences_hint,
+        )
+        return decision_obj.to_dict()
+    except Exception as e:
+        logger.error(f"❌ Error interpretando resultado del motor unificado: {e}")
+        fallback_decision = ReactivationDecision(
+            symbol=symbol,
+            side=side,
+            decision="wait",
+            score=0.0,
+            reasons=[f"Error interpretando análisis técnico: {e}"],
+            scores={"trend_score": 0.0, "bias_score": 0.0, "tech_component": 0.0},
+            metrics={"raw_motor_result_type": str(type(motor_result))},
+        )
+        return fallback_decision.to_dict()
