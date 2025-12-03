@@ -1,15 +1,12 @@
 # ============================================================
 # technical_brain_unified.py
 # Motor técnico unificado – versión estable 2025-12
-# Estructura: snapshot / smart_entry / final_decision
 # ============================================================
 
 import logging
 import numpy as np
 
 from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
-from services.technical_engine import trend_system_final
-trends = trend_system_final.analyze_trend_core(snapshot, direction_hint)
 from services.technical_engine.smart_entry_validator import evaluate_entry_smart
 from services.technical_engine.smart_divergences import detect_smart_divergences
 
@@ -69,6 +66,7 @@ def run_unified_analysis(
 
         # =====================================================
         # 2) Calcular tendencias (major, overall, smart bias)
+        #    (IMPORT DINÁMICO PARA EVITAR CIRCULAR IMPORT)
         # =====================================================
         from services.technical_engine import trend_system_final
         trends = trend_system_final.analyze_trend_core(snapshot, direction_hint)
@@ -94,24 +92,19 @@ def run_unified_analysis(
         # =====================================================
         tech_score = entry_eval.get("entry_score", 0)
         grade = entry_eval.get("entry_grade", "D")
-
         match_ratio = trends.get("match_ratio", 0.0)
 
         # =====================================================
         # 6) DECISIÓN FINAL
         # =====================================================
-        decision = entry_eval.get("entry_mode", "wait")
-        reasons = entry_eval.get("entry_reasons", [])
-
         final_decision = {
             "allowed": entry_eval.get("entry_allowed", False),
-            "decision": decision,
-            "decision_reasons": reasons,
+            "decision": entry_eval.get("entry_mode", "wait"),
+            "decision_reasons": entry_eval.get("entry_reasons", []),
             "current_price": None,
             "confidence": float(match_ratio) / 100.0
         }
 
-        # Guardar el precio actual
         try:
             if df_main is not None:
                 final_decision["current_price"] = float(df_main.iloc[-1]["close"])
@@ -119,7 +112,7 @@ def run_unified_analysis(
             final_decision["current_price"] = None
 
         # =====================================================
-        # 7) Bloque de retorno unificado (nuevo)
+        # 7) Retorno unificado
         # =====================================================
         return {
             "symbol": symbol,
