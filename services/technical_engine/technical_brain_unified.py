@@ -358,15 +358,14 @@ def run_unified_analysis(
             # PRECIO ACTUAL (último cierre)
             try:
                 last_close = df_main.iloc[-1]["close"]
-                result["current_price"] = float(last_close)
+                final_decision["current_price"] = float(last_close)
             except Exception:
-                result["current_price"] = None
-
+                final_decision["current_price"] = None
 
         # --------------------------------------------------------
         # 4) ESTRUCTURA FINAL
         # --------------------------------------------------------
-        return {
+        final_decision = {
             "symbol": symbol,
             "direction_hint": direction,
             "context": context,
@@ -387,11 +386,12 @@ def run_unified_analysis(
         # PRECIO ACTUAL — último cierre
         try:
             last_close = df_main.iloc[-1]["close"]
-            result["current_price"] = float(last_close)
+            final_decision["current_price"] = float(last_close)
         except Exception:
-            result["current_price"] = None
+            final_decision["current_price"] = None
 
-        return result
+        return final_decision
+
 
     except Exception as e:
         logger.error(f"❌ Error en run_unified_analysis: {e}")
