@@ -8,7 +8,8 @@ import logging
 import numpy as np
 
 from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
-from services.technical_engine.trend_system_final import analyze_trend_core
+from services.technical_engine import trend_system_final
+trends = trend_system_final.analyze_trend_core(snapshot, direction_hint)
 from services.technical_engine.smart_entry_validator import evaluate_entry_smart
 from services.technical_engine.smart_divergences import detect_smart_divergences
 
