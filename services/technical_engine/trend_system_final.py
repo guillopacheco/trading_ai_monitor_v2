@@ -107,6 +107,11 @@ def analyze_and_format(symbol: str, direction: str = None):
     # ============================
     title = f"📘 **Análisis Técnico — {symbol.upper()} ({direction.upper()})**"
 
+    # PRECIO ACTUAL
+    current_price = data.get("current_price")
+    price_line = f"💵 Precio actual: {current_price}" if current_price else ""
+
+
     # ============================
     # 🎯 CONCLUSIÓN INMEDIATA
     # ============================
@@ -192,6 +197,7 @@ def analyze_and_format(symbol: str, direction: str = None):
     # ============================
     parts = [
         title,
+        price_line,
         "",
         conclusion,
         "",

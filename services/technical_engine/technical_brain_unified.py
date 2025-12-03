@@ -354,6 +354,15 @@ def run_unified_analysis(
             except Exception as e:
                 logger.warning(f"⚠️ Error generando debug report: {e}")
 
+
+            # PRECIO ACTUAL (último cierre)
+            try:
+                last_close = df_main.iloc[-1]["close"]
+                result["current_price"] = float(last_close)
+            except Exception:
+                result["current_price"] = None
+
+
         # --------------------------------------------------------
         # 4) ESTRUCTURA FINAL
         # --------------------------------------------------------
@@ -412,3 +421,4 @@ def run_unified_analysis(
             "loss_pct": loss_pct,
             "debug": {"error": str(e), "context": context},
         }
+
