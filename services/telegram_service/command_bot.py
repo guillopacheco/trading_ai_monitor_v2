@@ -18,7 +18,8 @@ import logging
 import asyncio
 from datetime import datetime
 
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BOT_TOKEN, SIMULATION_MODE
+
 
 from telegram import Update
 from telegram.ext import (

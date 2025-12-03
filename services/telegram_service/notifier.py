@@ -1,6 +1,6 @@
 import logging
 import requests
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
 
 logger = logging.getLogger("notifier")
 
