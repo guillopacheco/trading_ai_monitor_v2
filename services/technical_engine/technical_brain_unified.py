@@ -368,46 +368,30 @@ def run_unified_analysis(
         # --------------------------------------------------------
         return {
             "symbol": symbol,
-            "direction_hint": direction_hint,
-
-            # Multi-TF
-            "timeframes": timeframes,
-            "major_trend": major_trend,
-            "overall_trend": overall_trend,
-
-            # Scoring base
+            "direction_hint": direction,
+            "context": context,
+            "timeframes": tf_snapshot.get("timeframes", {}),
+            "major_trend": trends["major_trend"],
+            "overall_trend": trends["overall_trend"],
+            "smart_bias": trends["smart_bias"],
             "match_ratio": match_ratio,
-            "technical_score": technical_score,
+            "technical_score": tech_score,
             "grade": grade,
-            "confidence": confidence,
-            "confidence_label": confidence_lbl,
-            "smart_bias": smart_bias,
-            "divergences": divergences,
-
-            # Decisiones globales
-            "allowed": allowed,
-            "decision": decision,
-            "decision_reasons": decision_reasons,
-
-            # Smart Entry integrado
-            "entry_score": entry_score,
             "entry_grade": entry_grade,
             "entry_mode": entry_mode,
-            "entry_allowed": entry_allowed,
-            "entry_reasons": entry_reasons,
-
-            # Datos de operación (solo si context="operation")
-            "roi": roi,
-            "loss_pct": loss_pct,
-            "operation_risk_level": risk_level,
-
-            # Debug
-            "debug": {
-                "raw_snapshot": snapshot,
-                "thresholds": ctx_thr,
-                "context": context,
-            }
+            "decision": decision,
+            "decision_reasons": decision_reasons,
+            "divergences": divs,
         }
+
+        # PRECIO ACTUAL — último cierre
+        try:
+            last_close = df_main.iloc[-1]["close"]
+            result["current_price"] = float(last_close)
+        except Exception:
+            result["current_price"] = None
+
+        return result
 
     except Exception as e:
         logger.error(f"❌ Error en run_unified_analysis: {e}")
