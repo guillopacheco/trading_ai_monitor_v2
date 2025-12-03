@@ -16,6 +16,7 @@ import logging
 import asyncio
 from typing import Dict, Any
 
+from config import SIMULATION_MODE
 from services.technical_engine.trend_system_final import analyze_trend_core
 from services.bybit_service.bybit_client import get_open_positions
 from services.telegram_service.notifier import send_message
