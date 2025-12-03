@@ -20,12 +20,39 @@ import logging
 from typing import Optional
 
 from services.technical_engine.technical_brain_unified import (
-    run_unified_analysis,
     get_thresholds,
+    get_bias_weight,
+    get_score_weight,
 )
+
 
 logger = logging.getLogger("trend_system_final")
 
+# ============================================================
+# THRESHOLDS Y PESOS — definidos localmente para evitar
+# dependencias circulares innecesarias
+# ============================================================
+
+def get_thresholds():
+    return {
+        "grade_A": 85,
+        "grade_B": 70,
+        "grade_C": 55,
+    }
+
+def get_bias_weight():
+    return {
+        "strong": 1.0,
+        "moderate": 0.7,
+        "weak": 0.4,
+    }
+
+def get_score_weight():
+    return {
+        "trend": 0.5,
+        "momentum": 0.3,
+        "divergence": 0.2,
+    }
 
 # ============================================================
 # 📌 FUNCIÓN BASE (utilizada por motor_wrapper y operation_tracker)
