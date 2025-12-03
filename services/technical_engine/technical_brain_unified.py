@@ -70,7 +70,8 @@ def run_unified_analysis(
         # =====================================================
         # 2) Calcular tendencias (major, overall, smart bias)
         # =====================================================
-        trends = analyze_trend_core(snapshot, direction_hint)
+        from services.technical_engine import trend_system_final
+        trends = trend_system_final.analyze_trend_core(snapshot, direction_hint)
 
         # =====================================================
         # 3) Divergencias inteligentes RSI / MACD
