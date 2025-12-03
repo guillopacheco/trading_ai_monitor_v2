@@ -30,8 +30,8 @@ def run_unified_analysis(
       ✔ snapshot multi–TF
       ✔ divergencias inteligentes
       ✔ smart entry
-      ✔ final decision
-    Devuelve: snapshot / smart_entry / decision
+      ✔ tendencias principales
+      ✔ decisión final
     """
 
     try:
@@ -43,62 +43,64 @@ def run_unified_analysis(
         tf_snapshot = snapshot.get("timeframes", {})
         df_main = snapshot.get("df_main")
 
-        # Ayuda para módulos siguientes
-        main_status = snapshot.get("status", "unknown")
-        if main_status != "ok":
+        if snapshot.get("status") != "ok":
             return {
                 "symbol": symbol,
                 "direction_hint": direction_hint,
+
                 "snapshot": snapshot,
                 "smart_entry": {
                     "entry_allowed": False,
                     "entry_mode": "no_data",
-                    "entry_reasons": ["No hay datos OHLCV suficientes"]
+                    "entry_reasons": ["No hay datos OHLCV suficientes"],
+                    "entry_score": 0,
+                    "entry_grade": "D"
                 },
+
                 "decision": {
                     "allowed": False,
                     "decision": "wait",
-                    "decision_reasons": ["No hay datos suficientes en TF principales"],
+                    "decision_reasons": ["No hay datos suficientes"],
                     "current_price": None,
                     "confidence": 0.0
-                }
+                },
+
+                "divergences": []
             }
 
         # =====================================================
-        # 2) Calcular tendencias (major, overall, smart bias)
-        #    (IMPORT DINÁMICO PARA EVITAR CIRCULAR IMPORT)
+        # 2) Calcular tendencias (import dinámico)
         # =====================================================
         from services.technical_engine import trend_system_final
-        trends = trend_system_final.analyze_trend_core(snapshot, direction_hint)
+        trends = trend_system_final.analyze_trend_core(
+            snapshot,
+            direction_hint
+        )
 
         # =====================================================
-        # 3) Divergencias inteligentes RSI / MACD
+        # 3) Divergencias inteligentes RSI/MACD
         # =====================================================
-        divs = detect_smart_divergences(df_main)
+        divergences = detect_smart_divergences(df_main)
 
         # =====================================================
-        # 4) Smart entry (permite entrar sí/no)
+        # 4) Smart entry
         # =====================================================
         entry_eval = evaluate_entry(
             df=df_main,
             direction_hint=direction_hint,
             major_trend=trends["major_trend"],
             overall_trend=trends["overall_trend"],
-            divergences=divs
+            divergences=divergences
         )
 
-
-        # =====================================================
-        # 5) Cálculo de score general
-        # =====================================================
         tech_score = entry_eval.get("entry_score", 0)
         grade = entry_eval.get("entry_grade", "D")
         match_ratio = trends.get("match_ratio", 0.0)
 
         # =====================================================
-        # 6) DECISIÓN FINAL
+        # 5) Decisión final
         # =====================================================
-        final_decision = {
+        decision = {
             "allowed": entry_eval.get("entry_allowed", False),
             "decision": entry_eval.get("entry_mode", "wait"),
             "decision_reasons": entry_eval.get("entry_reasons", []),
@@ -107,19 +109,17 @@ def run_unified_analysis(
         }
 
         try:
-            if df_main is not None:
-                final_decision["current_price"] = float(df_main.iloc[-1]["close"])
+            decision["current_price"] = float(df_main.iloc[-1]["close"])
         except Exception:
-            final_decision["current_price"] = None
+            decision["current_price"] = None
 
         # =====================================================
-        # 7) Retorno unificado
+        # 6) Resultado final unificado
         # =====================================================
         return {
             "symbol": symbol,
             "direction_hint": direction_hint,
 
-            # SNAPSHOT
             "snapshot": {
                 "context": context,
                 "timeframes": tf_snapshot,
@@ -131,14 +131,9 @@ def run_unified_analysis(
                 "grade": grade,
             },
 
-            # SMART ENTRY
             "smart_entry": entry_eval,
-
-            # DECISIÓN FINAL
-            "decision": final_decision,
-
-            # Divergencias integradas
-            "divergences": divs,
+            "decision": decision,
+            "divergences": divergences,
         }
 
     except Exception as e:
@@ -147,8 +142,10 @@ def run_unified_analysis(
         return {
             "symbol": symbol,
             "direction_hint": direction_hint,
+
             "snapshot": {"error": str(e)},
             "smart_entry": {"entry_allowed": False},
+            
             "decision": {
                 "allowed": False,
                 "decision": "error",
@@ -156,5 +153,6 @@ def run_unified_analysis(
                 "current_price": None,
                 "confidence": 0.0
             },
+
             "divergences": []
         }
