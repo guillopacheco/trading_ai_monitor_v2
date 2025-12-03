@@ -161,22 +161,24 @@ def update_signal_match_ratio(signal_id: int, match_ratio: float):
 # 📌 Guardar log de análisis
 # ------------------------------------------------------------
 
-def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, details=None):
+def save_analysis_log(signal_id: int, match_ratio: float, recommendation, details=None):
     """
-    Guarda un registro histórico del análisis técnico de una señal.
-
-    details puede ser:
-    - str
-    - dict
-    - list
-    - None
+    Guarda un registro del análisis técnico de una señal.
+    - recommendation puede ser str o dict
+    - details puede ser str, dict, list o None
     """
 
     try:
         conn = get_connection()
         cur = conn.cursor()
 
-        # 🔄 Normalizar detalles
+        # Convertir recommendation si es dict
+        if isinstance(recommendation, (dict, list)):
+            rec_str = json.dumps(recommendation, ensure_ascii=False)
+        else:
+            rec_str = str(recommendation)
+
+        # Convertir details si es dict/list
         if isinstance(details, (dict, list)):
             details_str = json.dumps(details, ensure_ascii=False)
         elif details is None:
@@ -187,13 +189,17 @@ def save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, d
         cur.execute("""
             INSERT INTO signal_analysis_log (signal_id, match_ratio, recommendation, details)
             VALUES (?, ?, ?, ?)
-        """, (signal_id, match_ratio, recommendation, details_str))
+        """, (
+            signal_id,
+            match_ratio,
+            rec_str,       # ✔ recommendation string
+            details_str    # ✔ details string
+        ))
 
         conn.commit()
 
     except Exception as e:
         logger.error(f"❌ Error guardando en signal_analysis_log: {e}")
-
 
 # ------------------------------------------------------------
 # 📌 Guardar una señal nueva (usado por telegram_reader)
