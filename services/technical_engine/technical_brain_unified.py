@@ -7,7 +7,7 @@ import logging
 import numpy as np
 
 from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
-from services.technical_engine.smart_entry_validator import evaluate_entry_smart
+from services.technical_engine.smart_entry_validator import evaluate_entry
 from services.technical_engine.smart_divergences import detect_smart_divergences
 
 logger = logging.getLogger("technical_brain_unified")
@@ -79,13 +79,14 @@ def run_unified_analysis(
         # =====================================================
         # 4) Smart entry (permite entrar sí/no)
         # =====================================================
-        entry_eval = evaluate_entry_smart(
+        entry_eval = evaluate_entry(
             df=df_main,
             direction_hint=direction_hint,
             major_trend=trends["major_trend"],
             overall_trend=trends["overall_trend"],
             divergences=divs
         )
+
 
         # =====================================================
         # 5) Cálculo de score general
