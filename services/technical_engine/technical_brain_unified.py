@@ -43,7 +43,7 @@ def run_unified_analysis(
         tf_snapshot = snapshot.get("timeframes", {})
         df_main = snapshot.get("df_main")
 
-        if snapshot.get("status") != "ok":
+        if snapshot.get("status") != "ok" or df_main is None:
             return {
                 "symbol": symbol,
                 "direction_hint": direction_hint,
@@ -69,7 +69,8 @@ def run_unified_analysis(
             }
 
         # =====================================================
-        # 2) Calcular tendencias (import dinámico)
+        # 2) Calcular tendencias (import dinámico para evitar
+        #    ciclos de importación)
         # =====================================================
         from services.technical_engine import trend_system_final
         trends = trend_system_final.analyze_trend_core(
@@ -79,6 +80,7 @@ def run_unified_analysis(
 
         # =====================================================
         # 3) Divergencias inteligentes RSI/MACD
+        #    (se apoyan en df_main ya enriquecido con indicadores)
         # =====================================================
         divergences = detect_smart_divergences(df_main)
 
@@ -90,7 +92,7 @@ def run_unified_analysis(
             direction_hint=direction_hint,
             major_trend=trends["major_trend"],
             overall_trend=trends["overall_trend"],
-            divergences=divergences
+            divergences=divergences,
         )
 
         tech_score = entry_eval.get("entry_score", 0)
@@ -108,6 +110,7 @@ def run_unified_analysis(
             "confidence": float(match_ratio) / 100.0
         }
 
+        # Precio actual — último cierre disponible
         try:
             decision["current_price"] = float(df_main.iloc[-1]["close"])
         except Exception:
@@ -129,6 +132,8 @@ def run_unified_analysis(
                 "match_ratio": match_ratio,
                 "technical_score": tech_score,
                 "grade": grade,
+                # 🔹 Ahora el snapshot también incluye divergencias inteligentes
+                "divergences": divergences,
             },
 
             "smart_entry": entry_eval,
@@ -145,7 +150,7 @@ def run_unified_analysis(
 
             "snapshot": {"error": str(e)},
             "smart_entry": {"entry_allowed": False},
-            
+
             "decision": {
                 "allowed": False,
                 "decision": "error",
