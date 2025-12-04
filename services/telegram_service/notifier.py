@@ -7,10 +7,6 @@ logger = logging.getLogger("notifier")
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
 def clean_markdown(text: str) -> str:
-    """
-    Sanitiza texto para Markdown de Telegram.
-    Evita errores por caracteres especiales.
-    """
     if not text:
         return ""
     return (
@@ -23,8 +19,8 @@ def clean_markdown(text: str) -> str:
             .replace(")", "\\)")
     )
 
+
 def split_message(text: str, limit: int = 4000):
-    """Divide mensajes largos en bloques seguros para Telegram."""
     parts = []
     while len(text) > limit:
         cut = text.rfind("\n", 0, limit)
@@ -35,11 +31,8 @@ def split_message(text: str, limit: int = 4000):
     parts.append(text)
     return parts
 
-# ================================================================
-# 🔧 Envío base (síncrono)
-# ================================================================
+
 def _post(text: str):
-    """Envío seguro con sanitización y fragmentación automática."""
     if SIMULATION_MODE:
         logger.info(f"💬 [SIMULADO] {text}")
         return True
@@ -74,56 +67,45 @@ def _post(text: str):
         logger.error(f"❌ Error en _post Telegram: {e}")
         return False
 
-# ================================================================
-# 📤 Envío público (síncrono compatible con asyncio.to_thread)
-# ================================================================
+
 def send_message(text: str):
-    """
-    Versión SÍNCRONA — diseñada para ejecutarse así:
-        await asyncio.to_thread(send_message, texto)
-    """
     return _post(text)
 
 
 # ================================================================
-# 📈 Notificación de análisis técnico
+# 🧠 NUEVO: Notificación final para operaciones abiertas
 # ================================================================
-def notify_analysis_result(result: dict):
+def notify_operation_recommendation(data: dict):
     """
-    Notificación simple basada en el motor técnico unificado.
+    Envía una notificación clara con la recomendación:
+    🟢 Mantener | 🔴 Cerrar | ⚠️ Revertir | 🟡 Evaluar
     """
-    symbol = result.get("symbol", "???")
-    direction = result.get("direction_hint", "???")
-    match_ratio = result.get("match_ratio", 0)
-    decision = result.get("decision", "unknown")
+    symbol = data["symbol"]
+    direction = data["direction"]
+    roi = data["roi"]
+    pnl = data["pnl"]
+    loss_level = data["loss_level"]
+    match_ratio = data["match_ratio"]
+    major_trend = data["major_trend"]
+    bias = data["smart_bias"]
+    suggestion = data["suggestion"]
+    reasons = data["reasons"]
 
-    text = (
-        f"📊 *Análisis de {symbol}*\n"
-        f"🔹 Dirección: {direction}\n"
-        f"🔹 Match: {match_ratio:.1f}%\n"
-        f"📌 Decisión: *{decision.upper()}*"
-    )
+    reason_text = "\n - ".join(reasons) if reasons else "Sin razones adicionales."
 
-    _post(text)
+    msg = f"""
+🚨 *Alerta de operación: {symbol}*
+📌 Dirección: *{direction.upper()}*
+💵 ROI: `{roi:.2f}%`
+💰 PnL: `{pnl}`
+📉 Nivel de pérdida: {loss_level}%
+📊 Match técnico: {match_ratio:.1f}%
+🧭 Tendencia mayor: *{major_trend}*
+🔮 Sesgo smart: *{bias}*
+🧠 *Recomendación:* {suggestion}
 
-# ================================================================
-# 🚨 Notificación de alerta de operación
-# ================================================================
-def notify_operation_alert(symbol, direction, roi, pnl, loss_pct, decision, reasons):
-    reason_lines = "\n - ".join(reasons) if reasons else "Sin detalles."
+📝 *Motivos:*
+ - {reason_text}
+"""
 
-    msg = (
-        f"🚨 *Reversión peligrosa detectada en {symbol}*\n"
-        f"🔹 Dirección: {direction.upper()}\n"
-        f"💵 ROI: {roi:.2f}%\n"
-        f"📉 Pérdida real: {loss_pct:.2f}%\n"
-        f"🧠 *Decisión:* {decision}\n"
-        f"📝 *Motivos:* \n - {reason_lines}"
-    )
-
-    _post(msg)
-
-def notify_profit_update(text_block: str):
-    text = f"🎯 *Profit update detectado:*\n\n{text_block}"
-    _post(text)
-
+    _post(msg.strip())

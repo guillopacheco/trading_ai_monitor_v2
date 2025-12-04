@@ -1,17 +1,3 @@
-"""
-operation_tracker.py — versión final integrada con trend_system_final
---------------------------------------------------------------------
-Monitor inteligente de operaciones abiertas en Bybit.
-
-Funciones principales:
-✔ Obtiene operaciones abiertas desde bybit_client.get_open_positions()
-✔ Calcula ROI real con helpers.calculate_roi()
-✔ Evalúa pérdida, tendencia y sesgo smart
-✔ Produce recomendaciones claras: mantener / cerrar / revertir
-✔ Envía alertas automáticas vía notifier.send_message()
-✔ Compatible con modo REAL y SIMULACIÓN.
---------------------------------------------------------------------
-"""
 import logging
 import asyncio
 from typing import Dict, Any
@@ -19,7 +5,7 @@ from typing import Dict, Any
 from config import SIMULATION_MODE
 from services.technical_engine.trend_system_final import analyze_trend_core
 from services.bybit_service.bybit_client import get_open_positions
-from services.telegram_service.notifier import send_message
+from services.telegram_service.notifier import send_message, notify_operation_recommendation
 
 from core.helpers import (
     calculate_roi,
@@ -29,13 +15,8 @@ from core.helpers import (
 
 logger = logging.getLogger("operation_tracker")
 
-# Niveles de pérdida considerados críticos (ROI con apalancamiento)
 LOSS_LEVELS = [-20, -30, -50, -70]
 
-
-# ============================================================
-# 🔢 Detección del nivel de pérdida
-# ============================================================
 
 def compute_loss_level(roi: float) -> int | None:
     for lvl in LOSS_LEVELS:
@@ -44,16 +25,50 @@ def compute_loss_level(roi: float) -> int | None:
     return None
 
 
-# ============================================================
-# 🚨 Monitor principal de operaciones
-# ============================================================
+# ================================================================
+# 🧠 NUEVO: build_operation_suggestion
+# ================================================================
+def build_operation_suggestion(analysis: dict, roi: float, loss_pct: float):
+    """
+    Traduce análisis técnico + pérdida → recomendación:
+    🟢 Mantener
+    🔴 Cerrar
+    ⚠️ Revertir
+    🟡 Evaluar
+    """
 
+    major = analysis.get("major_trend")
+    bias = analysis.get("smart_bias")
+    match_ratio = analysis.get("match_ratio", 0)
+    reasons = []
+
+    # --- Caso crítico: pérdida profunda (>70%) ---
+    if roi <= -70:
+        return "🔴 Cerrar", ["Pérdida mayor al 70%", "Riesgo extremo de liquidación"]
+
+    # --- Si tendencia y sesgo van completamente en contra ---
+    if (major == "bull" and analysis.get("direction") == "short") or \
+       (major == "bear" and analysis.get("direction") == "long"):
+        if loss_pct <= -30:
+            return "⚠️ Revertir posición", ["Tendencia opuesta fuerte", "Pérdida elevada"]
+        return "🔴 Cerrar", ["Tendencia completamente opuesta"]
+
+    # --- Continuación a favor ---
+    if bias == "continuation" and match_ratio >= 50:
+        return "🟢 Mantener", ["Sesgo de continuación a favor", f"Match {match_ratio}%"]
+
+    # --- Sesgo indeciso o divergente ---
+    if bias == "indecision" or match_ratio < 40:
+        return "🟡 Evaluar", ["Condiciones técnicas débiles o mixtas"]
+
+    # Por defecto:
+    return "🟡 Evaluar", ["Escenario técnico neutral"]
+
+
+# ================================================================
+# 🚨 Monitor de operaciones abiertas
+# ================================================================
 async def monitor_open_positions():
-    """
-    Revisa todas las posiciones abiertas en Bybit y genera alertas
-    cuando la tendencia o la pérdida justifican una acción.
-    """
-
     logger.info("📡 Iniciando evaluación de operaciones abiertas…")
 
     positions = get_open_positions()
@@ -77,15 +92,7 @@ async def monitor_open_positions():
                 logger.warning(f"⚠️ Entrada inválida: {pos}")
                 continue
 
-            # ROI real (con apalancamiento)
-            roi = calculate_roi(
-                entry_price=entry,
-                current_price=mark,
-                direction=direction,
-                leverage=lev,
-            )
-
-            # Pérdida sin apalancamiento aproximada
+            roi = calculate_roi(entry, mark, direction, lev)
             loss_pct = calculate_loss_pct_from_roi(roi, lev)
 
             logger.info(
@@ -94,69 +101,45 @@ async def monitor_open_positions():
 
             loss_level = compute_loss_level(roi)
             if loss_level is None:
-                # Operación sin pérdidas críticas → no molestamos
                 continue
 
-            # =======================================================
-            # 🔍 Análisis técnico profundo via trend_system_final
-            # =======================================================
+            # ================================
+            # 🔍 Análisis técnico profundo
+            # ================================
             analysis = analyze_trend_core(
                 symbol=symbol,
                 direction=direction,
                 context="operation",
-                roi=roi,          # ROI con apalancamiento
-                loss_pct=loss_pct # pérdida aproximada sin apalancamiento
+                roi=roi,
+                loss_pct=loss_pct,
             )
 
-            # =======================================================
-            # 🎯 Recomendación final
-            # =======================================================
-            decision = analysis.get("decision", "")
-            reasons = analysis.get("decision_reasons", [])
-
-            if decision == "hold":
-                suggestion = "🟢 Mantener"
-            elif decision == "watch":
-                suggestion = "🟡 Evaluar con precaución"
-            elif decision == "close":
-                suggestion = "🔴 Cerrar"
-            elif decision == "revert":
-                suggestion = "⚠️ Revertir posición"
-            else:
-                suggestion = "📊 Evaluar"
-
-            if reasons:
-                suggestion += "\n📝 Motivos:\n - " + "\n - ".join(reasons)
-
-            # =======================================================
-            # 📩 Notificación al usuario
-            # =======================================================
-            alert_msg = (
-                f"🚨 *Alerta de operación: {symbol}*\n"
-                f"📌 Dirección: *{direction.upper()}* x{lev}\n"
-                f"💵 ROI: `{roi:.2f}%`\n"
-                f"💰 PnL: `{pnl}`\n"
-                f"📉 Nivel de pérdida: {loss_level}%\n"
-                f"📊 Match técnico: {analysis.get('match_ratio', 0):.1f}%\n"
-                f"🧭 Tendencia mayor: {analysis.get('major_trend')}\n"
-                f"🔮 Sesgo smart: {analysis.get('smart_bias')}\n"
-                f"🧠 *Recomendación:* {suggestion}"
+            # Nueva traducción → recomendación
+            suggestion, reasons = build_operation_suggestion(
+                analysis, roi, loss_pct
             )
 
-            await asyncio.to_thread(send_message, alert_msg)
+            # ================================
+            # 📤 Enviar alerta final al usuario
+            # ================================
+            notify_operation_recommendation({
+                "symbol": symbol,
+                "direction": direction,
+                "roi": roi,
+                "pnl": pnl,
+                "loss_level": loss_level,
+                "match_ratio": analysis.get("match_ratio", 0),
+                "major_trend": analysis.get("major_trend"),
+                "smart_bias": analysis.get("smart_bias"),
+                "suggestion": suggestion,
+                "reasons": reasons,
+            })
 
         except Exception as e:
             logger.error(f"❌ Error evaluando operación {pos}: {e}")
 
 
-# ============================================================
-# 🏁 Servicio programado — usado por main.py
-# ============================================================
-
 async def start_operation_tracker():
-    """
-    Bucle que ejecuta monitor_open_positions() cada 20 segundos.
-    """
     logger.info("🔄 Iniciando start_operation_tracker()...")
 
     while True:
@@ -164,4 +147,4 @@ async def start_operation_tracker():
             await monitor_open_positions()
         except Exception as e:
             logger.error(f"❌ Error en start_operation_tracker: {e}")
-        await asyncio.sleep(20)  # intervalo estándar
+        await asyncio.sleep(20)
