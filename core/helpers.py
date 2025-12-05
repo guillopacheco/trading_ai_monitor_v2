@@ -10,7 +10,7 @@ Incluye:
 - Normalización segura de leverage
 """
 import re
-from services.bybit_client import get_ohlcv_data
+from services.bybit_service.bybit_client import get_ohlcv_data
 import logging
 
 logger = logging.getLogger("helpers")
