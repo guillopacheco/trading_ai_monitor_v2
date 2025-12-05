@@ -9,7 +9,8 @@ Incluye:
 - Cambio porcentual adaptado para long/short
 - Normalización segura de leverage
 """
-
+import re
+from services.bybit_client import get_ohlcv_data
 import logging
 
 logger = logging.getLogger("helpers")
@@ -19,19 +20,55 @@ logger = logging.getLogger("helpers")
 # 🔤 Normalización básica
 # ============================================================
 
-def normalize_symbol(symbol: str) -> str:
+def normalize_symbol(raw: str) -> str:
     """
-    Normaliza símbolos:
-    'btc/usdt' → 'BTCUSDT'
-    'btc-usdt' → 'BTCUSDT'
-    ' BTCUSDT ' → 'BTCUSDT'
+    Normaliza símbolos del canal VIP que vienen como:
+      BOBBOB/USDT → BOBBOBUSDT (pero puede no existir)
+    
+    Nueva lógica inteligente:
+      1) Normalización estándar.
+      2) Intentar variantes para encontrar un par REAL en Bybit.
     """
-    if not symbol:
-        return ""
-    s = symbol.strip().upper()
-    for ch in ["/", "-", " "]:
-        s = s.replace(ch, "")
-    return s
+
+    # 1) Limpieza estándar
+    clean = raw.upper().replace("/", "").replace(" ", "")
+    if clean.endswith("USDT"):
+        base = clean[:-4]
+    else:
+        base = clean
+
+    candidates = []
+
+    # Variante A: usar el símbolo limpio tal cual
+    candidates.append(base + "USDT")
+
+    # Variante B: si el nombre tiene duplicaciones tipo BOBBOB → BOBO
+    m = re.match(r"(.+?)\1+$", base)
+    if m:
+        candidates.append(m.group(1).upper() + "USDT")
+
+    # Variante C: si termina repetido (BOBBOB → BOBBO → BOB)
+    if len(base) > 4 and base[-3:] == base[-6:-3]:
+        candidates.append(base[:-3] + "USDT")
+
+    # Variante D: quitar última letra (fallback genérico)
+    if len(base) > 3:
+        candidates.append(base[:-1] + "USDT")
+
+    # Evitar duplicados
+    candidates = list(dict.fromkeys(candidates))
+
+    # 2) Probar variantes consultando OHLCV real
+    for sym in candidates:
+        try:
+            df = get_ohlcv_data(sym, "15")  # timeframe pequeño para validar rápido
+            if df is not None and not df.empty:
+                return sym  # ¡símbolo válido encontrado!
+        except Exception:
+            pass
+
+    # 3) Fallback: devolver la versión limpia original
+    return candidates[0]
 
 
 def normalize_direction(d: str | None) -> str | None:
