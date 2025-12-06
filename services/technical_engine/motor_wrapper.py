@@ -1,17 +1,9 @@
-"""
-motor_wrapper.py — Capa de compatibilidad
------------------------------------------
-Este archivo unifica TODAS las llamadas técnicas de la aplicación
-usando el motor OFICIAL: technical_engine.analyze()
-
-✔ Reemplaza cualquier referencia al motor viejo
-✔ Garantiza compatibilidad con todos los módulos existentes
-"""
+# motor_wrapper.py — Capa de compatibilidad del motor técnico unificado
 
 import logging
 
-# ✅ Este es el motor técnico oficial y único
-from services.technical_engine.technical_engine import analyze as core_analyze
+# ✅ Import correcto del motor técnico REAL
+from services.technical_engine.technical_brain_unified import run_unified_analysis as core_analyze
 
 logger = logging.getLogger("motor_wrapper")
 
@@ -22,14 +14,14 @@ def analyze(symbol: str,
             roi: float = None,
             loss_pct: float = None):
     """
-    Puente estandarizado usado por:
-    - signal_reactivation_sync
-    - operation_tracker
-    - position_reversal_monitor
-    - telegram_reader
-    - command_bot (/analizar)
-
-    Siempre llama al motor técnico real: core_analyze()
+    Puente unificado que llama SIEMPRE al motor técnico oficial.
+    Usado por:
+      - signal_reactivation_sync
+      - smart_reactivation_validator
+      - operation_tracker
+      - position_reversal_monitor
+      - command_bot (/analizar)
+      - telegram_reader
     """
     try:
         result = core_analyze(
@@ -39,11 +31,15 @@ def analyze(symbol: str,
             roi=roi,
             loss_pct=loss_pct
         )
+
         return result
 
     except Exception as e:
-        logger.error(f"❌ Error en motor_wrapper.analyze() para {symbol}: {e}", exc_info=True)
-        # Para evitar romper flujos críticos, devolvemos un fallback simple
+        logger.error(
+            f"❌ Error en motor_wrapper.analyze() para {symbol}: {e}",
+            exc_info=True
+        )
+
         return {
             "snapshot": {},
             "decision": {"decision": "wait", "confidence": 0.0},
@@ -54,9 +50,8 @@ def analyze(symbol: str,
         }
 
 
-# Alias por compatibilidad con código viejo (si fuera llamado)
 def analyze_and_format(symbol: str, direction: str = "long"):
-    """Formato simple usado por telegram_reader histórico."""
+    """Compatibilidad con mensajes antiguos del bot."""
     result = analyze(symbol, direction_hint=direction, context="manual")
 
     snap = result.get("snapshot", {})
@@ -74,11 +69,9 @@ def analyze_and_format(symbol: str, direction: str = "long"):
 
     return msg
 
+
 def analyze_for_signal(symbol: str, direction: str = "long"):
-    """
-    Compatibilidad con telegram_reader.
-    Usa el motor técnico oficial en contexto 'signal'.
-    """
+    """Compatibilidad con telegram_reader."""
     return analyze(
         symbol=symbol,
         direction_hint=direction,
