@@ -35,6 +35,7 @@ from services.technical_engine.motor_wrapper import (
 from services.signals_service.signal_reactivation_sync import start_reactivation_monitor, run_reactivation_cycle
 from services.positions_service.operation_tracker import start_operation_tracker
 from services.positions_service.position_reversal_monitor import start_reversal_monitor
+from services.technical_engine.technical_brain_unified import run_unified_analysis
 
 from services.telegram_service.notifier import send_message
 from core.helpers import normalize_symbol, normalize_direction
@@ -194,7 +195,6 @@ async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Error en /analizar: {e}")
         await update.message.reply_text(f"❌ Error analizando {symbol}: {e}")
-
 
 # ============================================================
 # 🔄 /reversion — Revisar reversión técnica
