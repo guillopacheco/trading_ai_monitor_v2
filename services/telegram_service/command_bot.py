@@ -232,37 +232,25 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # 🚀 Inicialización del bot
 # ============================================================
 
-def start_command_bot() -> None:
-    """
-    Inicia el bot de Telegram en un hilo separado.
-    No usa await, no usa asyncio dentro.
-    """
+async def start_command_bot():
+    logger = logging.getLogger("command_bot")
     logger.info("🤖 Iniciando bot de comandos (LITE)...")
 
-    def _run():
-        app = (
-            Application.builder()
-            .token(TELEGRAM_BOT_TOKEN)
-            .concurrent_updates(True)
-            .build()
-        )
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-        # Handlers
-        app.add_handler(CommandHandler("help", help_cmd))
-        app.add_handler(CommandHandler("start", help_cmd))
-        app.add_handler(CommandHandler("estado", estado_cmd))
-        app.add_handler(CommandHandler("analizar", analizar_cmd))
-        app.add_handler(CommandHandler("reactivacion", reactivacion_cmd))
-        app.add_handler(CommandHandler("config", config_cmd))
+    # Handlers
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("analizar", analizar))
+    app.add_handler(CommandHandler("estado", estado))
+    app.add_handler(CommandHandler("reactivacion", reactivacion_cmd))
+    app.add_handler(CommandHandler("config", config_cmd))
 
-        logger.info("🤖 Bot de comandos LISTO. Escuchando…")
-        app.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            poll_interval=1.0
-        )
+    # Inicializar sin bloquear el loop
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
 
-    # Ejecutar bot en un thread
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+    logger.info("🤖 Bot de comandos LISTO. Escuchando…")
 
-    return thread
+    return app
+
