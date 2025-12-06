@@ -82,7 +82,6 @@ def run_unified_analysis(
             loss_pct=loss_pct,
         )
 
-
         major_trend = trends.get("major_trend")
         overall_trend = trends.get("overall_trend", major_trend)
         smart_bias_label = trends.get("smart_bias")
@@ -132,6 +131,15 @@ def run_unified_analysis(
             decision["current_price"] = float(df_main.iloc[-1]["close"])
         except Exception:
             decision["current_price"] = None
+
+            # 🔧 Inyectar tendencia mayor a todos los TF si falta
+        if major_trend:
+            snapshot["major_trend_code"] = major_trend
+            snapshot["major_trend_label"] = major_trend_label
+
+            for tf in tf_snapshot:
+                if not tf.get("trend_code"):
+                    tf["trend_code"] = major_trend
 
         # =====================================================
         # 6) Resultado final unificado
