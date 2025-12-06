@@ -238,10 +238,10 @@ async def start_command_bot():
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Handlers
+    # Handlers con nombres reales
     app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("analizar", analizar))
-    app.add_handler(CommandHandler("estado", estado))
+    app.add_handler(CommandHandler("analizar", analizar_cmd))
+    app.add_handler(CommandHandler("estado", estado_cmd))
     app.add_handler(CommandHandler("reactivacion", reactivacion_cmd))
     app.add_handler(CommandHandler("config", config_cmd))
 
@@ -253,4 +253,5 @@ async def start_command_bot():
     logger.info("🤖 Bot de comandos LISTO. Escuchando…")
 
     return app
+
 
