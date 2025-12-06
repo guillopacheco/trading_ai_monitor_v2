@@ -48,7 +48,9 @@ async def main():
     # ---------------------------------------------------
     logger.info("📡 Iniciando telegram_reader y command_bot...")
     reader_task = asyncio.create_task(start_telegram_reader(client))
-    bot_app = await start_command_bot()
+    # Iniciar el bot en un thread separado
+    bot_thread = start_command_bot()
+
 
     # ---------------------------------------------------
     # 5) Iniciar servicios técnicos
@@ -65,12 +67,8 @@ async def main():
     # 6) Mantener servicios activos
     # ---------------------------------------------------
     await asyncio.gather(
-        reader_task,
-        bot_task,
-        reactivation_task,
-        operations_task,
-        reversal_task,
-    )
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    reader_task,
+    reactivation_task,
+    operations_task,
+    reversal_task,
+)

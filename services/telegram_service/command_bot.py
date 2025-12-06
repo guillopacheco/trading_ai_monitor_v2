@@ -13,6 +13,7 @@ Comandos activos en esta versión LITE:
 """
 
 import logging
+import threading
 from datetime import datetime
 
 from telegram import Update
@@ -233,33 +234,35 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 def start_command_bot() -> None:
     """
-    Inicia el bot de Telegram en modo polling.
-    main.py simplemente llama a esta función.
+    Inicia el bot de Telegram en un hilo separado.
+    No usa await, no usa asyncio dentro.
     """
     logger.info("🤖 Iniciando bot de comandos (LITE)...")
 
-    app = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .concurrent_updates(True)
-        .build()
-    )
+    def _run():
+        app = (
+            Application.builder()
+            .token(TELEGRAM_BOT_TOKEN)
+            .concurrent_updates(True)
+            .build()
+        )
 
-    # Handlers
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("start", help_cmd))
-    app.add_handler(CommandHandler("estado", estado_cmd))
-    app.add_handler(CommandHandler("analizar", analizar_cmd))
-    app.add_handler(CommandHandler("reactivacion", reactivacion_cmd))
-    app.add_handler(CommandHandler("config", config_cmd))
+        # Handlers
+        app.add_handler(CommandHandler("help", help_cmd))
+        app.add_handler(CommandHandler("start", help_cmd))
+        app.add_handler(CommandHandler("estado", estado_cmd))
+        app.add_handler(CommandHandler("analizar", analizar_cmd))
+        app.add_handler(CommandHandler("reactivacion", reactivacion_cmd))
+        app.add_handler(CommandHandler("config", config_cmd))
 
-    # Arrancamos polling (bloqueante; main.py suele lanzarlo en hilo propio)
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        poll_interval=1.0,
-        timeout=10,
-        read_timeout=10,
-        write_timeout=10,
-    )
+        logger.info("🤖 Bot de comandos LISTO. Escuchando…")
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            poll_interval=1.0
+        )
 
-    logger.info("🤖 Bot de comandos detenido.")
+    # Ejecutar bot en un thread
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    return thread
