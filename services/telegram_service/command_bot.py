@@ -169,6 +169,9 @@ async def reactivacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🔍 /analizar <par> [long|short]
 # ============================================================
 
+from services.technical_engine.technical_brain_unified import run_unified_analysis
+
+
 async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
@@ -187,10 +190,42 @@ async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             direction = d
 
     try:
-        # motor único vía trend_system_final
-        tech_msg = analyze_and_format(symbol, direction)
+        # 🔥 MOTOR TÉCNICO UNIFICADO
+        result = run_unified_analysis(
+            symbol=symbol,
+            direction_hint=direction or "long",
+            context="manual"
+        )
 
-        await update.message.reply_text(tech_msg, parse_mode="Markdown")
+        snap = result.get("snapshot", {})
+
+        major = snap.get("major_trend_label", "N/A")
+        confidence = snap.get("match_ratio", 0.0)
+        grade = snap.get("grade", "D")
+        bias = snap.get("smart_bias", "N/A")
+
+        msg = (
+            f"📊 *Análisis de {symbol}*\n"
+            f"• Tendencia mayor: *{major}*\n"
+            f"• Smart Bias: {bias}\n"
+            f"• Confianza: *{confidence:.1f}%* (Grado {grade})\n"
+        )
+
+        # Divergencias
+        divs = result.get("divergences", [])
+        if divs:
+            msg += "\n⚠️ *Divergencias detectadas:*\n"
+            for d in divs:
+                msg += f"• {d.get('type')} en {d.get('tf')} ({d.get('direction')})\n"
+
+        decision = result.get("decision", {})
+        msg += (
+            "\n📌 *Recomendación:* "
+            f"{decision.get('decision', 'N/A')} "
+            f"({decision.get('confidence', 0)*100:.1f}% confianza)"
+        )
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
         logger.error(f"❌ Error en /analizar: {e}")
