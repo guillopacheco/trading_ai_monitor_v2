@@ -140,22 +140,42 @@ async def _process_pending_signals():
             logger.error(f"⚠️ Error actualizando match_ratio en DB: {e}")
 
         # Evaluación adicional con el motor antiguo inteligente (compatibilidad)
+        # 4) Motor inteligente de reactivación (motor único)
         intel = evaluate_reactivation(
             symbol=symbol,
             side=direction,
-            entry_price=sig["entry_price"],
+            entry_price=entry_price,
+            mark_price=mark_price,
+            motor_result=analysis,
         )
 
-        if intel.get("decision") != "reactivate":
-            logger.info(f"⏳ Señal {symbol} bloqueada por motor inteligente: {intel.get('decision')}")
+        decision = intel.get("decision")
+        allowed = bool(intel.get("allowed", False))
+        grade = intel.get("grade", "?")
+        score = intel.get("score", intel.get("technical_score"))
+        match_ratio = intel.get("match_ratio")
+
+        # 🔐 Si el motor inteligente NO decide "reactivate", no hay nada que hacer
+        if decision != "reactivate" or not allowed:
+            logger.info(
+                f"⏳ Señal {symbol} NO reactivada por motor único "
+                f"(decision={decision}, grade={grade}, "
+                f"score={score}, match={match_ratio}%)."
+            )
             continue
 
-        # 5) Evaluar reactivación
-        allowed, reason = _can_reactivate(analysis, direction)
+        # 5) Reactivar señal en DB (aquí ya confiamos en el motor único)
+        updated = mark_signal_as_reactivated(session, signal_id)
+        if updated:
+            logger.info(
+                f"✅ Señal {symbol} REACTIVADA por motor único "
+                f"(grade {grade}, score={score}, match={match_ratio}%)."
+            )
+        else:
+            logger.warning(
+                f"⚠️ No se pudo marcar como reactivada la señal {signal_id} ({symbol})."
+            )
 
-        if not allowed:
-            logger.info(f"⏳ Señal {symbol} NO reactivada: {reason}")
-            continue
 
         # 6) Marcar como reactivada
         try:

@@ -77,3 +77,17 @@ def analyze_for_signal(symbol: str, direction: str = "long"):
         direction_hint=direction,
         context="signal"
     )
+
+# ================================================================
+# 🔁 Alias específicos para compatibilidad con servicios antiguos
+# ================================================================
+
+def analyze_for_reactivation(symbol: str, direction: str, context: str = "reactivation"):
+    """
+    Alias específico para reactivación.
+
+    Mantiene compatibilidad con smart_reactivation_validator:
+    internamente delega a `analyze`, que ya construye el snapshot
+    multi-TF con fallbacks (15m/30m/1h/4h) usando trend_system_final.
+    """
+    return analyze(symbol=symbol, direction_hint=direction, context=context)
