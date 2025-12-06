@@ -96,14 +96,16 @@ def _grade_from_score(score: float) -> str:
 # ============================================================
 # 📌 FUNCIÓN BASE
 # ============================================================
-
+print(">>> trend_system_final.py CARGADO DESDE:", __file__)
 def analyze_trend_core(
+    
     symbol: Union[str, Dict[str, Any]],
     direction: Optional[str] = None,
     context: str = "entry",
     roi: Optional[float] = None,
     loss_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
+
     """
     Motor de tendencias unificado (capa baja).
 
