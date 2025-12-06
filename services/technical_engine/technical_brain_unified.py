@@ -74,6 +74,30 @@ def run_unified_analysis(
         # =====================================================
         snapshot["direction_hint"] = direction_hint  # 🔥 agregar esto
 
+        # =====================================================
+        #  PRECALCULAR tendencia mayor para trend_system_final
+        # =====================================================
+
+        # translate label → code
+        trend_map = {
+            "Alcista": "bull",
+            "Bajista": "bear",
+            "Lateral": "sideways",
+            "N/A": None,
+            None: None,
+        }
+        major_trend_code = trend_map.get(major_trend_label)
+
+        snapshot["major_trend"] = major_trend_code
+        snapshot["major_trend_code"] = major_trend_code
+        snapshot["major_trend_label"] = major_trend_label
+
+# Inyectar a los TF si vienen vacíos
+for tf in tf_snapshot:
+    if not tf.get("trend_code"):
+        tf["trend_code"] = major_trend_code
+
+
         trends = trend_system_final.analyze_trend_core(
             snapshot,
             direction=direction_hint,
@@ -93,6 +117,8 @@ def run_unified_analysis(
         # Para compatibilidad con otros módulos que usan *_code / *_label
         major_trend_label = trends.get("major_trend_label")
         overall_trend_label = trends.get("overall_trend_label")
+
+
 
         # =====================================================
         # 3) Divergencias inteligentes RSI/MACD
@@ -133,14 +159,7 @@ def run_unified_analysis(
             decision["current_price"] = None
 
             # 🔧 Inyectar tendencia mayor a todos los TF si falta
-        if major_trend:
-            snapshot["major_trend_code"] = major_trend
-            snapshot["major_trend_label"] = major_trend_label
-
-            for tf in tf_snapshot:
-                if not tf.get("trend_code"):
-                    tf["trend_code"] = major_trend
-
+        
         # =====================================================
         # 6) Resultado final unificado
         # =====================================================
