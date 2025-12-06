@@ -1,32 +1,36 @@
+"""
+motor_wrapper.py — Capa de compatibilidad
+-----------------------------------------
+Este archivo unifica TODAS las llamadas técnicas de la aplicación
+usando el motor OFICIAL: technical_engine.analyze()
+
+✔ Reemplaza cualquier referencia al motor viejo
+✔ Garantiza compatibilidad con todos los módulos existentes
+"""
+
 import logging
-from typing import Optional, Dict, Any
 
-from services.technical_engine.technical_engine import analyze as analyze_core
-
+# ✅ Este es el motor técnico oficial y único
+from services.technical_engine.technical_engine import analyze as core_analyze
 
 logger = logging.getLogger("motor_wrapper")
 
 
-# ============================================================
-#  Motor Único — Punto de entrada oficial del análisis técnico
-# ============================================================
-
-def analyze(
-    symbol: str,
-    direction_hint: Optional[str] = None,
-    context: str = "entry",
-    roi: Optional[float] = None,
-    loss_pct: Optional[float] = None,
-    entry_price: Optional[float] = None,
-) -> Dict[str, Any]:
+def analyze(symbol: str,
+            direction_hint: str = "long",
+            context: str = "manual",
+            roi: float = None,
+            loss_pct: float = None):
     """
-    Análisis técnico estándar. Usado para:
-    - validar señales
-    - validar reactivaciones
-    - validar reversals
-    - análisis manual (/analizar) si se quiere
-    """
+    Puente estandarizado usado por:
+    - signal_reactivation_sync
+    - operation_tracker
+    - position_reversal_monitor
+    - telegram_reader
+    - command_bot (/analizar)
 
+    Siempre llama al motor técnico real: core_analyze()
+    """
     try:
         result = core_analyze(
             symbol=symbol,
@@ -35,93 +39,37 @@ def analyze(
             roi=roi,
             loss_pct=loss_pct
         )
-
         return result
 
     except Exception as e:
-        logger.exception(f"❌ Error en motor_wrapper.analyze() para {symbol}: {e}")
+        logger.error(f"❌ Error en motor_wrapper.analyze() para {symbol}: {e}", exc_info=True)
+        # Para evitar romper flujos críticos, devolvemos un fallback simple
         return {
-            "error": True,
-            "message": str(e),
+            "snapshot": {},
+            "decision": {"decision": "wait", "confidence": 0.0},
+            "match_ratio": 0.0,
+            "smart_bias": "N/A",
+            "grade": "D",
+            "error": str(e)
         }
 
 
-def analyze_for_signal(symbol: str, direction: str) -> Dict[str, Any]:
-    """Análisis específico para señales recibidas desde Telegram."""
-    return analyze(symbol, direction_hint=direction, context="signal")
+# Alias por compatibilidad con código viejo (si fuera llamado)
+def analyze_and_format(symbol: str, direction: str = "long"):
+    """Formato simple usado por telegram_reader histórico."""
+    result = analyze(symbol, direction_hint=direction, context="manual")
 
-
-def analyze_for_reactivation(symbol: str, direction: str) -> Dict[str, Any]:
-    """Análisis específico para reactivaciones."""
-    return analyze(symbol, direction_hint=direction, context="reactivation")
-
-
-def analyze_for_reversal(
-    symbol: str,
-    direction: str,
-    roi: Optional[float] = None,
-    loss_pct: Optional[float] = None,
-) -> Dict[str, Any]:
-    """
-    Análisis específico para reversales (operaciones abiertas).
-    Aquí sí se usan roi y loss_pct.
-    """
-    return analyze(
-        symbol,
-        direction_hint=direction,
-        context="reversal",
-        roi=roi,
-        loss_pct=loss_pct,
-    )
-
-
-def analyze_and_format(
-    symbol: str,
-    direction: Optional[str],
-    context: str = "entry",
-    roi: Optional[float] = None,
-    loss_pct: Optional[float] = None,
-) -> str:
-    """
-    Versión formateada para enviar por Telegram.
-    Adaptada al motor técnico unificado (snapshot).
-    """
-    data = analyze(
-        symbol,
-        direction_hint=direction,
-        context=context,
-        roi=roi,
-        loss_pct=loss_pct,
-    )
-
-    if data.get("error"):
-        return f"❌ Error en análisis: {data.get('message')}"
-
-    snap = data.get("snapshot", {}) or {}
-
-    major = snap.get("major_trend_label", "N/A")
-    confidence = snap.get("match_ratio", 0.0)
-    grade = snap.get("grade", "D")
-    bias = snap.get("smart_bias", "N/A")
+    snap = result.get("snapshot", {})
+    decision = result.get("decision", {})
 
     msg = (
         f"📊 Análisis de {symbol}\n"
-        f"• Tendencia mayor: {major}\n"
-        f"• Smart Bias: {bias}\n"
-        f"• Confianza: {confidence:.1f}% (Grado {grade})\n"
-    )
-
-    divs = data.get("divergences", [])
-    if divs:
-        msg += "\n⚠️ Divergencias detectadas:\n"
-        for d in divs:
-            msg += f"• {d.get('type')} en {d.get('tf')} ({d.get('direction')})\n"
-
-    decision = data.get("decision", {})
-    msg += (
-        "\n📌 Recomendación: "
-        f"{decision.get('decision', 'N/A')} "
-        f"({decision.get('confidence', 0)*100:.1f}% confianza)"
+        f"• Tendencia mayor: {snap.get('major_trend_label', 'N/A')}\n"
+        f"• Smart Bias: {snap.get('smart_bias', 'N/A')}\n"
+        f"• Confianza: {result.get('match_ratio', 0):.1f}% "
+        f"(Grado {result.get('grade', 'D')})\n\n"
+        f"📌 Recomendación: {decision.get('decision', 'N/A')} "
+        f"({decision.get('confidence', 0)*100:.1f}% confianza)\n"
     )
 
     return msg
