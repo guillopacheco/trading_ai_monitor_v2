@@ -149,12 +149,19 @@ def analyze_trend_core(
         bear_weight = 0.0
         side_weight = 0.0
 
+        # ============================================================
+        # 🔧 Parche: si los TF no traen trend_code, usar la tendencia mayor del snapshot
+        # ============================================================
+
+        fallback_major = snapshot.get("major_trend_code") or snapshot.get("major_trend")
+        fallback_major_norm = _normalize_trend_label(fallback_major)
+
         for tf in tf_list:
-            # Intentar distintos campos posibles
             raw_trend = (
                 tf.get("trend_code")
                 or tf.get("trend")
                 or tf.get("trend_label")
+                or fallback_major_norm   # 🔥 NUEVO: usar el major trend detectado por snapshot
             )
             code = _normalize_trend_label(raw_trend)
             if not code:
