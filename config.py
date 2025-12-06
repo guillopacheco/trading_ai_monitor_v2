@@ -90,6 +90,29 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 # Alias de compatibilidad para motores viejos, por si algo lo usa
 ANALYSIS_DEBUG_MODE = DEBUG_MODE
 
+# services/telegram_service/command_bot.py
+# --- versión async compatible con el loop global ---
+
+async def start_command_bot():
+    logger.info("🤖 Iniciando bot de comandos (LITE)…")
+
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # ⬇️ Handlers
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("estado", estado))
+    app.add_handler(CommandHandler("analizar", analizar))
+    app.add_handler(CommandHandler("reactivacion", reactivar))
+    app.add_handler(CommandHandler("config", config_cmd))
+
+    # ⬇️ Reemplaza run_polling() por control manual del ciclo
+    await app.initialize()     # prepara todo
+    await app.start()          # inicia conexión
+    app.updater.start_polling()  # ⬅️ inicia el polling sin tocar el event loop
+
+    logger.info("🤖 Bot de comandos listo (modo async).")
+
+    return app     # ← retornamos la instancia para detenerla luego si se necesita
 
 # ============================================================
 # VALIDACIÓN RÁPIDA (para evitar errores en tiempo de ejecución)

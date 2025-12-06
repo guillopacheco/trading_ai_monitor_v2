@@ -48,7 +48,7 @@ async def main():
     # ---------------------------------------------------
     logger.info("📡 Iniciando telegram_reader y command_bot...")
     reader_task = asyncio.create_task(start_telegram_reader(client))
-    bot_task = asyncio.create_task(start_command_bot())
+    bot_app = await start_command_bot()
 
     # ---------------------------------------------------
     # 5) Iniciar servicios técnicos
