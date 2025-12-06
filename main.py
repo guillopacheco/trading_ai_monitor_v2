@@ -4,6 +4,7 @@ main.py — Punto de entrada unificado del Trading AI Monitor
 
 import asyncio
 import logging
+import threading
 
 from telethon import TelegramClient
 from config import API_ID, API_HASH, TELEGRAM_SESSION
@@ -22,19 +23,19 @@ from services.telegram_service.command_bot import start_command_bot
 async def main():
 
     # ---------------------------------------------------
-    # 1) Configurar logging
+    # 1) Logging
     # ---------------------------------------------------
     configure_logging()
     logger = logging.getLogger("MAIN")
     logger.info("🚀 Trading AI Monitor iniciando...")
 
     # ---------------------------------------------------
-    # 2) Inicializar DB
+    # 2) Base de datos
     # ---------------------------------------------------
     init_db()
 
     # ---------------------------------------------------
-    # 3) Inicializar cliente Telegram (Telethon)
+    # 3) Cliente Telegram (Telethon)
     # ---------------------------------------------------
     client = TelegramClient(
         TELEGRAM_SESSION,
@@ -44,16 +45,25 @@ async def main():
     await client.start()
 
     # ---------------------------------------------------
-    # 4) Iniciar servicios Telegram
+    # 4) Iniciar lector de señales
     # ---------------------------------------------------
-    logger.info("📡 Iniciando telegram_reader y command_bot...")
+    logger.info("📡 Iniciando telegram_reader...")
     reader_task = asyncio.create_task(start_telegram_reader(client))
-    # Iniciar el bot en un thread separado
-    bot_thread = start_command_bot()
-
 
     # ---------------------------------------------------
-    # 5) Iniciar servicios técnicos
+    # 5) Lanzar command_bot EN THREAD SEPARADO
+    # ---------------------------------------------------
+    logger.info("🤖 Iniciando command_bot en thread separado...")
+
+    bot_thread = threading.Thread(
+        target=start_command_bot,
+        name="CommandBotThread",
+        daemon=True
+    )
+    bot_thread.start()
+
+    # ---------------------------------------------------
+    # 6) Iniciar servicios técnicos
     # ---------------------------------------------------
     logger.info("🧠 Iniciando servicios técnicos...")
 
@@ -64,11 +74,15 @@ async def main():
     logger.info("✅ Todos los servicios iniciados correctamente.")
 
     # ---------------------------------------------------
-    # 6) Mantener servicios activos
+    # 7) Mantener servicios activos
     # ---------------------------------------------------
     await asyncio.gather(
-    reader_task,
-    reactivation_task,
-    operations_task,
-    reversal_task,
-)
+        reader_task,
+        reactivation_task,
+        operations_task,
+        reversal_task
+    )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
