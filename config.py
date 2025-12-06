@@ -78,6 +78,7 @@ BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 # Solo tradeamos futuros lineales
 BYBIT_CATEGORY = "linear"
 SIMULATION_MODE = False
+TRADING_MODE = "REAL"   # o "DEMO"
 
 # ============================================================
 # FLAGS DEL SISTEMA
