@@ -1,206 +1,265 @@
 """
-command_bot.py — versión LITE estable
--------------------------------------
-Panel de control simplificado del Trading AI Monitor.
+command_bot.py (LITE)
+---------------------
+Bot de comandos para Trading AI Monitor v2, integrado con el motor
+técnico unificado (technical_engine.analyze).
 
-Incluye (FUNCIONANDO):
-✔ /start, /help          → Ayuda
-✔ /analizar <par> [dir]  → Análisis técnico manual (motor_wrapper.analyze_and_format)
-✔ /reactivacion          → Fuerza ciclo de reactivación con motor técnico único
-✔ /estado                → Estado básico del sistema
-✔ /config                → Configuración básica
-
-Comandos en construcción (no rompen nada):
-• /reanudar, /detener, /reversion, /historial, /limpiar
-  → Responden con mensaje “no disponible aún” para evitar errores.
+Comandos activos en esta versión LITE:
+- /help
+- /estado
+- /analizar <SIMBOLO> [long|short]
+- /reactivacion
+- /config
 """
 
 import logging
-import asyncio
 from datetime import datetime
-
-from config import TELEGRAM_BOT_TOKEN, SIMULATION_MODE, TELEGRAM_USER_ID
 
 from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     ContextTypes,
 )
 
-from services.technical_engine.motor_wrapper import analyze_and_format
+from config import TELEGRAM_BOT_TOKEN, TRADING_MODE
+
+# 🚀 Motor técnico unificado
+from services.technical_engine.technical_engine import analyze as core_analyze
+
+# ♻️ Reactivación de señales
 from services.signals_service.signal_reactivation_sync import run_reactivation_cycle
-from core.helpers import normalize_symbol, normalize_direction
 
 logger = logging.getLogger("command_bot")
 
+
 # ============================================================
-# 🟢 /start — Ayuda general
+# 🔎 Helpers de formateo
 # ============================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def _humanize_bias(code: str | None) -> str:
+    if not code:
+        return "N/A"
+    mapping = {
+        "continuation": "Continuación de tendencia",
+        "reversal": "Posible reversión",
+        "neutral": "Neutral / indeciso",
+        "contrarian": "Contrario a la tendencia",
+    }
+    return mapping.get(code, code)
+
+
+def _humanize_decision(code: str | None) -> str:
+    if not code:
+        return "wait"
+    mapping = {
+        "enter": "entrar al mercado",
+        "reactivate": "reactivar señal pendiente",
+        "wait": "esperar, sin entrar",
+        "cancel": "cancelar / ignorar esta señal",
+        "close": "cerrar la operación",
+        "protect": "proteger la operación (take profit / stop)",
+        "reverse": "revertir la posición",
+    }
+    return mapping.get(code, code)
+
+
+def _format_analysis_message(symbol: str, direction: str | None, result: dict) -> str:
+    """
+    Formatea el resultado de core_analyze() en un mensaje para Telegram.
+    Usa SIEMPRE los datos reales del motor unificado (nada de 0% por defecto).
+    """
+    symbol = symbol.upper()
+
+    # -----------------------------
+    # Datos principales del motor
+    # -----------------------------
+    confidence = float(result.get("confidence") or 0.0)
+    grade = result.get("grade", "N/A")
+    decision = result.get("decision", "wait")
+    decision_reasons = result.get("decision_reasons") or []
+    context = result.get("context", "entry")
+
+    # Debug snapshot (donde vienen tendencia mayor y smart_bias)
+    debug = result.get("debug") or {}
+    snapshot = debug.get("raw_snapshot") or {}
+
+    major_trend = snapshot.get("major_trend_label", "N/A")
+    smart_bias_code = snapshot.get("smart_bias_code")
+    smart_bias = _humanize_bias(smart_bias_code)
+
+    # -----------------------------
+    # Cálculos numéricos
+    # -----------------------------
+    conf_pct = round(confidence * 100, 1)
+    # Para la recomendación usamos la misma confianza global
+    decision_conf_pct = conf_pct
+
+    decision_human = _humanize_decision(decision)
+
+    # Motivo principal (si existe)
+    motivo = ""
+    if decision_reasons:
+        motivo = f"\n📝 Motivo principal: {decision_reasons[0]}"
+
+    # Dirección opcional
+    dir_str = ""
+    if direction:
+        dir_str = f" ({direction.lower()})"
+
+    # -----------------------------
+    # Mensaje final
+    # -----------------------------
     msg = (
-        "🤖 *Trading AI Monitor — Panel de Control (LITE)*\n\n"
+        f"📊 Análisis de {symbol}{dir_str}\n"
+        f"• Tendencia mayor: {major_trend}\n"
+        f"• Smart Bias: {smart_bias}\n"
+        f"• Confianza: {conf_pct:.1f}% (Grado {grade})\n\n"
+        f"📌 Recomendación: {decision} ({decision_conf_pct:.1f}% confianza)\n"
+        f"➡️ Acción sugerida: {decision_human}{motivo}"
+    )
+
+    # Contexto (solo informativo)
+    msg += f"\n\nℹ️ Contexto analizado: {context}"
+    return msg
+
+
+# ============================================================
+# 🧵 Handlers de comandos
+# ============================================================
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = (
+        "🤖 Trading AI Monitor — Panel de Control (LITE)\n\n"
         "Comandos disponibles:\n"
         "• /estado → Ver estado básico del sistema\n"
         "• /analizar BTCUSDT → Análisis técnico manual\n"
         "• /reactivacion → Revisar señales pendientes (motor técnico único)\n"
-        "• /config → Ver configuración básica del sistema\n\n"
-        "_Los comandos /reanudar, /detener, /reversion, /historial y /limpiar_ "
-        "_están en construcción en esta versión LITE._"
+        "• /config → Ver configuración básica del sistema\n"
+        "• /help → Mostrar esta ayuda\n\n"
+        "Los comandos /reanudar, /detener, /reversion, /historial y /limpiar "
+        "están en construcción en esta versión LITE."
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(text)
 
 
-# ============================================================
-# 🧭 /estado — Estado básico del sistema
-# ============================================================
+async def estado_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    trading_mode = "💹 REAL" if TRADING_MODE.upper() == "REAL" else "🧪 DEMO"
 
-async def estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    sim = "🧪 SIMULACIÓN" if SIMULATION_MODE else "💹 REAL"
-
-    msg = (
-        "📊 *Estado del Sistema (LITE)*\n"
-        f"• Modo de Trading: {sim}\n"
-        f"• Hora actual: {datetime.now():%Y-%m-%d %H:%M:%S}\n\n"
-        "♻️ *Reactivación automática*\n"
+    text = (
+        "📊 Estado del Sistema (LITE)\n"
+        f"• Modo de Trading: {trading_mode}\n"
+        f"• Hora actual: {now}\n\n"
+        "♻️ Reactivación automática\n"
         "• Gestión: Motor técnico único activo en segundo plano.\n"
-        "• Control detallado por comandos: _pendiente de integración_"
+        "• Control detallado por comandos: pendiente de integración"
     )
+    await update.message.reply_text(text)
 
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
+async def analizar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /analizar <SIMBOLO> [long|short]
 
-# ============================================================
-# 🔍 /analizar <par> [long|short]
-# ============================================================
+    Ejemplos:
+    - /analizar BTCUSDT
+    - /analizar YALAUSDT short
+    """
+    try:
+        if not context.args:
+            await update.message.reply_text(
+                "Uso: /analizar <SIMBOLO> [long|short]\n"
+                "Ej: /analizar BTCUSDT short"
+            )
+            return
 
-async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
+        symbol = context.args[0].upper()
+        direction = None
+
+        if len(context.args) >= 2:
+            d = context.args[1].lower()
+            if d in {"long", "short"}:
+                direction = d
+
         await update.message.reply_text(
-            "Uso correcto:\n"
-            "`/analizar BTCUSDT`\n"
-            "`/analizar BTCUSDT long`\n"
-            "`/analizar BTCUSDT short`",
-            parse_mode="Markdown",
+            f"🔎 Analizando {symbol}..."
         )
-        return
 
-    raw_symbol = context.args[0]
-    symbol = normalize_symbol(raw_symbol)
+        # Llamamos al motor técnico unificado
+        result = core_analyze(symbol, direction_hint=direction, context="manual")
 
-    direction = None
-    if len(context.args) > 1:
-        d = normalize_direction(context.args[1])
-        if d in ("long", "short"):
-            direction = d
-
-    try:
-        logger.info(f"🧠 /analizar solicitado para {symbol} ({direction or 'auto'})")
-        # 🔥 Usa el motor_wrapper que ya formatea el mensaje listo para Telegram
-        tech_msg = analyze_and_format(symbol, direction)
-        # Por seguridad, si algo raro devuelve un dict u otro tipo, casteamos a str
-        if not isinstance(tech_msg, str):
-            tech_msg = str(tech_msg)
-
-        await update.message.reply_text(tech_msg, parse_mode="Markdown")
+        # Formateamos el mensaje coherente
+        msg = _format_analysis_message(symbol, direction, result)
+        await update.message.reply_text(msg)
 
     except Exception as e:
-        logger.error(f"❌ Error en /analizar para {symbol}: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Error analizando {symbol}: {e}")
+        logger.exception(f"❌ Error en /analizar para {context.args}: {e}")
+        await update.message.reply_text(f"❌ Error analizando {context.args}: {e}")
 
 
-# ============================================================
-# ♻️ /reactivacion — Fuerza ciclo manual
-# ============================================================
-
-async def reactivacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("♻️ Revisando señales pendientes con el motor técnico único...")
+async def reactivacion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Ejecuta una revisión manual de reactivaciones pendientes usando
+    el motor técnico unificado.
+    """
+    await update.message.reply_text("♻️ Revisando señales pendientes...")
 
     try:
-        stats = await run_reactivation_cycle()
-        total = stats.get("total", 0)
-        reactivated = stats.get("reactivated", 0)
-
-        msg = (
-            f"♻️ *Revisión completada*\n"
-            f"• Señales revisadas: {total}\n"
-            f"• Reactivadas: {reactivated}\n"
-            f"• Hora: {datetime.now():%Y-%m-%d %H:%M:%S}"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
+        # Ejecutamos el ciclo de reactivación en un thread del executor
+        await context.application.run_in_executor(None, run_reactivation_cycle)
+        await update.message.reply_text("✅ Revisión de reactivaciones completada.")
     except Exception as e:
-        logger.error(f"❌ Error en /reactivacion: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Error en reactivación: {e}")
+        logger.exception(f"❌ Error en /reactivacion: {e}")
+        await update.message.reply_text(f"❌ Error ejecutando reactivación: {e}")
 
 
-# ============================================================
-# 🧹 Comandos en construcción (no rompen nada)
-# ============================================================
+async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    trading_mode = "💹 REAL" if TRADING_MODE.upper() == "REAL" else "🧪 DEMO"
 
-async def not_implemented(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cmd = update.message.text.split()[0]
-    await update.message.reply_text(
-        f"⚠️ El comando {cmd} aún no está disponible en esta versión LITE.\n"
-        "El análisis técnico y la reactivación de señales *sí* están activos.",
-        parse_mode="Markdown",
+    text = (
+        "⚙️ Configuración básica del sistema (LITE)\n\n"
+        f"• Modo de Trading: {trading_mode}\n"
+        "• Motor técnico: ÚNICO, centralizado (technical_engine.analyze)\n"
+        "• Reactivación automática: activa en segundo plano\n"
+        "• Panel extendido de control: en construcción"
     )
-
-
-# ============================================================
-# ⚙️ /config — Config básica
-# ============================================================
-
-async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    sim = "🧪 SIMULACIÓN" if SIMULATION_MODE else "💹 REAL"
-    user_id = TELEGRAM_USER_ID if 'TELEGRAM_USER_ID' in globals() else "N/D"
-
-    msg = (
-        "⚙️ *Configuración actual (LITE):*\n"
-        f"• Modo: {sim}\n"
-        f"• Bot Token: {'OK' if TELEGRAM_BOT_TOKEN else '❌'}\n"
-        f"• Usuario permitido: {user_id}\n\n"
-        "_Panel de control reducido para máxima estabilidad._"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(text)
 
 
 # ============================================================
 # 🚀 Inicialización del bot
 # ============================================================
 
-async def start_command_bot():
-    try:
-        logger.info("🤖 Iniciando bot de comandos (LITE)...")
+def start_command_bot() -> None:
+    """
+    Inicia el bot de Telegram en modo polling.
+    main.py simplemente llama a esta función.
+    """
+    logger.info("🤖 Iniciando bot de comandos (LITE)...")
 
-        app = (
-            ApplicationBuilder()
-            .token(TELEGRAM_BOT_TOKEN)
-            .build()
-        )
+    app = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
 
-        # Comandos principales
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("help", start))
-        app.add_handler(CommandHandler("estado", estado))
-        app.add_handler(CommandHandler("analizar", cmd_analizar))
-        app.add_handler(CommandHandler("reactivacion", reactivacion))
-        app.add_handler(CommandHandler("config", config_cmd))
+    # Handlers
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("start", help_cmd))
+    app.add_handler(CommandHandler("estado", estado_cmd))
+    app.add_handler(CommandHandler("analizar", analizar_cmd))
+    app.add_handler(CommandHandler("reactivacion", reactivacion_cmd))
+    app.add_handler(CommandHandler("config", config_cmd))
 
-        # Comandos aún no integrados, pero sin romper nada
-        app.add_handler(CommandHandler("reanudar", not_implemented))
-        app.add_handler(CommandHandler("detener", not_implemented))
-        app.add_handler(CommandHandler("reversion", not_implemented))
-        app.add_handler(CommandHandler("historial", not_implemented))
-        app.add_handler(CommandHandler("limpiar", not_implemented))
+    # Arrancamos polling (bloqueante; main.py suele lanzarlo en hilo propio)
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        poll_interval=1.0,
+        timeout=10,
+        read_timeout=10,
+        write_timeout=10,
+    )
 
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling()
-
-        logger.info("🤖 Bot de comandos (LITE) listo.")
-        await asyncio.Event().wait()
-
-    except Exception as e:
-        logger.error(f"❌ Error iniciando command_bot (LITE): {e}", exc_info=True)
+    logger.info("🤖 Bot de comandos detenido.")
