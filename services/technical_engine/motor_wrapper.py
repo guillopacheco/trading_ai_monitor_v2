@@ -1,7 +1,8 @@
 import logging
 from typing import Optional, Dict, Any
 
-from services.technical_engine.technical_engine import analyze as core_analyze
+from services.technical_engine.technical_engine import analyze as analyze_core
+
 
 logger = logging.getLogger("motor_wrapper")
 

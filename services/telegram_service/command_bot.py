@@ -35,7 +35,7 @@ from services.technical_engine.motor_wrapper import (
 from services.signals_service.signal_reactivation_sync import start_reactivation_monitor, run_reactivation_cycle
 from services.positions_service.operation_tracker import start_operation_tracker
 from services.positions_service.position_reversal_monitor import start_reversal_monitor
-from services.technical_engine.technical_brain_unified import run_unified_analysis
+from services.technical_engine.technical_engine import analyze as analyze_core
 
 from services.telegram_service.notifier import send_message
 from core.helpers import normalize_symbol, normalize_direction
@@ -169,9 +169,6 @@ async def reactivacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🔍 /analizar <par> [long|short]
 # ============================================================
 
-from services.technical_engine.technical_brain_unified import run_unified_analysis
-
-
 async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
@@ -191,11 +188,12 @@ async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # 🔥 MOTOR TÉCNICO UNIFICADO
-        result = run_unified_analysis(
+        result = analyze_core(
             symbol=symbol,
             direction_hint=direction or "long",
             context="manual"
         )
+
 
         snap = result.get("snapshot", {})
 
