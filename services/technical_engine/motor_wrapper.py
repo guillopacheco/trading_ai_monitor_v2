@@ -73,3 +73,14 @@ def analyze_and_format(symbol: str, direction: str = "long"):
     )
 
     return msg
+
+def analyze_for_signal(symbol: str, direction: str = "long"):
+    """
+    Compatibilidad con telegram_reader.
+    Usa el motor técnico oficial en contexto 'signal'.
+    """
+    return analyze(
+        symbol=symbol,
+        direction_hint=direction,
+        context="signal"
+    )
