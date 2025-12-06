@@ -133,6 +133,8 @@ def analyze_trend_core(
         if isinstance(symbol, dict):
             snapshot = symbol
             sym = (snapshot.get("symbol") or "").upper() or "UNKNOWN"
+            if direction is None:
+                direction = snapshot.get("direction_hint")
         else:
             sym = (symbol or "").upper()
             snapshot = get_multi_tf_snapshot(sym)

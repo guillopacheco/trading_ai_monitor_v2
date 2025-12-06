@@ -72,6 +72,8 @@ def run_unified_analysis(
         # 2) Calcular tendencias con trend_system_final
         #    (se trabaja DIRECTAMENTE sobre el snapshot)
         # =====================================================
+        snapshot["direction_hint"] = direction_hint  # 🔥 agregar esto
+
         trends = trend_system_final.analyze_trend_core(
             snapshot,
             direction=direction_hint,
@@ -79,6 +81,7 @@ def run_unified_analysis(
             roi=roi,
             loss_pct=loss_pct,
         )
+
 
         major_trend = trends.get("major_trend")
         overall_trend = trends.get("overall_trend", major_trend)
