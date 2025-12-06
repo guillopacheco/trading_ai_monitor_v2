@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, Dict, Any
 
-from services.technical_engine.technical_brain_unified import run_unified_analysis
+from services.technical_engine.technical_engine import analyze as core_analyze
 
 logger = logging.getLogger("motor_wrapper")
 
@@ -27,14 +27,14 @@ def analyze(
     """
 
     try:
-        result = run_unified_analysis(
+        result = core_analyze(
             symbol=symbol,
-            direction_hint=direction_hint or "long",
-            entry_price=entry_price,
-            roi=roi,
-            loss_pct=loss_pct,
+            direction_hint=direction_hint,
             context=context,
+            roi=roi,
+            loss_pct=loss_pct
         )
+
         return result
 
     except Exception as e:
