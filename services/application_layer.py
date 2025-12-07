@@ -1,160 +1,168 @@
-"""application_layer.py — Capa de aplicación del Trading AI Monitor
-
-Esta capa es el **punto de entrada único** hacia el motor técnico.
-Desde aquí se exponen funciones de alto nivel que pueden usar:
-
-- command_bot.py  → para /analizar MANUAL
-- futuros servicios (reversiones, operaciones abiertas, etc.)
-
-La idea es que **ningún módulo de interfaz** (Telegram, cron jobs, etc.)
-llame directamente a trend_system_final / technical_engine,
-sino que lo haga a través de este archivo.
 """
+application_layer.py
+Capa intermedia entre Telegram/Bybit y el motor técnico.
 
-from __future__ import annotations
-
-from typing import Any, Dict, Optional
+OBJETIVO:
+- Normalizar datos
+- Llamar al motor técnico de forma unificada
+- Traducir decisiones del motor a acciones del sistema
+- Evitar que Telegram/Bybit dependan del motor
+"""
 
 import logging
 
-# Motor técnico unificado (opción C validada)
-from services.technical_engine.technical_engine import analyze as engine_analyze
-
-logger = logging.getLogger("application_layer")
+from services.technical_engine.technical_engine import analyze_market
 
 
-# ================================================================
-# 🔧 Normalizadores básicos (símbolo y dirección)
-# ================================================================
-def _normalize_symbol(raw: str) -> str:
-    if not raw:
-        return ""
-    s = raw.strip().upper()
-    # Quitar separadores típicos: BTC/USDT → BTCUSDT
-    s = s.replace("/", "").replace(" ", "")
-    return s
+logger = logging.getLogger("application")
 
 
-def _normalize_direction(raw: Optional[str]) -> Optional[str]:
-    if raw is None:
-        return None
-
-    d = raw.strip().lower()
-    # Mapear equivalentes comunes
-    if d in {"long", "buy", "compra", "comprar", "up", "📈"}:
-        return "long"
-    if d in {"short", "sell", "venta", "vender", "down", "📉"}:
-        return "short"
-
-    # Si no se reconoce, devolvemos None y dejamos que el motor infiera
-    return None
-
-
-# ================================================================
-# 🧠 API PRINCIPAL — ANÁLISIS MANUAL
-# ================================================================
-def manual_analysis(
-    symbol_raw: str,
-    direction_raw: Optional[str] = None,
-    context: str = "entry",
-) -> Dict[str, Any]:
-    """Realiza un análisis técnico manual usando el motor unificado.
-
-    Esta función será el **único punto** que deberían usar:
-    - /analizar en command_bot.py
-    - pruebas manuales desde otros módulos
-
-    Devuelve:
-        {
-            "symbol": str,
-            "direction": Optional[str],
-            "context": str,
-            "engine_result": dict,   # resultado crudo del motor
-            "summary": str           # mensaje listo para Telegram
-        }
+# ============================================================================
+# 🟦 1) Análisis manual (usado por /analizar)
+# ============================================================================
+async def manual_analysis(symbol: str, direction: str = "auto") -> str:
     """
-    symbol = _normalize_symbol(symbol_raw)
-    direction = _normalize_direction(direction_raw)
+    Envuelve el motor técnico y devuelve un mensaje amigable para Telegram.
+    """
+    try:
+        result = await analyze_market(symbol, direction)
 
-    if not symbol:
-        raise ValueError("Símbolo vacío o inválido para análisis manual")
+        # formateo limpio para Telegram
+        msg = (
+            f"📊 *Análisis de {symbol} ({direction})*\n"
+            f"• Tendencia mayor: {result['major_trend_label']}\n"
+            f"• Smart Bias: {result['smart_bias_code']}\n"
+            f"• Confianza: {result['confidence']*100:.1f}% (Grado {result['grade']})\n\n"
+            f"📌 *Recomendación:* {result['decision']} "
+            f"({result['confidence']*100:.1f}% confianza)\n"
+            f"➡️ Acción sugerida: {result['decision']}\n"
+            f"📝 Motivo principal: {result['decision_reasons'][0]}\n\n"
+            f"ℹ️ Contexto analizado: entry"
+        )
+        return msg
 
-    # Normalizar context "manual" → "entry" (misma lógica técnica)
-    if context == "manual":
-        context = "entry"
+    except Exception as e:
+        logger.exception("Error en manual_analysis")
+        return f"❌ Error analizando {symbol}: {e}"
 
-    logger.info(
-        "📨 [AppLayer] Análisis manual solicitado: %s (%s, ctx=%s)",
-        symbol,
-        direction or "auto",
-        context,
-    )
 
-    # ------------------------------------------------------------
-    # 1) Llamar al motor técnico unificado
-    # ------------------------------------------------------------
-    engine_result = engine_analyze(
-        symbol=symbol,
-        direction_hint=direction,
-        context=context,
-        roi=None,
-        loss_pct=None,
-    )
+# ============================================================================
+# 🟦 2) Evaluación para “reactivación de señales”
+# ============================================================================
+async def evaluate_signal_reactivation(signal):
+    """
+    Parámetros esperados desde telegram_reader:
+    - symbol
+    - direction (long/short)
+    - entry_price
+    - timestamp
 
-    # ------------------------------------------------------------
-    # 2) Construir resumen amigable tipo Telegram
-    # ------------------------------------------------------------
-    major_trend = engine_result.get("major_trend_label", "Desconocida")
-    bias_code = engine_result.get("smart_bias_code") or engine_result.get(
-        "smart_bias", "neutral"
-    )
-    grade = engine_result.get("grade", "?")
-    confidence = engine_result.get("confidence", 0.0)
-    decision = engine_result.get("decision", "wait")
-    ctx_used = engine_result.get("context", context or "entry")
-    match_ratio = float(engine_result.get("match_ratio", 0.0))
-    tech_score = float(engine_result.get("technical_score", 0.0))
+    La capa de Telegram NO analiza, solo entrega datos crudos aquí.
+    """
 
-    # Confianza en %, admitiendo que a veces ya viene en 0–1 y otras en 0–100
-    if confidence <= 1.0:
-        conf_pct = round(confidence * 100.0, 1)
+    logger.info(f"♻️ Evaluando reactivación: {signal['symbol']} {signal['direction']}")
+
+    # llamamos al motor
+    result = await analyze_market(signal["symbol"], signal["direction"])
+
+    decision = result["decision"]
+
+    # El motor decide y nosotros traducimos a acción del sistema:
+    if decision in ["enter", "ok", "safe"]:
+        action = "REACTIVATE"
+    elif decision in ["skip", "block"]:
+        action = "IGNORE"
     else:
-        conf_pct = round(confidence, 1)
-
-    reasons = engine_result.get("decision_reasons") or []
-    main_reason = reasons[0] if reasons else "Sin motivo detallado."
-
-    header_side = direction or "auto"
-
-    lines: list[str] = [
-        f"📊 Análisis de {symbol} ({header_side})",
-        f"• Tendencia mayor: {major_trend}",
-        f"• Smart Bias: {bias_code}",
-        f"• Confianza: {conf_pct:.1f}% (Grado {grade})",
-        "",
-        f"📌 Recomendación: {decision} ({conf_pct:.1f}% confianza)",
-        f"➡️ Acción sugerida: {decision}",
-        f"📝 Motivo principal: {main_reason}",
-        "",
-        f"ℹ️ Contexto analizado: {ctx_used}",
-        f"ℹ️ match_ratio={match_ratio:.1f} | score={tech_score:.1f}",
-    ]
-
-    summary = "\n".join(lines)
-
-    logger.info(
-        "✅ [AppLayer] Análisis manual completado: %s (%s) → decision=%s, grade=%s, conf=%.1f%%",
-        symbol,
-        direction or "auto",
-        decision,
-        grade,
-        conf_pct,
-    )
+        action = "UNKNOWN"
 
     return {
-        "symbol": symbol,
-        "direction": direction,
-        "context": ctx_used,
-        "engine_result": engine_result,
-        "summary": summary,
+        "symbol": signal["symbol"],
+        "direction": signal["direction"],
+        "decision": decision,
+        "action": action,
+        "engine_output": result,
+    }
+
+
+# ============================================================================
+# 🟦 3) Evaluación de operaciones abiertas
+# ============================================================================
+async def evaluate_open_position(position):
+    """
+    Parámetros esperados (desde Bybit):
+    - symbol
+    - side (Buy/Sell)
+    - entry_price
+    - mark_price
+    - roi_pct
+    """
+
+    logger.info(f"📡 Analizando posición abierta: {position['symbol']} | ROI={position['roi_pct']}%")
+
+    # Convertimos side de bybit a dirección
+    direction = "long" if position["side"].lower() == "buy" else "short"
+
+    result = await analyze_market(position["symbol"], direction)
+
+    # lógica universal
+    if result["decision"] in ["skip", "block"]:
+        return {
+            "action": "hold",
+            "reason": "Condiciones no favorables para cerrar ni revertir",
+            "engine": result
+        }
+
+    if result["decision"] == "exit":
+        return {
+            "action": "exit",
+            "reason": "Motor detecta riesgo o reversión",
+            "engine": result
+        }
+
+    if result["decision"] == "reverse":
+        return {
+            "action": "reverse",
+            "reason": "Tendencia mayor en contra, reversión fuerte",
+            "engine": result
+        }
+
+    return {
+        "action": "hold",
+        "reason": "Neutral",
+        "engine": result
+    }
+
+
+# ============================================================================
+# 🟦 4) Evaluación en caso de STOP LOSS crítico (-50%)
+# ============================================================================
+async def evaluate_stoploss_reversal(position):
+    """
+    Casos de pérdida extrema.
+    """
+
+    logger.warning(f"⚠️ Evaluación crítica (-50%) para {position['symbol']}")
+
+    direction = "long" if position["side"].lower() == "buy" else "short"
+
+    result = await analyze_market(position["symbol"], direction)
+
+    if result["decision"] == "reverse":
+        return {
+            "action": "reverse",
+            "reason": "Reversión detectada — mejor invertir la posición",
+            "engine": result
+        }
+
+    if result["decision"] in ["exit", "block"]:
+        return {
+            "action": "exit",
+            "reason": "Condiciones malas → cerrar para limitar pérdidas",
+            "engine": result
+        }
+
+    return {
+        "action": "hold",
+        "reason": "Motor considera que puede recuperarse",
+        "engine": result
     }
