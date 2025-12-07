@@ -136,7 +136,8 @@ class OperationTrackerAdapter:
         logger.info("📡 Iniciando evaluación de posiciones abiertas…")
 
         try:
-            positions: List[Dict[str, Any]] = await get_open_positions()
+            positions: List[Dict[str, Any]] = get_open_positions()
+
         except Exception as e:
             logger.error(f"❌ Error obteniendo posiciones desde Bybit: {e}", exc_info=True)
             return

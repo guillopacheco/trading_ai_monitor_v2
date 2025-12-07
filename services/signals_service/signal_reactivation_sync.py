@@ -243,7 +243,8 @@ async def run_reactivation_cycle() -> str:
         - comando /reactivacion
         - monitor automático en segundo plano
     """
-    pending: List[Dict[str, Any]] = get_pending_signals_for_reactivation(limit=20)
+    pending: List[Dict[str, Any]] = get_pending_signals_for_reactivation()
+
 
     if not pending:
         logger.info("♻️ No hay señales pendientes para reactivación.")
