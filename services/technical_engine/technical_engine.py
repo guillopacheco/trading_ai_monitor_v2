@@ -441,3 +441,41 @@ def analyze(
             "decision_reasons": [str(e)],
             "debug": {"error": str(e), "context": context},
         }
+
+# =====================================================================
+# 🌐 FUNCIÓN PÚBLICA — analyze_market()
+# Punto de entrada único del motor técnico para toda la aplicación
+# =====================================================================
+
+async def analyze_market(symbol: str, direction: str = "auto"):
+    """
+    Fachada principal del motor técnico.
+    Usado por:
+    - Application Layer (manual_analysis, reactivations, open positions)
+    - Telegram Bot (/analizar)
+    - Trackers de operaciones abiertas
+    """
+
+    try:
+        # 1) Obtener snapshot técnico multiperiodo
+        snapshot = await get_market_snapshot(symbol)
+
+        # 2) Ejecutar Smart Bias
+        smart_bias = evaluate_smart_bias(snapshot, direction)
+
+        # 3) Ejecutar Smart Entry
+        entry_eval = evaluate_smart_entry(snapshot, smart_bias, direction)
+
+        # 4) Decisión final
+        final_decision = make_final_decision(
+            snapshot=snapshot,
+            smart_bias=smart_bias,
+            entry=entry_eval,
+            direction=direction
+        )
+
+        return final_decision
+
+    except Exception as e:
+        logger.exception(f"❌ Error interno en analyze_market() para {symbol}")
+        raise e
