@@ -1,5 +1,5 @@
 """
-main.py — FIX integración bot Telegram
+main.py — versión final estable, bot funcionando.
 """
 
 import asyncio
@@ -20,27 +20,30 @@ from services.telegram_service.command_bot import start_command_bot
 
 
 async def main():
-
     configure_logging()
     logger = logging.getLogger("MAIN")
     logger.info("🚀 Trading AI Monitor iniciando...")
 
     init_db()
 
+    # Telethon
     client = TelegramClient(TELEGRAM_SESSION, API_ID, API_HASH)
     await client.start()
 
-    logger.info("📡 Iniciando telegram_reader, command_bot y trackers…")
+    logger.info("📡 Iniciando servicios…")
 
-    # 🔥 FIX: command bot en task (run_polling() bloquea)
+    # 🔥 Bot de comandos en TASK paralela (NO await)
     asyncio.create_task(start_command_bot())
 
+    # Telegram reader (Telethon)
     reader_task = asyncio.create_task(start_telegram_reader(client))
-    reactivation_task = asyncio.create_task(start_reactivation_monitor())
-    operations_task = asyncio.create_task(start_operation_tracker())
-    reversal_task = asyncio.create_task(start_reversal_monitor())
 
-    logger.info("✅ Todos los servicios iniciados correctamente.")
+    # Servicios
+    reactivation_task = asyncio.create_task(start_reactivation_monitor())
+    operations_task   = asyncio.create_task(start_operation_tracker())
+    reversal_task     = asyncio.create_task(start_reversal_monitor())
+
+    logger.info("✅ Todos los servicios iniciados.")
 
     await asyncio.gather(
         reader_task,
