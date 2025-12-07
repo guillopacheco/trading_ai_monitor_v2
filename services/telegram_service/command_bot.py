@@ -31,6 +31,9 @@ from services.technical_engine.technical_engine import analyze as core_analyze
 # ♻️ Reactivación de señales
 from services.signals_service.signal_reactivation_sync import run_reactivation_cycle
 
+from services.application_layer import manual_analysis
+
+
 logger = logging.getLogger("command_bot")
 
 
@@ -159,44 +162,45 @@ async def estado_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(text)
 
 
-async def analizar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /analizar <SIMBOLO> [long|short]
-
-    Ejemplos:
-    - /analizar BTCUSDT
-    - /analizar YALAUSDT short
-    """
+# =====================================================================
+# 🔎 /analizar  — Análisis técnico manual usando Application Layer
+# =====================================================================
+async def analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if not context.args:
+        args = context.args
+
+        if not args:
             await update.message.reply_text(
-                "Uso: /analizar <SIMBOLO> [long|short]\n"
-                "Ej: /analizar BTCUSDT short"
+                "❗ Uso: /analizar BTCUSDT [long|short]"
             )
             return
-
-        symbol = context.args[0].upper()
-        direction = None
-
-        if len(context.args) >= 2:
-            d = context.args[1].lower()
-            if d in {"long", "short"}:
-                direction = d
+        
+        symbol = args[0]
+        direction = args[1] if len(args) > 1 else None
 
         await update.message.reply_text(
-            f"🔎 Analizando {symbol}..."
+            f"⏳ Analizando *{symbol}*...", parse_mode="Markdown"
         )
 
-        # Llamamos al motor técnico unificado
-        result = core_analyze(symbol, direction_hint=direction, context="manual")
+        # -----------------------------
+        # 🧠 Llamar al Application Layer
+        # -----------------------------
+        result = manual_analysis(
+            symbol_raw=symbol,
+            direction_raw=direction,
+            context="manual",
+        )
 
-        # Formateamos el mensaje coherente
-        msg = _format_analysis_message(symbol, direction, result)
-        await update.message.reply_text(msg)
+        summary = result["summary"]
+
+        await update.message.reply_text(summary)
 
     except Exception as e:
-        logger.exception(f"❌ Error en /analizar para {context.args}: {e}")
-        await update.message.reply_text(f"❌ Error analizando {context.args}: {e}")
+        logging.exception("❌ Error en /analizar")
+        await update.message.reply_text(
+            f"❌ Error analizando {symbol}: {str(e)}"
+        )
+
 
 
 async def reactivacion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
