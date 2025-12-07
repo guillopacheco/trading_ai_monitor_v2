@@ -55,6 +55,8 @@ class OperationTrackerAdapter:
         side = self._normalize_side(side_raw)
 
         size = self._safe_float(raw.get("size") or raw.get("qty") or raw.get("positionSize"))
+        
+        # 🔥🔥🔥 FIX OBLIGATORIO
         leverage = self._safe_float(raw.get("leverage") or raw.get("leverageR") or 20)
 
         entry_price = self._safe_float(
@@ -67,10 +69,11 @@ class OperationTrackerAdapter:
 
         pnl = calculate_pnl(entry_price, mark_price, size, side)
 
-        # 🔥 FIX PRINCIPAL
+        # 🔥🔥🔥 FIX OBLIGATORIO: ROI ahora exige leverage como 4to parámetro
         roi = calculate_roi(entry_price, mark_price, side, leverage)
 
-        loss_pct = calculate_loss_pct_from_roi(roi)
+        # 🔥🔥🔥 FIX OBLIGATORIO: calculate_loss_pct_from_roi TAMBIÉN EXIGE leverage
+        loss_pct = calculate_loss_pct_from_roi(roi, leverage)
 
         return {
             "symbol": symbol,
