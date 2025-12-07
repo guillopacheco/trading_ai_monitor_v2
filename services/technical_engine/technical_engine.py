@@ -1,5 +1,5 @@
 """
-technical_engine.py — Motor Único de Análisis Técnico (2025)
+technical_engine.py — Motor Único de Análisis Técnico (2025, Lógica C)
 
 Unifica en un solo punto:
 
@@ -7,18 +7,26 @@ Unifica en un solo punto:
     ✔ match_ratio + technical_score + grade + smart_bias + divergencias
     ✔ Smart Entry (A–D + ok/warn/block)
     ✔ Lógica por contexto:
-        - entry         → señal nueva
+        - entry         → señal nueva (incluye /analizar)
         - reactivation  → reactivación de señal pendiente
-        - reversal      → riesgo de reversión
+        - reversal      → riesgo de reversión de operación
         - operation     → seguimiento de operación abierta
-        - manual        → análisis /analizar
+        - internal      → chequeos internos más flexibles
 
 Toda la app debe usar SIEMPRE este motor para conseguir coherencia
-entre análisis de señales, reactivaciones, seguimiento y /analizar.
+entre:
+
+    • análisis de señales (en tiempo real)
+    • reactivaciones
+    • seguimiento de operaciones abiertas
+    • comandos manuales (/analizar)
 """
+
+from __future__ import annotations
 
 import logging
 import pprint
+from typing import Any, Dict, List, Optional
 
 from config import DEBUG_MODE
 from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
@@ -28,35 +36,39 @@ logger = logging.getLogger("technical_engine")
 
 
 # ============================================================
-# 🔢 Thresholds unificados por contexto
+# 🔢 Thresholds unificados por contexto (Lógica C)
 # ============================================================
 
 THRESHOLDS = {
+    # Señal nueva (y /analizar)
     "entry": {
         "min_match": 55,
         "min_score": 50,
     },
+    # Señal que ya demostró potencial y queremos reactivar
     "reactivation": {
         "min_match": 50,
         "min_score": 45,
     },
+    # Chequeos internos más flexibles (alertas, exploraciones, etc.)
     "internal": {
         "min_match": 45,
         "min_score": 40,
     },
-    # Para seguimiento de operaciones abiertas
+    # Seguimiento de operaciones abiertas (se combina con ROI / loss_pct)
     "operation": {
         "min_match": 45,
         "min_score": 40,
     },
-    # Para reversión profunda / peligro
+    # Detección de reversión profunda / peligro
     "reversal": {
         "min_match": 40,
         "min_score": 35,
     },
 }
 
-def get_thresholds():
+
+def get_thresholds() -> Dict[str, float]:
     """
     Exporta thresholds en formato simple para otros módulos
     (compatibilidad con motor_wrapper / monitores).
@@ -74,7 +86,8 @@ def get_thresholds():
 # 🎛️ Normalizadores
 # ============================================================
 
-def _trend_label(code: int | None) -> str:
+
+def _trend_label(code: Optional[int]) -> str:
     return {
         2: "bullish",
         1: "slightly-bullish",
@@ -92,7 +105,13 @@ def _confidence_label(c: float) -> str:
     return "low"
 
 
-def _debug_report(symbol, direction_hint, snapshot, entry, final):
+def _debug_report(
+    symbol: str,
+    direction_hint: Optional[str],
+    snapshot: Dict[str, Any],
+    entry: Dict[str, Any],
+    final: Dict[str, Any],
+) -> None:
     """
     Genera un reporte detallado del proceso técnico.
     Solo aparece si DEBUG_MODE = True.
@@ -123,26 +142,28 @@ def _debug_report(symbol, direction_hint, snapshot, entry, final):
 
 
 # ============================================================
-# 🧠 Motor ÚNICO de análisis
+# 🧠 Motor ÚNICO de análisis (Lógica C)
 # ============================================================
+
 
 def analyze(
     symbol: str,
-    direction_hint: str | None = None,
+    direction_hint: Optional[str] = None,
     context: str = "entry",
     *,
-    roi: float | None = None,
-    loss_pct: float | None = None,
-):
+    roi: Optional[float] = None,
+    loss_pct: Optional[float] = None,
+) -> Dict[str, Any]:
     """
     Motor técnico principal.
 
     Parámetros:
         symbol         → par, ej. 'BTCUSDT'
         direction_hint → 'long'/'short' o None
-        context        → 'entry' | 'reactivation' | 'reversal' | 'operation' | 'manual'
-        roi            → ROI actual de la operación (si aplica, en % incluyendo apalancamiento)
-        loss_pct       → pérdida sin apalancamiento (si aplica, en %)
+        context        → 'entry' | 'reactivation' | 'reversal'
+                          'operation' | 'internal' | 'manual'
+        roi            → ROI actual (en %) de la operación (si aplica)
+        loss_pct       → pérdida sin apalancamiento (en %, si aplica)
 
     Devuelve SIEMPRE un diccionario estándar:
         {
@@ -157,25 +178,31 @@ def analyze(
         }
     """
 
-    # Normalizar context manual → entry (misma lógica técnica)
+    # Normalizar contexto manual → entry (misma lógica técnica)
     if context == "manual":
         context = "entry"
 
     try:
         # --------------------------------------------------------
-        # 1) MULTI-TF SNAPSHOT (core principal)
+        # 1) MULTI-TF SNAPSHOT (núcleo técnico)
         # --------------------------------------------------------
         snapshot = get_multi_tf_snapshot(symbol, direction_hint)
 
         major_trend = _trend_label(snapshot.get("major_trend_code"))
-        overall_trend = _trend_label(snapshot.get("overall_trend_code"))
-        match_ratio = float(snapshot.get("match_ratio", 0))
-        technical_score = float(snapshot.get("technical_score", 0))
-        grade = snapshot.get("grade", "D")
-        confidence = float(snapshot.get("confidence", 0))
-        smart_bias = snapshot.get("smart_bias_code", "neutral")
+        # Algunas versiones del core pueden no devolver overall_trend_code
+        overall_trend_code = snapshot.get("overall_trend_code")
+        if overall_trend_code is None:
+            overall_trend = major_trend
+        else:
+            overall_trend = _trend_label(overall_trend_code)
+
+        match_ratio = float(snapshot.get("match_ratio", 0.0))
+        technical_score = float(snapshot.get("technical_score", 0.0))
+        grade = str(snapshot.get("grade", "D"))
+        confidence = float(snapshot.get("confidence", 0.0))
+        smart_bias = snapshot.get("smart_bias_code", snapshot.get("smart_bias", "neutral"))
         divergences = snapshot.get("divergences", {})
-        timeframes = snapshot.get("timeframes", {})
+        timeframes = snapshot.get("timeframes", [])
 
         confidence_lbl = _confidence_label(confidence)
 
@@ -184,29 +211,31 @@ def analyze(
         # --------------------------------------------------------
         entry_info = evaluate_entry(symbol, direction_hint, snapshot)
 
-        entry_score = entry_info.get("entry_score", 0)
-        entry_grade = entry_info.get("entry_grade", "D")
-        entry_mode = entry_info.get("entry_mode", "block")
-        entry_allowed = entry_info.get("entry_allowed", False)
-        entry_reasons = entry_info.get("entry_reasons", [])
+        entry_score = float(entry_info.get("entry_score", 0.0))
+        entry_grade = str(entry_info.get("entry_grade", "D"))
+        entry_mode = str(entry_info.get("entry_mode", "block"))
+        entry_allowed = bool(entry_info.get("entry_allowed", False))
+        entry_reasons: List[str] = list(entry_info.get("entry_reasons", []))
 
         # --------------------------------------------------------
-        # 3) DECISIÓN PRINCIPAL (por contexto)
+        # 3) DECISIÓN PRINCIPAL por contexto (Lógica C)
         # --------------------------------------------------------
         decision = "wait"
-        decision_reasons: list[str] = []
+        decision_reasons: List[str] = []
         allowed = False
 
-        # Thresholds por contexto
         ctx_thr = THRESHOLDS.get(context, THRESHOLDS["entry"])
         min_match = ctx_thr["min_match"]
         min_score = ctx_thr["min_score"]
 
-        # ---------- A. ENTRADA (señal nueva / manual) ----------
-        if context == "entry":
+        smart_bias_str = str(smart_bias)
+        divergences_str = str(divergences).lower()
+
+        # ---------- A. ENTRADA / INTERNAL (señal nueva) ----------
+        if context in ("entry", "internal"):
             if match_ratio >= min_match and technical_score >= min_score:
                 allowed = True
-                decision = "enter"
+                decision = "enter" if context == "entry" else "proceed"
                 decision_reasons.append(
                     f"Alineación suficiente: match={match_ratio:.1f}, score={technical_score:.1f}"
                 )
@@ -217,23 +246,30 @@ def analyze(
                     f"Coincidencia insuficiente: match={match_ratio:.1f}, score={technical_score:.1f}"
                 )
 
-            # Ajustes por divergencias / smart_bias de reversión
-            if "reversal" in str(smart_bias) or (
-                "bearish" in str(divergences).lower()
-                or "bullish" in str(divergences).lower()
-            ):
+            # Ajustes por reversión fuerte (smart_bias + divergencias)
+            reversal_flag = (
+                "reversal" in smart_bias_str
+                or "bearish" in divergences_str
+                or "bullish" in divergences_str
+            )
+
+            if reversal_flag:
                 if allowed and entry_grade in ("A", "B"):
-                    # Se permite, pero con advertencia
-                    decision = "enter"
+                    # Entrada sigue permitida, pero con advertencia
+                    decision = "enter" if context == "entry" else "proceed"
                     allowed = True
                     if entry_mode != "ok":
                         entry_mode = "warn"
-                    decision_reasons.append("Divergencias / smart_bias de reversión detectadas.")
+                    decision_reasons.append(
+                        "Divergencias / smart_bias de reversión detectadas."
+                    )
                 else:
                     # Estructura débil → mejor evitar
                     allowed = False
                     decision = "skip"
-                    decision_reasons.append("Reversión fuerte detectada → evitar entrada.")
+                    decision_reasons.append(
+                        "Reversión fuerte detectada → evitar entrada."
+                    )
 
             # Bloqueo final si Smart Entry dice bloqueado
             if entry_mode == "block":
@@ -250,65 +286,69 @@ def analyze(
                     f"Condiciones favorables: match={match_ratio:.1f}, score={technical_score:.1f}"
                 )
             else:
-                decision = "wait"
                 allowed = False
+                decision = "wait"
                 decision_reasons.append(
-                    f"Condiciones insuficientes para reactivar (match={match_ratio:.1f}, score={technical_score:.1f})."
+                    f"Condiciones insuficientes para reactivar "
+                    f"(match={match_ratio:.1f}, score={technical_score:.1f})."
                 )
 
-            # Penalización por reversión fuerte
-            if "reversal" in str(smart_bias) and (grade == "D" or entry_grade == "D"):
+            # Penalización por reversión fuerte + estructura pobre
+            if "reversal" in smart_bias_str and (grade == "D" or entry_grade == "D"):
                 allowed = False
                 decision = "wait"
-                decision_reasons.append("Reversión fuerte detectada → esperar para reactivar.")
+                decision_reasons.append(
+                    "Reversión fuerte detectada → esperar para reactivar."
+                )
 
         # ---------- C. REVERSIÓN (riesgo severo) ----------
         elif context == "reversal":
             decision = "neutral"
             allowed = False
 
-            # Dispara riesgo si la estructura técnica es mala
-            if "reversal" in str(smart_bias) or grade == "D":
+            if "reversal" in smart_bias_str or grade == "D":
                 decision = "reversal-risk"
                 allowed = True
-                decision_reasons.append("Riesgo de reversión detectado por estructura técnica.")
+                decision_reasons.append(
+                    "Riesgo de reversión detectado por estructura técnica."
+                )
 
-            # Si además hay pérdida fuerte (sin apalancamiento) refuerza señal
+            # Refuerzo por pérdida sin apalancamiento
             if loss_pct is not None and loss_pct <= -3.0:
                 if decision != "reversal-risk":
                     decision = "reversal-risk"
                     allowed = True
-                decision_reasons.append(f"Pérdida sin apalancamiento {loss_pct:.2f}% < -3.0%.")
+                decision_reasons.append(
+                    f"Pérdida sin apalancamiento {loss_pct:.2f}% < -3.0%."
+                )
 
-        # ---------- D. OPERACIÓN ABIERTA (seguimiento general) ----------
+        # ---------- D. OPERACIÓN ABIERTA (seguimiento) ----------
         elif context == "operation":
-            # Aquí no decidimos solo con técnico; también se usa ROI/loss_pct
-            # para abrir espacio a lógicas como las de operation_tracker.py :contentReference[oaicite:6]{index=6}
+            # Por defecto, mantener mientras la estructura no sea pésima
             decision = "hold"
             allowed = True
 
-            # Base: si la estructura es mala → al menos "watch"
-            if grade in ("D",) or match_ratio < min_match:
+            if grade == "D" or match_ratio < min_match:
                 decision = "watch"
                 decision_reasons.append(
                     f"Estructura débil: grade={grade}, match={match_ratio:.1f}."
                 )
 
-            # Pérdida técnica + pérdida real → sugerir cierre o reversión
+            # Pérdida sin apalancamiento
             if loss_pct is not None:
                 if loss_pct <= -3.0:
                     decision_reasons.append(
                         f"Pérdida sin apalancamiento relevante: {loss_pct:.2f}%."
                     )
-                if loss_pct <= -5.0 and ("reversal" in str(smart_bias) or grade == "D"):
+                if loss_pct <= -5.0 and ("reversal" in smart_bias_str or grade == "D"):
                     decision = "close"
                     decision_reasons.append(
                         "Tendencia mayor en contra + pérdida fuerte → sugerencia de cierre."
                     )
 
-            # ROI (incluyendo apalancamiento): si muy negativo con estructura mala → revertir
+            # ROI con apalancamiento: umbral crítico para revertir
             if roi is not None and roi <= -50.0:
-                if "reversal" in str(smart_bias) or grade in ("D",):
+                if "reversal" in smart_bias_str or grade == "D":
                     decision = "revert"
                     decision_reasons.append(
                         f"ROI crítico ({roi:.1f}%) + smart_bias de reversión → sugerencia de revertir."
@@ -381,7 +421,7 @@ def analyze(
             "entry_allowed": entry_allowed,
             "entry_reasons": entry_reasons,
 
-            # Debug
+            # Info extra para capas superiores
             "debug": {
                 "raw_snapshot": snapshot,
                 "thresholds": ctx_thr,
