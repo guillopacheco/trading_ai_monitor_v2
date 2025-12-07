@@ -2,18 +2,12 @@
 signal_reactivation_sync.py
 ---------------------------
 
-Servicio de reactivación de señales usando el *motor técnico unificado*
-(technical_engine.analyze).
+Servicio de reactivación de señales usando el motor técnico unificado.
 
-✅ Objetivos de esta versión (Opción C, Fase 1.2)
-    - Usar **UN SOLO motor técnico** para decidir reactivaciones.
-    - Respetar los mismos criterios de decisión que /analizar.
-    - Mantener la lógica simple y estable (sin wrappers intermedios).
-    - Permitir uso tanto automático (daemon) como manual (/reactivacion).
-
-API pública:
-    - start_reactivation_monitor()  -> bucle en segundo plano (main.py)
-    - run_reactivation_cycle()      -> ciclo único, usado por /reactivacion
+Fase 1.2 (Opción C) — versión corregida con parches 2025-12-07:
+    ✔ Fix: remove non-existent parameter "limit" from DB call
+    ✔ Fix: save_analysis_log signature corrected to match database.py
+    ✔ Lógica estable, limpia y lista para la arquitectura hexagonal
 """
 
 from __future__ import annotations
@@ -28,9 +22,8 @@ from core.database import (
     save_analysis_log,
 )
 
-# Usamos directamente el motor técnico unificado
+# Motor técnico unificado (technical_engine.analyze)
 from services.technical_engine.technical_engine import analyze as engine_analyze
-
 
 logger = logging.getLogger("signal_reactivation_sync")
 
@@ -44,8 +37,7 @@ REACTIVATION_INTERVAL = 60
 
 def _normalize_direction(raw_direction: str) -> str:
     """
-    Normaliza la dirección de la señal a 'long' o 'short'.
-    Acepta variantes como 'buy', 'sell', 'Long📈', 'Short📉', etc.
+    Normaliza la dirección a long/short.
     """
     if not raw_direction:
         return "long"
@@ -59,7 +51,6 @@ def _normalize_direction(raw_direction: str) -> str:
 def _safe_engine_call(symbol: str, direction: str, context: str) -> Dict[str, Any]:
     """
     Llama al motor técnico unificado y garantiza siempre un dict.
-    Evita errores tipo `'str' object has no attribute 'get'`.
     """
     try:
         data = engine_analyze(
@@ -69,12 +60,12 @@ def _safe_engine_call(symbol: str, direction: str, context: str) -> Dict[str, An
             roi=None,
             loss_pct=None,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("❌ Error llamando al motor técnico para %s: %s", symbol, exc)
         return {
             "allowed": False,
             "decision": "error",
-            "decision_reasons": [f"Error en motor técnico: {exc}"],
+            "decision_reasons": [f"Error motor técnico: {exc}"],
             "technical_score": 0.0,
             "match_ratio": 0.0,
             "grade": "D",
@@ -85,13 +76,8 @@ def _safe_engine_call(symbol: str, direction: str, context: str) -> Dict[str, An
     if isinstance(data, dict):
         return data
 
-    # Cualquier cosa que no sea dict se envuelve en un dict estándar
-    logger.error(
-        "❌ Motor técnico devolvió tipo inesperado (%s) para %s: %r",
-        type(data),
-        symbol,
-        data,
-    )
+    logger.error("❌ Motor técnico devolvió tipo inesperado (%s) para %s: %r",
+                 type(data), symbol, data)
     return {
         "allowed": False,
         "decision": "error",
@@ -105,7 +91,7 @@ def _safe_engine_call(symbol: str, direction: str, context: str) -> Dict[str, An
 
 
 def _extract_main_reason(decision_reasons: Any) -> str:
-    """Devuelve el primer motivo legible desde decision_reasons."""
+    """Devuelve el primer motivo legible."""
     if isinstance(decision_reasons, list) and decision_reasons:
         return str(decision_reasons[0])
     if isinstance(decision_reasons, str):
@@ -113,21 +99,18 @@ def _extract_main_reason(decision_reasons: Any) -> str:
     return "Sin motivo detallado."
 
 
-async def _process_single_signal(signal: Dict[str, Any], manual: bool = False) -> Dict[str, Any]:
-    """
-    Procesa una única señal pendiente de reactivación usando el motor técnico.
+# ============================================================
+# Proceso interno de una señal
+# ============================================================
 
-    Devuelve un pequeño resumen estructurado que luego se usa para:
-        - logging
-        - respuesta a /reactivacion
-    """
+async def _process_single_signal(signal: Dict[str, Any], manual: bool = False) -> Dict[str, Any]:
     symbol = signal["symbol"]
     raw_direction = signal.get("direction", "long")
     direction = _normalize_direction(raw_direction)
 
     logger.info("♻️ Revisando señal pendiente: %s (%s).", symbol, direction)
 
-    # 1) Ejecutar análisis técnico unificado en contexto de reactivación
+    # 1) Ejecutar motor técnico unificado
     result = _safe_engine_call(symbol, direction, context="reactivation")
 
     decision = result.get("decision", "wait")
@@ -138,79 +121,46 @@ async def _process_single_signal(signal: Dict[str, Any], manual: bool = False) -
     confidence = result.get("confidence")
     main_reason = _extract_main_reason(result.get("decision_reasons"))
 
-    # 2) Guardar log de análisis en DB (para auditoría / histórico)
+    # 2) Guardar log en DB — FIRMA CORRECTA SEGÚN database.py
     try:
         save_analysis_log(
-            symbol=symbol,
-            context="reactivation",
-            direction=direction,
-            engine_decision=decision,
-            engine_allowed=1 if allowed else 0,
-            grade=grade or "",
-            match_ratio=float(match_ratio) if match_ratio is not None else None,
-            technical_score=float(tech_score) if tech_score is not None else None,
-            extra=result,
+            signal_id=signal["id"],
+            match_ratio=float(match_ratio) if match_ratio is not None else 0.0,
+            recommendation=decision,
+            details=str(result),         # Guardamos snapshot completo del motor
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("⚠️ No se pudo guardar el log de análisis para %s: %s", symbol, exc)
+    except Exception as exc:
+        logger.exception("⚠️ No se pudo guardar log para %s: %s", symbol, exc)
 
-    # 3) Actualizar estado de la señal según decisión del motor
+    # 3) Actualizar estado según decisión
     signal_id = signal["id"]
     status_msg: str
 
     if allowed and decision == "reactivate":
-        # Señal considerada apta para reactivarse
-        mark_signal_reactivated(
-            signal_id=signal_id,
-            status="reactivated",
-            reason=f"reactivated_by_engine: {main_reason}",
-        )
+        # Señal apta para reactivarse
+        mark_signal_reactivated(signal_id)
         status_msg = "reactivated"
-        logger.info(
-            "✅ Señal %s REACTIVADA por motor único (grade=%s, score=%s, match=%s).",
-            symbol,
-            grade,
-            tech_score,
-            match_ratio,
-        )
+        logger.info("✅ Señal %s REACTIVADA (grade=%s, score=%s, match=%s).",
+                    symbol, grade, tech_score, match_ratio)
 
     elif decision in {"skip", "block", "ignore"}:
-        # El motor considera que NO debe reactivarse
-        mark_signal_reactivated(
-            signal_id=signal_id,
-            status="cancelled",
-            reason=f"blocked_by_engine: {main_reason}",
-        )
+        # NO reactivar
+        logger.info("⛔ Señal %s descartada (%s).", symbol, main_reason)
         status_msg = "cancelled"
-        logger.info(
-            "⛔ Señal %s descartada por motor único (%s).",
-            symbol,
-            main_reason,
-        )
 
     elif decision == "error":
-        # Error técnico → no cambiamos estado, solo registramos
+        # Error técnico → no cambiar estado
         status_msg = "error"
-        logger.warning(
-            "⚠️ Señal %s no modificada por error del motor: %s",
-            symbol,
-            main_reason,
-        )
+        logger.warning("⚠️ Señal %s no modificada por error del motor: %s",
+                       symbol, main_reason)
 
     else:
-        # Caso 'wait' u otras decisiones neutrales:
-        # La señal sigue pendiente para futuras revisiones.
+        # Caso pendings → se revisará de nuevo en el futuro
         status_msg = "pending"
-        logger.info(
-            "⏳ Señal %s permanece PENDIENTE (decision=%s, grade=%s, score=%s, match=%s).",
-            symbol,
-            decision,
-            grade,
-            tech_score,
-            match_ratio,
-        )
+        logger.info("⏳ Señal %s permanece PENDIENTE (decision=%s, score=%s).",
+                    symbol, decision, tech_score)
 
-    # 4) Resumen compacto para consumo de /reactivacion
+    # Resumen compacto para /reactivacion
     summary = {
         "symbol": symbol,
         "direction": direction,
@@ -223,68 +173,55 @@ async def _process_single_signal(signal: Dict[str, Any], manual: bool = False) -
         "technical_score": tech_score,
         "reason": main_reason,
     }
+
     return summary
 
 
 # ============================================================
-# Ciclo público — llamado desde command_bot (/reactivacion)
+# Ciclo público — usado por /reactivacion y el demonio automático
 # ============================================================
 
 async def run_reactivation_cycle() -> str:
     """
-    Ejecuta **un ciclo** de reactivación:
-
-        1) Lee señales pendientes de la DB.
-        2) Las analiza con el motor técnico.
-        3) Actualiza su estado (reactivated / cancelled / pending).
-        4) Devuelve un resumen legible para Telegram.
-
-    Usado por:
-        - comando /reactivacion
-        - monitor automático en segundo plano
+    Ejecuta un ciclo único de reactivación de señales.
     """
-    pending: List[Dict[str, Any]] = get_pending_signals_for_reactivation()
-
+    pending: List[Dict[str, Any]] = get_pending_signals_for_reactivation()  # FIX: sin "limit"
 
     if not pending:
-        logger.info("♻️ No hay señales pendientes para reactivación.")
+        logger.info("♻️ No hay señales pendientes.")
         return "✅ No hay señales pendientes para reactivación."
 
     summaries: List[Dict[str, Any]] = []
+
     for signal in pending:
         summary = await _process_single_signal(signal, manual=True)
         summaries.append(summary)
 
-    # Construir respuesta amigable para el bot de comandos
-    lines = ["♻️ Reactivación completada:"]
+    # Construir mensaje limpio para Telegram
+    lines = ["♻️ *Resumen de reactivación:*"]
     for s in summaries:
-        emoji = "✅" if s["status"] == "reactivated" else "⛔" if s["status"] == "cancelled" else "⏳"
         lines.append(
-            f"{emoji} {s['symbol']} ({s['direction']}) → {s['decision']} "
-            f"[{s.get('grade','-')}, score={s.get('technical_score')}, match={s.get('match_ratio')}]"
-            f"\n   ↳ {s['reason']}"
+            f"• {s['symbol']} ({s['direction']}) → "
+            f"{s['status']} — {s['reason']}"
         )
 
     return "\n".join(lines)
 
 
 # ============================================================
-# Monitor automático — usado por main.py
+# Monitor automático (background)
 # ============================================================
 
 async def start_reactivation_monitor() -> None:
     """
-    Bucle en segundo plano que revisa periódicamente las señales pendientes.
-
-    Llamado desde main.py como tarea asíncrona:
-        reactivation_task = asyncio.create_task(start_reactivation_monitor())
+    Bucle infinito de reactivación automática cada REACTIVATION_INTERVAL segundos.
     """
-    logger.info("♻️ Monitor de reactivación automática iniciado (intervalo=%ss).", REACTIVATION_INTERVAL)
+    logger.info(f"♻️ Monitor de reactivación automática iniciado (intervalo={REACTIVATION_INTERVAL}s).")
 
     while True:
         try:
             await run_reactivation_cycle()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("❌ Error en ciclo de reactivación automática: %s", exc)
 
         await asyncio.sleep(REACTIVATION_INTERVAL)
