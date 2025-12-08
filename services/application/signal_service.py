@@ -1,5 +1,5 @@
 import logging
-from database import Database
+import database
 from services.application.analysis_service import AnalysisService
 
 logger = logging.getLogger("signal_service")
@@ -15,7 +15,7 @@ class SignalService:
     """
 
     def __init__(self):
-        self.db = Database()
+        self.db = database
         self.analysis = AnalysisService()
 
     # ============================================================
