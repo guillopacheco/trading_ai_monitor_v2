@@ -17,7 +17,7 @@ from services.application.signal_service import evaluate_pending_signal
 logger = logging.getLogger("signal_reactivation_sync")
 
 # Intervalo de revisión automática (segundos)
-REACTIVATION_INTERVAL = 60
+REACTIVATION_INTERVAL = 300
 
 
 # ============================================================

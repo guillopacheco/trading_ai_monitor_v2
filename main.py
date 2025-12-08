@@ -13,7 +13,7 @@ Orquestación completa:
 import asyncio
 import logging
 
-from core.logger_config import configure_logging
+from logger_config import configure_logging
 from database import init_db
 
 from application_layer import ApplicationLayer

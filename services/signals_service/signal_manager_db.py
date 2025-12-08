@@ -23,7 +23,7 @@ Columnas usadas en tabla `signals`:
 import sqlite3
 import logging
 from datetime import datetime
-from core.database import get_connection
+from database import get_connection
 import json
 
 logger = logging.getLogger("signal_manager_db")

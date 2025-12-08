@@ -24,7 +24,7 @@ from services.technical_engine.motor_wrapper import analyze
 from services.bybit_service.bybit_client import get_open_positions
 from services.telegram_service.notifier import send_message
 
-from core.helpers import calculate_roi, calculate_loss_pct_from_roi
+from helpers import calculate_roi, calculate_loss_pct_from_roi
 
 logger = logging.getLogger("position_reversal_monitor")
 

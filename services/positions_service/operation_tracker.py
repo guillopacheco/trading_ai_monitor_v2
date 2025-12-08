@@ -7,7 +7,7 @@ import asyncio
 from typing import Any, Dict, Callable, Awaitable, List, Union
 
 from services.bybit_service.bybit_client import get_open_positions
-from core.helpers import (
+from helpers import (
     calculate_roi,
     calculate_loss_pct_from_roi,
     calculate_pnl,
