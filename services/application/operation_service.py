@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 
 from services.application.analysis_service import analyze_symbol, format_analysis_for_telegram
-from services.bybit.bybit_private import get_open_positions
+from services.bybit_service.bybit_client import get_open_positions
 from services.bybit.bybit_private import reverse_position, close_position
 
 logger = logging.getLogger("operation_service")
