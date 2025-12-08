@@ -7,7 +7,7 @@
 import logging
 from typing import Optional, Dict
 
-from services.signals_service.signal_service import SignalService
+from services.application.signal_service import SignalService
 from services.operation_service.operation_service import OperationService
 from services.analysis_service.analysis_service import AnalysisService
 from services.technical_engine.technical_engine import analyze as engine_analyze

@@ -13,7 +13,7 @@ from services.analysis_service.analysis_service import AnalysisService
 from services.technical_engine.technical_engine import analyze as engine_analyze
 from services.notifier_service.notifier import Notifier
 from services.database_service.database import Database
-from services.signals_service.signal_service import SignalService
+from services.application.signal_service import SignalService
 
 logger = logging.getLogger("position_coordinator")
 

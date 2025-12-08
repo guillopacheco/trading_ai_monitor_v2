@@ -13,7 +13,7 @@ from services.coordinators.analysis_coordinator import AnalysisCoordinator
 from services.coordinators.position_coordinator import PositionCoordinator
 
 # Servicios
-from services.signals_service.signal_service import SignalService
+from services.application.signal_service import SignalService
 from services.operation_service.operation_service import OperationService
 from services.analysis_service.analysis_service import AnalysisService
 from services.notifier_service.notifier import Notifier
