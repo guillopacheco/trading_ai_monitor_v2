@@ -1,132 +1,79 @@
-"""
-application_layer.py — Fase 4 (2025)
-Capa orquestadora principal que coordina SignalCoordinator,
-AnalysisCoordinator y PositionCoordinator.
-"""
+# application_layer.py
 
 import logging
-from typing import Optional, Dict
 
-from services.coordinators.signal_coordinator import SignalCoordinator
 from services.coordinators.analysis_coordinator import AnalysisCoordinator
+from services.coordinators.signal_coordinator import SignalCoordinator
 from services.coordinators.position_coordinator import PositionCoordinator
 
-from services.application.signal_service import SignalService
-from services.application.operation_service import OperationService
-from services.application.analysis_service import AnalysisService
-
 from services.telegram_service.notifier import Notifier
-from database import Database
-
+from services.telegram_service.command_bot import start_command_bot
+from services.telegram_service.telegram_reader import start_telegram_reader
+from services.signals_service.signal_reactivation_sync import start_reactivation_monitor
 
 logger = logging.getLogger("application_layer")
 
 
-# ===============================================================
-# Inicialización Global – Capa de Aplicación
-# ===============================================================
-
 class ApplicationLayer:
+    """
+    Punto de orquestación general de toda la aplicación.
+    Ejecuta:
+    ✔ lector de señales
+    ✔ bot de comandos
+    ✔ monitores automáticos
+    ✔ análisis bajo demanda (coordinators)
+    """
 
     def __init__(self):
-        logger.info("🧠 Inicializando ApplicationLayer...")
 
-        # Servicios base
-        self.signal_service = SignalService()
-        self.operation_service = OperationService()
-        self.analysis_service = AnalysisService()
+        # Notificador central
         self.notifier = Notifier()
-        self.notifier.configure(bot=self.bot, chat_id=self.user_chat_id)
-        self.database = Database()
 
-        # Coordinadores
-        self.signal_coord = SignalCoordinator(
-            signal_service=self.signal_service,
-            analysis_service=self.analysis_service,
-            notifier=self.notifier,
-            database=self.database
-        )
+        # Coordinadores (capa de negocio)
+        self.analysis = AnalysisCoordinator()
+        self.signal = SignalCoordinator()
+        self.positions = PositionCoordinator(self.notifier)
 
-        self.analysis_coord = AnalysisCoordinator(
-            signal_service=self.signal_service,
-            operation_service=self.operation_service,
-            analysis_service=self.analysis_service,
-            notifier=self.notifier,
-            database=self.database
-        )
+    # ============================================================
+    # INICIO COMPLETO DEL SISTEMA
+    # ============================================================
+    async def start(self):
+        logger.info("🚀 ApplicationLayer → Iniciando sistema...")
 
-        self.position_coord = PositionCoordinator(
-            operation_service=self.operation_service,
-            analysis_service=self.analysis_service,
-            notifier=self.notifier,
-            database=self.database,
-            signal_service=self.signal_service
-        )
+        # 1) Bot de comandos
+        logger.info("🤖 Iniciando bot de comandos…")
+        await start_command_bot(self)
 
-        logger.info("✅ ApplicationLayer inicializado correctamente.")
+        # 2) Lector de señales VIP
+        logger.info("📡 Iniciando lector de Telegram…")
+        await start_telegram_reader(self)
 
-    # ===========================================================
-    # ✉️ Procesar señales entrantes desde Telegram VIP
-    # ===========================================================
-    async def process_incoming_signal(self, symbol: str, direction: str):
-        """
-        Usado por telegram_reader.py cuando una señal es capturada del canal VIP.
-        """
-        logger.info(f"📥 ApplicationLayer → Procesando señal nueva: {symbol} ({direction})")
+        # 3) Monitor de reactivación automática
+        logger.info("♻️ Iniciando monitor de reactivación…")
+        start_reactivation_monitor(self)
 
-        signal = {
-            "symbol": symbol.upper(),
-            "direction": direction.lower()
-        }
+        logger.info("✅ ApplicationLayer → Servicios iniciados correctamente.")
 
-        return await self.signal_coord.process_raw_signal(signal)
+    # ============================================================
+    # Manejo desde CommandBot
+    # ============================================================
 
-    # ===========================================================
-    # 🤖 Comando /analizar
-    # ===========================================================
-    async def manual_analysis(self, symbol: str, direction: str):
-        logger.info(f"📘 ApplicationLayer → manual_analysis: {symbol} {direction}")
-        return await self.analysis_coord.manual_analysis(symbol, direction)
+    async def analyze(self, symbol: str, direction: str):
+        """Bot → analiza un par bajo demanda."""
+        return await self.analysis.analyze(symbol, direction)
 
-    # ===========================================================
-    # 🔍 Comando /detalles
-    # ===========================================================
-    async def diagnostic(self, symbol: str):
-        logger.info(f"🔍 ApplicationLayer → diagnostic: {symbol}")
-        return await self.analysis_service.build_detailed_snapshot(symbol)
+    async def manual_reactivate(self, symbol: str):
+        """Bot → fuerza reactivar una señal."""
+        return await self.signal.manual_reactivate(symbol)
 
-    # ===========================================================
-    # ♻️ Comando /reactivar (reactivación manual)
-    # ===========================================================
-    async def manual_reactivation(self, symbol: str):
-        logger.info(f"♻️ ApplicationLayer → manual_reactivation: {symbol}")
-        return await self.signal_coord.manual_reactivation(symbol)
+    async def manual_close(self, symbol: str):
+        """Bot → cierre manual de posición."""
+        return await self.positions.manual_close(symbol)
 
-    # ===========================================================
-    # 📈 Comando /estado o /operacion — revisar operación abierta
-    # ===========================================================
-    async def check_open_position(self, symbol: str):
-        logger.info(f"📊 ApplicationLayer → check_open_position: {symbol}")
-        return await self.position_coord.evaluate_position(symbol)
+    async def manual_reverse(self, symbol: str, side: str):
+        """Bot → reversión manual de posición."""
+        return await self.positions.manual_reverse(symbol, side)
 
-    # ===========================================================
-    # 🔄 Comando /reversion
-    # ===========================================================
-    async def check_reversal(self, symbol: str):
-        logger.info(f"🔄 ApplicationLayer → check_reversal: {symbol}")
-        return await self.position_coord.evaluate_reversal(symbol)
-
-    # ===========================================================
-    # 🚨 Evaluación automática de pérdidas (para -30, -50, -70)
-    # ===========================================================
-    async def auto_loss_check(self, symbol: str):
-        logger.info(f"⚠️ ApplicationLayer → auto_loss_check: {symbol}")
-        return await self.position_coord.auto_loss_check(symbol)
-
-    # ===========================================================
-    # 🚨 Reversión automática (si config futura lo permite)
-    # ===========================================================
-    async def auto_reversal_trigger(self, symbol: str):
-        logger.info(f"🚨 ApplicationLayer → auto_reversal_trigger: {symbol}")
-        return await self.position_coord.auto_reversal_trigger(symbol)
-
+    async def monitor_positions(self):
+        """Bot → revisar todas las posiciones abiertas."""
+        return await self.positions.monitor_positions()
