@@ -7,17 +7,17 @@ AnalysisCoordinator y PositionCoordinator.
 import logging
 from typing import Optional, Dict
 
-# Coordinadores
 from services.coordinators.signal_coordinator import SignalCoordinator
 from services.coordinators.analysis_coordinator import AnalysisCoordinator
 from services.coordinators.position_coordinator import PositionCoordinator
 
-# Servicios
 from services.application.signal_service import SignalService
-from services.operation_service.operation_service import OperationService
-from services.analysis_service.analysis_service import AnalysisService
-from services.notifier_service.notifier import Notifier
-from services.database_service.database import Database
+from services.application.operation_service import OperationService
+from services.application.analysis_service import AnalysisService
+
+from services.telegram_service.notifier import Notifier
+from database import Database
+
 
 logger = logging.getLogger("application_layer")
 

@@ -8,12 +8,15 @@
 import logging
 from typing import Dict, Optional
 
-from services.operation_service.operation_service import OperationService
-from services.analysis_service.analysis_service import AnalysisService
-from services.technical_engine.technical_engine import analyze as engine_analyze
-from services.notifier_service.notifier import Notifier
-from services.database_service.database import Database
+from services.application.operation_service import OperationService
+from services.application.analysis_service import AnalysisService
 from services.application.signal_service import SignalService
+
+from services.telegram_service.notifier import Notifier
+from database import Database
+
+from services.technical_engine.technical_engine import analyze as engine_analyze
+
 
 logger = logging.getLogger("position_coordinator")
 
