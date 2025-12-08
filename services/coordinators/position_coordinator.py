@@ -1,210 +1,113 @@
-# ===============================================================
-#  Position Coordinator
-#  Coordina decisiones basadas en operaciones abiertas.
-#
-#  Fase 4 – Arquitectura Empresarial de trading_ai_monitor_v2
-# ===============================================================
+# services/coordinators/position_coordinator.py
 
 import logging
-from typing import Dict, Optional
-
 from services.application.operation_service import OperationService
 from services.application.analysis_service import AnalysisService
-from services.application.signal_service import SignalService
-
 from services.telegram_service.notifier import Notifier
-from database import Database
 
-from services.technical_engine.technical_engine import analyze as engine_analyze
-
+# Importar funciones REALES del database.py
+from database import (
+    get_open_positions_by_symbol,
+    save_operation_event,
+)
 
 logger = logging.getLogger("position_coordinator")
 
 
 class PositionCoordinator:
+    """
+    Coordina:
+    • Monitoreo de posiciones abiertas
+    • Análisis técnico aplicado a posiciones activas
+    • Cierre, reversión y protección avanzada
+    """
 
-    LOSS_LEVELS = [30, 50, 70, 90]
-
-    def __init__(
-        self,
-        operation_service: OperationService,
-        analysis_service: AnalysisService,
-        notifier: Notifier,
-        database: Database,
-        signal_service: SignalService
-    ):
-        self.op_service = operation_service
-        self.analysis_service = analysis_service
+    def __init__(self, notifier: Notifier):
         self.notifier = notifier
-        self.db = database
-        self.signal_service = signal_service
+        self.op_service = OperationService()
+        self.analysis_service = AnalysisService()
 
-    # ===========================================================
-    # 1) Evaluación estándar (comando /estado o /posicion)
-    # ===========================================================
-    async def evaluate_position(self, symbol: str):
-        logger.info(f"📘 Evaluando operación abierta: {symbol}")
-
-        position = self.op_service.get_open_position(symbol)
-        if not position:
-            await self.notifier.send_message(f"ℹ️ No existe operación abierta en {symbol}.")
-            return None
-
-        direction = position["direction"]
-        loss_pct = abs(position.get("loss_pct", 0))
-
-        # Ejecutar motor técnico:
-        engine_result = await engine_analyze(symbol, direction, context="open")
-
-        # Construir mensaje profesional
-        msg = self.analysis_service.build_open_position_message(
-            symbol=symbol,
-            direction=direction,
-            analysis=engine_result,
-            loss_pct=loss_pct
-        )
-
-        await self.notifier.send_message(msg)
-
-        # Registrar análisis en DB
-        self.db.save_analysis_record(
-            symbol=symbol,
-            direction=direction,
-            match_ratio=engine_result.get("match_ratio"),
-            technical_score=engine_result.get("technical_score"),
-            grade=engine_result.get("grade"),
-            context="open_position"
-        )
-
-        return engine_result
-
-    # ===========================================================
-    # 2) Evaluación automática por umbrales (-30, -50, -70, -90)
-    # ===========================================================
-    async def auto_loss_check(self, symbol: str):
+    # ============================================================
+    # 1. Monitorear posiciones activas
+    # ============================================================
+    async def monitor_positions(self):
         """
-        Utilizado por bucles automáticos (si lo deseas en el futuro)
-        o por la lógica del bot de reactivación.
+        Procesa TODAS las posiciones abiertas del usuario.
         """
+        positions = await self.op_service.get_open_positions()
+        if not positions:
+            logger.info("🔍 No hay posiciones abiertas actualmente.")
+            return
 
-        position = self.op_service.get_open_position(symbol)
-        if not position:
-            return None
+        for pos in positions:
+            await self._process_single_position(pos)
 
-        direction = position["direction"]
-        loss_pct = abs(position.get("loss_pct", 0))
+    # ============================================================
+    # 2. Procesar posición individual
+    # ============================================================
+    async def _process_single_position(self, pos):
+        symbol = pos.get("symbol")
+        entry = float(pos.get("entryPrice", 0))
+        mark = float(pos.get("markPrice", 0))
+        pnl_pct = float(pos.get("pnlPct", 0))
 
-        logger.info(f"📉 Auto-loss-check: {symbol} pérdida={loss_pct}%")
+        logger.info(f"📌 Procesando {symbol}: PNL {pnl_pct}%")
 
-        # Si la pérdida no supera ningún nivel → no se hace nada
-        triggered_levels = [lvl for lvl in self.LOSS_LEVELS if loss_pct >= lvl]
-        if not triggered_levels:
-            return None
+        # Análisis técnico para determinar si se mantiene, cierra o revierte
+        analysis = await self.analysis_service.analyze_symbol(symbol, pos.get("side"))
 
-        highest = max(triggered_levels)
-        logger.info(f"⚠️ Nivel activado: -{highest}%")
+        # Reglas críticas
+        if pnl_pct <= -50:
+            await self._handle_critical_loss(symbol, pos, analysis)
+            return
 
-        # Ejecutar motor técnico
-        result = await engine_analyze(symbol, direction, context="loss_check")
+        if pnl_pct <= -30:
+            await self._handle_warning_loss(symbol, pos, analysis)
+            return
 
-        msg = self.analysis_service.build_loss_warning_message(
-            symbol=symbol,
-            direction=direction,
-            loss_pct=loss_pct,
-            analysis=result,
-            level=highest
+        # Guardar evento en base de datos
+        save_operation_event(symbol, "analyzed", analysis.get("decision"))
+
+    # ============================================================
+    # 3. Pérdida crítica (≥50%)
+    # ============================================================
+    async def _handle_critical_loss(self, symbol, pos, analysis):
+        decision = analysis.get("decision")
+
+        msg = (
+            f"⚠️ **Pérdida crítica en {symbol} (-50%)**\n"
+            f"• Acción recomendada: {decision}"
         )
+        await self.notifier.notify_position_event(msg)
 
-        await self.notifier.send_message(msg)
+        if decision == "close":
+            await self.op_service.close_position(symbol)
 
-        # Guardar registro
-        self.db.save_analysis_record(
-            symbol=symbol,
-            direction=direction,
-            match_ratio=result.get("match_ratio"),
-            technical_score=result.get("technical_score"),
-            grade=result.get("grade"),
-            context=f"loss_{highest}"
+        elif decision == "reverse":
+            await self.op_service.reverse_position(symbol)
+
+    # ============================================================
+    # 4. Pérdida moderada (30–50%)
+    # ============================================================
+    async def _handle_warning_loss(self, symbol, pos, analysis):
+        decision = analysis.get("decision")
+
+        msg = (
+            f"⚠️ **Pérdida moderada en {symbol} (-30%)**\n"
+            f"• Acción recomendada: {decision}"
         )
+        await self.notifier.notify_position_event(msg)
 
-        return result
+    # ============================================================
+    # 5. Ejecutar cierre manual desde Telegram
+    # ============================================================
+    async def manual_close(self, symbol):
+        await self.op_service.close_position(symbol)
+        await self.notifier.notify_position_event(f"🟪 Cierre manual ejecutado en {symbol}")
 
-    # ===========================================================
-    # 3) Comando /reversion → evaluar e indicar inversion o cierre
-    # ===========================================================
-    async def evaluate_reversal(self, symbol: str):
-        logger.info(f"🔄 Evaluando reversión: {symbol}")
-
-        position = self.op_service.get_open_position(symbol)
-        if not position:
-            await self.notifier.send_message(f"⚠️ No existe operación activa en {symbol}.")
-            return None
-
-        direction = position["direction"]
-
-        # Ejecutar motor con contexto “reversal”
-        result = await engine_analyze(symbol, direction, context="reversal")
-
-        msg = self.analysis_service.build_reversal_message(
-            symbol=symbol,
-            direction=direction,
-            analysis=result
-        )
-
-        await self.notifier.send_message(msg)
-
-        # Registrar en DB
-        self.db.save_analysis_record(
-            symbol=symbol,
-            direction=direction,
-            match_ratio=result.get("match_ratio"),
-            technical_score=result.get("technical_score"),
-            grade=result.get("grade"),
-            context="reversal"
-        )
-
-        return result
-
-    # ===========================================================
-    # 4) Decisión automática para cerrar o invertir (opcional)
-    # ===========================================================
-    async def auto_reversal_trigger(self, symbol: str):
-        """
-        Este módulo permite revertir o cerrar automáticamente
-        si implementas órdenes automáticas más adelante.
-        """
-
-        position = self.op_service.get_open_position(symbol)
-        if not position:
-            return None
-
-        loss_pct = abs(position.get("loss_pct", 0))
-        direction = position["direction"]
-
-        # Solo revisar si la pérdida ya es crítica:
-        if loss_pct < 70:
-            return None
-
-        logger.info(f"🚨 Auto-reversal-check: {symbol} con pérdida crítica {loss_pct}%")
-
-        result = await engine_analyze(symbol, direction, context="auto_reversal")
-
-        msg = self.analysis_service.build_auto_reversal_decision(
-            symbol=symbol,
-            direction=direction,
-            analysis=result,
-            loss_pct=loss_pct
-        )
-
-        await self.notifier.send_message(msg)
-
-        self.db.save_analysis_record(
-            symbol=symbol,
-            direction=direction,
-            match_ratio=result.get("match_ratio"),
-            technical_score=result.get("technical_score"),
-            grade=result.get("grade"),
-            context="auto_reversal"
-        )
-
-        return result
+    # ============================================================
+    # 6. Ejecutar reversión manual
+    # ============================================================
+    async def manual_reverse(self, symbol, side):
+        await self.op_service.reverse_position(symbol, side)
+        await self.notifier.notify_position_event(f"🔄 Reversión ejecutada en {symbol} → {side}")
