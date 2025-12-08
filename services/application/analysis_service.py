@@ -1,5 +1,3 @@
-# services/application/analysis_service.py
-
 import logging
 
 from services.technical_engine.technical_engine import analyze as engine_analyze
@@ -8,78 +6,155 @@ from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
 logger = logging.getLogger("analysis_service")
 
 
-class AnalysisResult:
-    """DTO limpio para transportar resultados del motor técnico."""
-    def __init__(self, symbol, direction, snapshot, decision):
-        self.symbol = symbol
-        self.direction = direction
-        self.snapshot = snapshot
-        self.decision = decision
-
-
-async def analyze_symbol(symbol: str, direction: str) -> AnalysisResult:
+class AnalysisService:
     """
-    Ejecuta análisis técnico completo:
-    - Carga snapshot multi-TF
-    - Ejecuta motor técnico
-    - Devuelve DTO limpio para Application Layer
+    Capa empresarial de análisis técnico.
+    Unifica acceso a:
+    - analyze_symbol()
+    - snapshots multi-TF
+    - mensajes formateados para Telegram
+    - integración con coordinadores
     """
 
-    logger.info(f"📊 Iniciando análisis para {symbol} ({direction}) ...")
+    # ============================================================
+    # 1) Análisis técnico estándar
+    # ============================================================
 
-    try:
-        # 1) Snapshot multi-TF
+    async def analyze_symbol(self, symbol: str, direction: str):
+        """
+        Realiza análisis completo igual que el motor original:
+        - Obtiene snapshot MTF
+        - Ejecuta motor técnico (smart bias, score, divergencias, etc.)
+        - Devuelve un dict limpio
+        """
+
+        logger.info(f"📊 AnalysisService.analyze_symbol → {symbol} ({direction})")
+
         snapshot = await get_multi_tf_snapshot(symbol)
-
         if not snapshot:
             raise ValueError(f"No se pudo obtener snapshot multi-TF para {symbol}")
 
-        # 2) Motor técnico (smart bias, match, score, divergencias, etc.)
-        decision = engine_analyze(symbol, direction, snapshot)
+        result = engine_analyze(symbol, direction, snapshot)
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "snapshot": snapshot,
+            "decision": result
+        }
 
-        logger.info(f"📘 Motor técnico respondió para {symbol}: {decision}")
+    # ============================================================
+    # 2) Snapshot detallado (comando /detalles)
+    # ============================================================
 
-        return AnalysisResult(
-            symbol=symbol,
-            direction=direction,
-            snapshot=snapshot,
-            decision=decision
-        )
+    async def build_detailed_snapshot(self, symbol: str):
+        """
+        Devuelve snapshot multi-TF detallado para /detalles
+        """
 
-    except Exception as e:
-        logger.exception(f"❌ Error analizando {symbol}: {e}")
-        raise
+        logger.info(f"📘 AnalysisService.build_detailed_snapshot → {symbol}")
 
+        snapshot = await get_multi_tf_snapshot(symbol)
+        if not snapshot:
+            return f"❌ No hay datos suficientes para {symbol}."
 
-def format_analysis_for_telegram(result: AnalysisResult) -> str:
-    """
-    Convierte el resultado del motor a un mensaje limpio para Telegram.
-    """
+        msg = f"📊 *Detalle técnico de {symbol}*\n\n"
+        msg += f"• Tendencia mayor: {snapshot.get('major_trend_label')}\n"
+        msg += f"• Smart Bias: {snapshot.get('smart_bias_code')}\n"
+        msg += f"• Confianza: {snapshot.get('confidence', 0)*100:.1f}% (Grado {snapshot.get('grade')})\n\n"
+        msg += "⏱ *Temporalidades:*\n"
 
-    s = result.snapshot
-    d = result.decision
+        for tf in snapshot.get("timeframes", []):
+            msg += f"• {tf['tf_label']}: {tf['trend_label']} | RSI {tf['rsi']:.1f} | MACD_hist {tf['macd_hist']:.5f}\n"
 
-    tf_info = "\n".join(
-        [f"• {tf['tf_label']}: {tf['trend_label']}" for tf in s.get("timeframes", [])]
-    )
+        return msg
 
-    return f"""📊 Análisis de {result.symbol} ({result.direction})
-• Tendencia mayor: {s.get('major_trend_label')}
-• Smart Bias: {s.get('smart_bias_code')}
-• Confianza global: {s.get('confidence', 0)*100:.1f}% (Grado {s.get('grade')})
-• Match técnico: {s.get('match_ratio')}% | Score: {s.get('technical_score')}
+    # ============================================================
+    # 3) Mensajes formateados para posiciones abiertas
+    # ============================================================
 
-⏱ Temporalidades:
-{tf_info}
+    def build_open_position_message(self, symbol, direction, analysis, loss_pct):
+        d = analysis["decision"]
+        s = analysis["snapshot"]
 
-🎯 Smart Entry
-• Permitido: {"Sí" if d.get("allowed") else "No"} (modo: {d.get("entry_mode")}, grado {d.get("grade")})
-• Score entrada: {d.get("technical_score")}
-• Motivo principal: {d.get("decision_reasons", ["N/A"])[0]}
+        msg = f"""
+📊 *Evaluación de operación abierta — {symbol} ({direction})*
 
-📌 Decisión final del motor
-• Decisión: {d.get("decision")} ({d.get("confidence", 0)*100:.1f}% confianza)
-• Motivo principal: {d.get("decision_reasons", ["N/A"])[0]}
+🔹 *Pérdida actual:* {loss_pct:.2f}%
+🔹 *Tendencia mayor:* {s.get('major_trend_label')}
+🔹 *Smart Bias:* {s.get('smart_bias_code')}
+🔹 *Confianza:* {s.get('confidence',0)*100:.1f}% (grado {s.get('grade')})
 
-ℹ️ Contexto analizado: {d.get("context")}
+🎯 *Decisión del motor:* {d.get('decision')}
+• Motivo principal: {d.get('decision_reasons',[ 'N/A'])[0]}
+
+⏱ *Temporalidades:*
+"""        
+        for tf in s.get("timeframes", []):
+            msg += f"• {tf['tf_label']}: {tf['trend_label']}\n"
+
+        return msg
+
+    # ============================================================
+    # 4) Mensaje para auto-loss-check
+    # ============================================================
+
+    def build_loss_warning_message(self, symbol, direction, loss_pct, analysis, level):
+        d = analysis["decision"]
+
+        return f"""
+⚠️ *Advertencia — nivel -{level}% activado en {symbol}*
+
+🔹 Dirección: {direction}
+🔹 Pérdida actual: {loss_pct:.2f}%
+
+📘 Motor técnico sugiere:
+➡️ {d.get('decision')} (confianza {d.get('confidence',0)*100:.1f}%)
+
+Motivo: {d.get('decision_reasons', ['N/A'])[0]}
 """
+
+    # ============================================================
+    # 5) Mensaje para comando /reversion
+    # ============================================================
+
+    def build_reversal_message(self, symbol, direction, analysis):
+        d = analysis["decision"]
+
+        return f"""
+🔄 *Evaluación de reversión — {symbol} ({direction})*
+
+Decisión del motor:
+➡️ {d.get('decision')} (confianza {d.get('confidence',0)*100:.1f}%)
+
+Motivo:
+{d.get('decision_reasons',['N/A'])[0]}
+"""
+
+    # ============================================================
+    # 6) Mensaje para auto-reversal
+    # ============================================================
+
+    def build_auto_reversal_decision(self, symbol, direction, analysis, loss_pct):
+        d = analysis["decision"]
+
+        return f"""
+🚨 *Reversión automática — {symbol}*
+
+🔹 Dirección actual: {direction}
+🔹 Pérdida: {loss_pct:.2f}%
+
+📘 Motor:
+➡️ {d.get('decision')} (confianza {d.get('confidence',0)*100:.1f}%)
+
+Motivo:
+{d.get('decision_reasons',['N/A'])[0]}
+"""
+
+
+    # ============================================================
+    # 7) Función de compatibilidad legacy
+    # ============================================================
+
+    async def manual_analysis(self, symbol: str, direction: str):
+        """Alias para mantener compatibilidad con coordinadores."""
+        return await self.analyze_symbol(symbol, direction)
