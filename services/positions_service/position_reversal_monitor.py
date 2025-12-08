@@ -21,7 +21,15 @@ import logging
 from typing import Tuple
 
 from services.technical_engine.motor_wrapper import analyze
-from services.bybit_service.bybit_client import get_open_positions
+from services.bybit_service.bybit_client import (
+    get_open_positions,
+    reverse_position,
+    close_position,
+    get_position_risk,
+    get_last_price,
+    place_market_order,
+)
+
 from services.telegram_service.notifier import send_message
 
 from helpers import calculate_roi, calculate_loss_pct_from_roi

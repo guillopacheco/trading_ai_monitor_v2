@@ -1,258 +1,223 @@
-"""
-bybit_client.py — versión final (2025)
------------------------------------------------
-Cliente oficial para Bybit API v5 (REST).
-
-Características:
-✔ Firma v5 correcta (HMAC-SHA256)
-✔ Integrado con SIMULATION_MODE
-✔ get_ohlcv_data() limpio compatible con trend_system_final
-✔ Manejo robusto de posiciones
-✔ Cliente estable para entorno VPS 24/7
------------------------------------------------
-"""
-
 import os
 import time
 import hmac
 import hashlib
 import requests
 import logging
-import pandas as pd
 from urllib.parse import urlencode
-
-from config import (
-    BYBIT_API_KEY,
-    BYBIT_API_SECRET,
-    SIMULATION_MODE,
-    BYBIT_ENDPOINT,
-)
 
 logger = logging.getLogger("bybit_client")
 
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
+BASE_URL = "https://api.bybit.com"
 
-# ============================================================
-# 🔐 Firma para API Bybit v5
-# ============================================================
-
-def _generate_signature(params: dict) -> str:
-    """
-    Firma los parámetros en orden alfabético según Bybit API v5.
-    """
-    sorted_params = sorted(params.items())
-    qs = "&".join([f"{k}={v}" for k, v in sorted_params])
-    return hmac.new(
+# ======================================================
+# 🔐 AUTH – GENERADOR DE FIRMA
+# ======================================================
+def _sign(params: dict) -> dict:
+    """Genera firma v5 para Bybit."""
+    timestamp = str(int(time.time() * 1000))
+    params["api_key"] = BYBIT_API_KEY
+    params["timestamp"] = timestamp
+    query_string = urlencode(sorted(params.items()))
+    signature = hmac.new(
         BYBIT_API_SECRET.encode("utf-8"),
-        qs.encode("utf-8"),
+        query_string.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()
+    params["sign"] = signature
+    return params
 
-
-# ============================================================
-# 🌐 Request GET firmado
-# ============================================================
-
-def _make_request(endpoint: str, params: dict) -> dict:
-    """
-    Realiza request GET firmado para Bybit v5.
-    """
-    timestamp = str(int(time.time() * 1000))
-    base = {
-        "api_key": BYBIT_API_KEY,
-        "timestamp": timestamp,
-        "recvWindow": "5000"
-    }
-
-    full = {**params, **base}
-    full["sign"] = _generate_signature(full)
-
-    url = f"{BYBIT_ENDPOINT}/v5/{endpoint}?{urlencode(full)}"
-
+# ======================================================
+# 🧾 UTILIDAD — PETICIÓN HTTP
+# ======================================================
+def _post(path: str, payload: dict):
+    url = BASE_URL + path
+    signed = _sign(payload)
+    r = requests.post(url, data=signed, timeout=10)
     try:
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
-        code = data.get("retCode")
-        msg = data.get("retMsg", "")
-        logger.info(f"📡 [{endpoint}] retCode={code} — {msg}")
-        return data
-
-    except Exception as e:
-        logger.error(f"❌ Error en petición {endpoint}: {e}")
-        return {"retCode": -1, "retMsg": str(e), "result": {}}
+        data = r.json()
+    except Exception:
+        logger.error(f"Error parsing JSON from Bybit: {r.text}")
+        return None
+    return data
 
 
-# ============================================================
-# 📊 OHLCV (para análisis técnico)
-# ============================================================
-
-def get_ohlcv_data(symbol: str, interval: str = "5", limit: int = 200):
-    """
-    Obtiene velas OHLCV para análisis técnico.
-    Compatible con trend_system_final.py.
-    """
-
+def _get(path: str, payload: dict):
+    url = BASE_URL + path
+    signed = _sign(payload)
+    r = requests.get(url, params=signed, timeout=10)
     try:
-        url = f"{BYBIT_ENDPOINT}/v5/market/kline"
+        data = r.json()
+    except Exception:
+        logger.error(f"Error parsing JSON from Bybit: {r.text}")
+        return None
+    return data
 
+# ======================================================
+# 📊 OHLCV
+# ======================================================
+def get_ohlcv_data(symbol: str, interval: str, limit: int = 200):
+    try:
         params = {
             "category": "linear",
-            "symbol": symbol.upper(),
+            "symbol": symbol,
             "interval": interval,
             "limit": limit
         }
-
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
-
-        if data.get("retCode") != 0:
-            logger.warning(f"⚠️ OHLCV error for {symbol}: {data}")
+        data = _get("/v5/market/kline", params)
+        if not data or data.get("retCode") != 0:
+            logger.error(f"Error OHLCV {symbol}: {data}")
             return None
-
-        rows = data["result"].get("list", [])
-        if not rows:
-            return None
-
-        df = pd.DataFrame(
-            rows,
-            columns=[
-                "timestamp", "open", "high", "low",
-                "close", "volume", "turnover"
-            ]
-        )
-
-        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="ms")
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = df[col].astype(float)
-
-        df = df.sort_values("timestamp")
-        return df
-
+        return data["result"]["list"]
     except Exception as e:
-        logger.error(f"❌ Error en get_ohlcv_data({symbol}): {e}")
+        logger.error(f"Exception in get_ohlcv_data: {e}")
+        return None
+
+# ======================================================
+# 📌 POSICIONES ABIERTAS
+# ======================================================
+def get_open_positions(symbol: str = None):
+    params = {"category": "linear"}
+    if symbol:
+        params["symbol"] = symbol
+    data = _get("/v5/position/list", params)
+    if not data or data.get("retCode") != 0:
+        logger.error(f"Error get_open_positions: {data}")
+        return []
+    return data["result"]["list"]
+
+
+# ======================================================
+# 📌 OBTENER PRECIO ACTUAL
+# ======================================================
+def get_last_price(symbol: str):
+    data = _get(
+        "/v5/market/tickers",
+        {"category": "linear", "symbol": symbol}
+    )
+    if not data or data.get("retCode") != 0:
+        logger.error(f"Error ticker {symbol}: {data}")
+        return None
+    try:
+        return float(data["result"]["list"][0]["lastPrice"])
+    except Exception:
         return None
 
 
-# ============================================================
-# 💼 Balance de cuenta
-# ============================================================
-
-def get_account_info():
-    if SIMULATION_MODE:
-        return {
-            "totalEquity": "10000",
-            "totalWalletBalance": "9500",
-            "availableBalance": "8500",
-        }
-
-    data = _make_request("account/wallet-balance", {"accountType": "UNIFIED"})
-    if data.get("retCode") == 0:
-        return data["result"]["list"][0]
-
-    return {"error": data.get("retMsg", "error")}
-
-
-# ============================================================
-# 📈 Obtener posiciones abiertas
-# ============================================================
-
-def get_open_positions():
+# ======================================================
+# 📉 CIERRE DE POSICIÓN
+# ======================================================
+def close_position(symbol: str):
     """
-    Devuelve posiciones abiertas limpias y consistentes.
+    Cierra cualquier posición abierta en el símbolo usando reduceOnly.
     """
-    if SIMULATION_MODE:
-        return [
-            {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1",
-             "entryPrice": "68000", "markPrice": "68100",
-             "leverage": "20", "unrealisedPnl": "5"},
-            {"symbol": "ETHUSDT", "side": "Sell", "size": "1",
-             "entryPrice": "3600", "markPrice": "3590",
-             "leverage": "20", "unrealisedPnl": "10"},
-        ]
+    logger.info(f"🔻 Cerrando posición en {symbol}…")
 
-    data = _make_request("position/list", {"category": "linear", "settleCoin": "USDT"})
+    pos_list = get_open_positions(symbol)
+    if not pos_list:
+        logger.info(f"➡️ No hay posición abierta en {symbol}")
+        return True
 
-    if data.get("retCode") != 0:
-        return []
+    pos = pos_list[0]
+    side = "Sell" if pos["side"] == "Buy" else "Buy"
+    qty = pos["size"]
 
-    result = data.get("result", {})
-    positions = result.get("list", [])
-
-    cleaned = []
-
-    for p in positions:
-        size = float(p.get("size", 0))
-        if size <= 0:
-            continue
-
-        entry = p.get("entryPrice")
-        avg  = p.get("avgPrice")
-
-        # Fallback
-        if not entry or entry == "0":
-            if avg and float(avg) > 0:
-                entry = avg
-                p["entryPrice"] = avg
-                logger.info(f"ℹ️ entryPrice corregido con avgPrice ({avg}) en {p['symbol']}")
-
-        cleaned.append(p)
-
-    return cleaned
-
-
-# ============================================================
-# 📄 Órdenes abiertas
-# ============================================================
-
-def get_open_orders():
-    data = _make_request("order/realtime", {
+    payload = {
         "category": "linear",
-        "settleCoin": "USDT",
-        "openOnly": "1"
-    })
+        "symbol": symbol,
+        "side": side,
+        "orderType": "Market",
+        "qty": qty,
+        "reduceOnly": True,
+        "timeInForce": "IOC",
+    }
 
-    if data.get("retCode") != 0:
-        return []
+    data = _post("/v5/order/create", payload)
+    if data and data.get("retCode") == 0:
+        logger.info(f"✔ Posición cerrada correctamente: {symbol}")
+        return True
 
-    return data.get("result", {}).get("list", [])
-
-
-# ============================================================
-# 🧾 Formatos para Telegram
-# ============================================================
-
-def format_account_summary(account_info: dict, positions: list) -> str:
-    pnl = sum(float(p.get("unrealisedPnl", 0)) for p in positions)
-
-    return (
-        f"💼 **Resumen de Cuenta**\n"
-        f"• Balance: ${account_info.get('totalWalletBalance', '0')}\n"
-        f"• Equity: ${account_info.get('totalEquity', '0')}\n"
-        f"• Disponible: ${account_info.get('availableBalance', '0')}\n"
-        f"• Posiciones: {len(positions)}\n"
-        f"• PnL Total: ${pnl:.2f}\n"
-    )
+    logger.error(f"❌ Error al cerrar posición: {data}")
+    return False
 
 
-def format_position_message(p: dict) -> str:
-    emoji = "🟢" if p["side"].lower() == "buy" else "🔴"
-    pnl = float(p.get("unrealisedPnl", 0))
-    p_emoji = "📈" if pnl >= 0 else "📉"
+# ======================================================
+# 🔄 REVERSAR POSICIÓN
+# ======================================================
+def reverse_position(symbol: str):
+    """
+    Cierra la posición y abre una nueva al lado contrario con mismo tamaño.
+    """
+    logger.info(f"🔄 Iniciando reversión de {symbol}…")
 
-    return (
-        f"{emoji} **{p['symbol']}**\n"
-        f"• Dirección: {p['side']}\n"
-        f"• Tamaño: {p.get('size')}\n"
-        f"• Entrada: ${p.get('entryPrice')}\n"
-        f"• Actual:  ${p.get('markPrice', 'N/A')}\n"
-        f"• PnL: {p_emoji} ${pnl:.2f}\n"
-        f"• Apalancamiento: {p.get('leverage')}x\n"
-    )
+    pos_list = get_open_positions(symbol)
+    if not pos_list:
+        logger.info(f"No hay posición para revertir -> nada que hacer.")
+        return False
+
+    pos = pos_list[0]
+    current_side = pos["side"]
+    qty = float(pos["size"])
+
+    opposite_side = "Sell" if current_side == "Buy" else "Buy"
+
+    # 1️⃣ Cerrar posición actual
+    if not close_position(symbol):
+        logger.error("❌ No se pudo cerrar la posición para revertir.")
+        return False
+
+    time.sleep(0.8)
+
+    # 2️⃣ Abrir en el sentido contrario
+    payload = {
+        "category": "linear",
+        "symbol": symbol,
+        "side": opposite_side,
+        "orderType": "Market",
+        "qty": qty,
+        "timeInForce": "IOC",
+        "reduceOnly": False
+    }
+
+    data = _post("/v5/order/create", payload)
+    if data and data.get("retCode") == 0:
+        logger.info("✔ Reversión completada correctamente.")
+        return True
+
+    logger.error(f"❌ Error al revertir posición: {data}")
+    return False
 
 
-# ============================================================
-# 🧪 Test manual
-# ============================================================
+# ======================================================
+# 🚀 ABRIR POSICIÓN DE MERCADO (valor en USDT)
+# ======================================================
+def place_market_order(symbol: str, side: str, usdt: float, leverage: int = 20):
+    """
+    Abre una posición usando un valor fijo en USDT (ej: 3 USDT con x20).
+    """
+    last = get_last_price(symbol)
+    if not last:
+        logger.error("No se pudo obtener precio para abrir posición.")
+        return False
 
-if __name__ == "__main__":
-    print("🚀 Test Bybit Client (2025 final)")
-    print(get_open_positions())
+    qty = round((usdt * leverage) / last, 6)
+
+    payload = {
+        "category": "linear",
+        "symbol": symbol,
+        "side": "Buy" if side.lower() == "long" else "Sell",
+        "orderType": "Market",
+        "qty": qty,
+        "timeInForce": "IOC",
+        "reduceOnly": False
+    }
+
+    data = _post("/v5/order/create", payload)
+    if data and data.get("retCode") == 0:
+        logger.info(f"✔ Orden de mercado abierta correctamente: {symbol} {side}")
+        return True
+
+    logger.error(f"❌ Error al abrir orden de mercado: {data}")
+    return False

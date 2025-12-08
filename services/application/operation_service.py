@@ -1,179 +1,215 @@
-# services/application/operation_service.py
+# services/operation_service/operation_service.py
 
 import logging
-from datetime import datetime
+from typing import List, Dict, Optional, Tuple
 
-from services.application.analysis_service import analyze_symbol, format_analysis_for_telegram
-from services.bybit_service.bybit_client import get_open_positions
-from services.bybit.bybit_private import reverse_position, close_position
+from services.bybit_service.bybit_client import (
+    get_open_positions,
+    close_position as bybit_close_position,
+    reverse_position as bybit_reverse_position,
+)
 
 logger = logging.getLogger("operation_service")
 
 
-class OperationDTO:
-    """Objeto limpio para transportar datos de una operación abierta."""
-    def __init__(self, symbol, direction, entry_price, current_price, pnl_pct):
-        self.symbol = symbol
-        self.direction = direction  # long | short
-        self.entry_price = entry_price
-        self.current_price = current_price
-        self.pnl_pct = pnl_pct      # % ganancia/pérdida
-
-
-# ============================================================
-# 🔍 CARGAR OPERACIONES ABIERTAS DESDE BYBIT
-# ============================================================
-
-async def load_open_operations() -> list[OperationDTO]:
+class OperationService:
     """
-    Obtiene todas las operaciones abiertas en Bybit (API privada).
-    Convierte a DTO interno estandarizado.
+    Servicio de alto nivel para operaciones abiertas en Bybit.
+
+    Responsabilidades:
+    - Obtener y normalizar las posiciones abiertas desde Bybit.
+    - Exponer acceso sencillo a:
+        • listar todas las operaciones abiertas
+        • obtener una operación por símbolo
+        • cerrar o revertir una operación
+    - Proveer una clasificación simple de riesgo según pérdida (%).
     """
 
-    raw_positions = await get_open_positions()
-    operations = []
+    # Umbrales de pérdida para advertencias (-30, -50, -70, -90)
+    LOSS_LEVELS = (30, 50, 70, 90)
 
-    for pos in raw_positions:
+    # ============================================================
+    # Helpers internos
+    # ============================================================
+
+    async def _fetch_raw_positions(self) -> List[Dict]:
+        """
+        Llama al cliente Bybit para traer las posiciones abiertas.
+        Siempre devuelve una lista (vacía en caso de error).
+        """
         try:
-            op = OperationDTO(
-                symbol=pos["symbol"],
-                direction=pos["direction"],
-                entry_price=float(pos["entry_price"]),
-                current_price=float(pos["mark_price"]),
-                pnl_pct=float(pos["pnl_pct"])
-            )
-            operations.append(op)
+            raw = await get_open_positions()
+            if not raw:
+                return []
+            return raw
         except Exception:
-            logger.exception("❌ Error procesando posición BYBIT")
+            logger.exception("❌ Error obteniendo posiciones abiertas desde Bybit.")
+            return []
 
-    return operations
+    @staticmethod
+    def _normalize_side(raw_side: str) -> str:
+        """
+        Normaliza el 'lado' de la operación a: long | short | unknown
+        """
+        if not raw_side:
+            return "unknown"
+        s = str(raw_side).lower()
+        if "buy" in s or s == "long":
+            return "long"
+        if "sell" in s or s == "short":
+            return "short"
+        return s
 
+    @staticmethod
+    def _safe_float(value, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return default
 
-# ============================================================
-# 🔥 EVALUAR SI UNA OPERACIÓN NECESITA ACCIÓN URGENTE
-# ============================================================
+    def _normalize_position(self, raw: Dict) -> Dict:
+        """
+        Convierte el diccionario crudo de Bybit a un formato interno consistente.
 
-def classify_risk(pnl_pct: float) -> tuple[str, str]:
-    """
-    Clasificación lógica de riesgo según % de pérdida o ganancia.
-    Devuelve: (riesgo, texto)
-    """
+        Campos clave que intentamos exponer:
+        - symbol
+        - direction (long|short)
+        - entry_price
+        - mark_price
+        - loss_pct (si existe, si no, caemos a 0.0)
+        - pnl_pct (si viene del cliente)
+        - leverage (si está disponible)
+        """
 
-    if pnl_pct <= -90:
-        return "critical", "⚠️ Pérdida extrema (-90%) — Acción inmediata recomendada."
-    elif pnl_pct <= -70:
-        return "very_high", "⚠️ Riesgo MUY alto (-70%) — Revisión urgente."
-    elif pnl_pct <= -50:
-        return "high", "⚠️ Pérdida alta (-50%) — Evaluar reversión/ cierre."
-    elif pnl_pct <= -30:
-        return "medium", "⚠️ Pérdida moderada (-30%) — Revisar condiciones."
-    else:
-        return "safe", "Operación estable."
+        symbol = raw.get("symbol") or raw.get("symbolName") or "UNKNOWN"
 
+        direction = (
+            raw.get("direction")
+            or raw.get("side")
+            or raw.get("positionSide")
+            or ""
+        )
+        direction = self._normalize_side(direction)
 
-# ============================================================
-# 🔎 EVALUACIÓN COMPLETA DE UNA OPERACIÓN ABIERTA
-# ============================================================
+        entry_price = self._safe_float(
+            raw.get("entry_price")
+            or raw.get("entryPrice")
+            or raw.get("avgPrice")
+            or raw.get("avgEntryPrice")
+        )
 
-async def evaluate_single_operation(op: OperationDTO) -> str:
-    """
-    Analiza una sola operación y devuelve mensaje formateado para Telegram.
-    """
+        mark_price = self._safe_float(
+            raw.get("mark_price")
+            or raw.get("markPrice")
+            or raw.get("lastPrice")
+            or raw.get("marketPrice")
+        )
 
-    logger.info(f"📉 Evaluando operación abierta: {op.symbol} ({op.direction})")
+        # Pérdida/ganancia en %
+        pnl_pct = self._safe_float(
+            raw.get("pnl_pct")
+            or raw.get("pnlPercent")
+            or raw.get("pnl_pct_usd")
+        )
 
-    # 1) Clasificación de riesgo basada en % de pérdida
-    risk_level, risk_msg = classify_risk(op.pnl_pct)
+        # Pérdida "normalizada" (lo que usan los coordinadores)
+        loss_pct = self._safe_float(
+            raw.get("loss_pct")
+            or raw.get("lossPercent")
+        )
 
-    # 2) Pedir al motor técnico el análisis de contexto
-    tech = await analyze_symbol(op.symbol, op.direction)
+        leverage = self._safe_float(
+            raw.get("leverage")
+            or raw.get("leverageR")
+            or raw.get("leverageValue")
+            or 20  # fallback razonable para tu caso
+        )
 
-    decision = tech.decision
-    snapshot = tech.snapshot
+        normalized = {
+            "symbol": symbol,
+            "direction": direction,
+            "entry_price": entry_price,
+            "mark_price": mark_price,
+            "pnl_pct": pnl_pct,
+            "loss_pct": loss_pct,
+            "leverage": leverage,
+            "raw": raw,
+        }
 
-    # ======================================
-    # 🔥 DECISIÓN BASADA EN MOTOR + PÉRDIDA
-    # ======================================
+        return normalized
 
-    if risk_level in ["critical", "very_high"]:
-        final = "close"
-        note = "Pérdida severa — no es recuperable según tendencia."
-    elif risk_level == "high":
-        # Revisar si la tendencia está completamente en contra
-        if decision["major_trend_code"] == ("bear" if op.direction == "long" else "bull"):
-            final = "reverse"
-            note = "Tendencia completamente en contra — revertir posición."
+    # ============================================================
+    # API pública principal
+    # ============================================================
+
+    async def list_open_positions(self) -> List[Dict]:
+        """
+        Devuelve TODAS las operaciones abiertas en formato normalizado.
+        """
+        raw_positions = await self._fetch_raw_positions()
+        return [self._normalize_position(p) for p in raw_positions]
+
+    async def get_open_position(self, symbol: str) -> Optional[Dict]:
+        """
+        Devuelve la operación abierta para un símbolo concreto (si existe).
+        Símbolo se compara en mayúsculas.
+        """
+        symbol_upper = symbol.upper()
+        positions = await self.list_open_positions()
+
+        for pos in positions:
+            if pos.get("symbol", "").upper() == symbol_upper:
+                return pos
+
+        return None
+
+    async def close(self, symbol: str) -> bool:
+        """
+        Cierra la posición de un símbolo concreto en Bybit.
+        Devuelve True si la llamada no lanza excepción.
+        """
+        try:
+            await bybit_close_position(symbol)
+            logger.info(f"🛑 Operación cerrada en Bybit: {symbol}")
+            return True
+        except Exception:
+            logger.exception(f"❌ Error cerrando posición en Bybit: {symbol}")
+            return False
+
+    async def reverse(self, symbol: str) -> bool:
+        """
+        Invierte la posición de un símbolo concreto en Bybit.
+        Devuelve True si la llamada no lanza excepción.
+        """
+        try:
+            await bybit_reverse_position(symbol)
+            logger.info(f"🔄 Operación revertida en Bybit: {symbol}")
+            return True
+        except Exception:
+            logger.exception(f"❌ Error revirtiendo posición en Bybit: {symbol}")
+            return False
+
+    # ============================================================
+    # Clasificación de riesgo (reutilizable por coordinadores)
+    # ============================================================
+
+    @staticmethod
+    def classify_risk(loss_pct: float) -> Tuple[str, str]:
+        """
+        Clasificación lógica de riesgo según % de pérdida.
+        Devuelve: (riesgo, mensaje)
+        Se asume que loss_pct es un valor NEGATIVO o magnitud de pérdida.
+        """
+        # Normalizamos a valor negativo por si llega como positivo
+        lp = -abs(loss_pct)
+
+        if lp <= -90:
+            return "critical", "⚠️ Pérdida extrema (-90%) — acción inmediata recomendada."
+        elif lp <= -70:
+            return "very_high", "⚠️ Riesgo MUY alto (-70%) — revisión urgente."
+        elif lp <= -50:
+            return "high", "⚠️ Pérdida alta (-50%) — evaluar reversión/cierre."
+        elif lp <= -30:
+            return "medium", "⚠️ Pérdida moderada (-30%) — revisar condiciones."
         else:
-            final = "close"
-            note = "Pérdida alta pero tendencia no completamente opuesta."
-    elif risk_level == "medium":
-        final = "evaluate"
-        note = "Monitoreo recomendado — condiciones mixtas."
-    else:
-        final = "hold"
-        note = "Operación sana — mantener."
-
-    # ======================================
-    # 📝 MENSAJE FORMATEADO PARA TELEGRAM
-    # ======================================
-
-    msg = f"""
-📌 *Evaluación de operación abierta*
-
-🔹 *Par:* {op.symbol}
-🔹 *Dirección:* {op.direction}
-🔹 *Entrada:* {op.entry_price}
-🔹 *Precio actual:* {op.current_price}
-🔹 *PnL:* {op.pnl_pct:.2f}%
-
-📊 *Riesgo:* {risk_level.upper()}
-{risk_msg}
-
-📘 *Análisis técnico actual:*
-{format_analysis_for_telegram(tech)}
-
-🎯 *Recomendación final:* {final.upper()}
-➡️ {note}
-"""
-
-    return msg
-
-
-# ============================================================
-# 🔁 EVALUAR TODAS LAS OPERACIONES ABIERTAS
-# ============================================================
-
-async def evaluate_all_operations() -> list[str]:
-    """
-    Evalúa todas las operaciones en Bybit y retorna mensajes para Telegram.
-    """
-
-    ops = await load_open_operations()
-    results = []
-
-    for op in ops:
-        msg = await evaluate_single_operation(op)
-        results.append(msg)
-
-    return results
-
-
-# ============================================================
-# 🔄 EJECUTAR REVERSION / CIERRE (OPCIONAL)
-# ============================================================
-
-async def apply_action(op: OperationDTO, action: str) -> str:
-    """
-    Aplica acción real en Bybit: close | reverse
-    """
-
-    if action == "close":
-        await close_position(op.symbol)
-        return f"🛑 Operación cerrada: {op.symbol}"
-
-    elif action == "reverse":
-        await reverse_position(op.symbol)
-        return f"🔄 Operación revertida: {op.symbol}"
-
-    else:
-        return "❓ Acción no reconocida."
+            return "safe", "Operación estable o pérdida controlada."
