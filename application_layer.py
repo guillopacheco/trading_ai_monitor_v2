@@ -36,6 +36,7 @@ class ApplicationLayer:
         self.operation_service = OperationService()
         self.analysis_service = AnalysisService()
         self.notifier = Notifier()
+        self.notifier.configure(bot=self.bot, chat_id=self.user_chat_id)
         self.database = Database()
 
         # Coordinadores

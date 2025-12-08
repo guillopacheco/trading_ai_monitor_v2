@@ -1,111 +1,67 @@
+# services/telegram_service/notifier.py
+
 import logging
-import requests
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID, SIMULATION_MODE
+from telegram import Bot
 
 logger = logging.getLogger("notifier")
 
-API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-def clean_markdown(text: str) -> str:
-    if not text:
-        return ""
-    return (
-        text.replace("\\", "\\\\")
-            .replace("_", "\\_")
-            .replace("*", "\\*")
-            .replace("[", "\\[")
-            .replace("]", "\\]")
-            .replace("(", "\\(")
-            .replace(")", "\\)")
-    )
-
-
-def split_message(text: str, limit: int = 4000):
-    parts = []
-    while len(text) > limit:
-        cut = text.rfind("\n", 0, limit)
-        if cut == -1:
-            cut = limit
-        parts.append(text[:cut])
-        text = text[cut:]
-    parts.append(text)
-    return parts
-
-
-def _post(text: str):
-    if SIMULATION_MODE:
-        logger.info(f"💬 [SIMULADO] {text}")
-        return True
-
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_USER_ID:
-        logger.error("❌ TELEGRAM_BOT_TOKEN o TELEGRAM_USER_ID no configurados.")
-        return False
-
-    try:
-        text = clean_markdown(text)
-        parts = split_message(text)
-
-        ok = True
-        for part in parts:
-            r = requests.post(
-                API_URL,
-                data={
-                    "chat_id": TELEGRAM_USER_ID,
-                    "text": part,
-                    "parse_mode": "Markdown",
-                    "disable_web_page_preview": True,
-                },
-                timeout=10
-            )
-            if r.status_code != 200:
-                ok = False
-                logger.error(f"❌ Error Telegram: {r.text}")
-
-        return ok
-
-    except Exception as e:
-        logger.error(f"❌ Error en _post Telegram: {e}")
-        return False
-
-
-def send_message(text: str):
-    return _post(text)
-
-
-# ================================================================
-# 🧠 NUEVO: Notificación final para operaciones abiertas
-# ================================================================
-def notify_operation_recommendation(data: dict):
+class Notifier:
     """
-    Envía una notificación clara con la recomendación:
-    🟢 Mantener | 🔴 Cerrar | ⚠️ Revertir | 🟡 Evaluar
+    Wrapper centralizado para enviar mensajes a Telegram desde cualquier servicio.
     """
-    symbol = data["symbol"]
-    direction = data["direction"]
-    roi = data["roi"]
-    pnl = data["pnl"]
-    loss_level = data["loss_level"]
-    match_ratio = data["match_ratio"]
-    major_trend = data["major_trend"]
-    bias = data["smart_bias"]
-    suggestion = data["suggestion"]
-    reasons = data["reasons"]
 
-    reason_text = "\n - ".join(reasons) if reasons else "Sin razones adicionales."
+    def __init__(self, bot: Bot = None, chat_id: str = None):
+        """
+        Si no se pasa bot/chat_id, se obtendrán desde ApplicationLayer.
+        """
+        self.bot = bot
+        self.chat_id = chat_id
 
-    msg = f"""
-🚨 *Alerta de operación: {symbol}*
-📌 Dirección: *{direction.upper()}*
-💵 ROI: `{roi:.2f}%`
-💰 PnL: `{pnl}`
-📉 Nivel de pérdida: {loss_level}%
-📊 Match técnico: {match_ratio:.1f}%
-🧭 Tendencia mayor: *{major_trend}*
-🔮 Sesgo smart: *{bias}*
-🧠 *Recomendación:* {suggestion}
+    # ============================================================
+    # Métodos de inicialización (útiles cuando se inyecta el bot)
+    # ============================================================
+    def configure(self, bot: Bot, chat_id: str):
+        """Permite configurar el bot después de instanciar la clase."""
+        self.bot = bot
+        self.chat_id = chat_id
 
-📝 *Motivos:*
- - {reason_text}
-"""
+    # ============================================================
+    # Métodos de envío
+    # ============================================================
+    async def send(self, text: str):
+        """
+        Envía un mensaje básico.
+        """
+        if not self.bot or not self.chat_id:
+            logger.error("❌ Notifier no configurado con bot/chat_id")
+            return
 
-    _post(msg.strip())
+        try:
+            await self.bot.send_message(chat_id=self.chat_id, text=text)
+        except Exception as e:
+            logger.exception(f"❌ Error enviando mensaje por Telegram: {e}")
+
+    async def notify_analysis(self, formatted_text: str):
+        """
+        Enviar análisis técnico formateado.
+        """
+        await self.send(formatted_text)
+
+    async def notify_reactivation(self, text: str):
+        """
+        Enviar notificación de reactivación.
+        """
+        await self.send(text)
+
+    async def notify_position_event(self, text: str):
+        """
+        Notificación para eventos de posiciones (cierres, reversión, riesgo, etc).
+        """
+        await self.send(text)
+
+    async def notify_error(self, text: str):
+        """
+        Notificación de errores severos.
+        """
+        await self.send(f"⚠️ ERROR: {text}")
