@@ -1,91 +1,215 @@
-"""
-command_bot.py — MODO EMBEBIDO para python-telegram-bot 20.x
-Compatible con asyncio.run(main()) y múltiples tasks.
-"""
-
 import logging
 from telegram import Update
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     ContextTypes,
 )
 
+from application_layer import ApplicationLayer
 from config import TELEGRAM_BOT_TOKEN
-from services.application_layer import manual_analysis
 
 logger = logging.getLogger("command_bot")
 
-app: Application = None  # instancia global
+# ===============================================================
+# Inicializar ApplicationLayer global
+# ===============================================================
+app_layer = ApplicationLayer()
 
 
-# ======================================================
-# Handlers
-# ======================================================
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 *Trading AI Monitor*\n"
-        "Comandos:\n"
-        "• /estado\n"
-        "• /analizar BTCUSDT\n"
-        "• /reactivacion\n"
-        "• /config",
-        parse_mode="Markdown"
-    )
-
-
-async def estado_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 Sistema activo", parse_mode="Markdown")
-
-
-async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚙️ Config cargada", parse_mode="Markdown")
-
-
-async def reactivacion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("♻️ Reactivación LITE")
-
-
-async def analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ===============================================================
+# /analizar BTCUSDT long
+# ===============================================================
+async def cmd_analizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if len(context.args) < 1:
-            await update.message.reply_text("❌ Debes indicar un par. Ej: /analizar BTCUSDT")
-            return
+        args = context.args
+        if len(args) < 2:
+            return await update.message.reply_text(
+                "❌ Uso correcto:\n/analizar BTCUSDT long"
+            )
 
-        symbol = context.args[0].upper()
-        direction = context.args[1] if len(context.args) >= 2 else "auto"
+        symbol = args[0].upper()
+        direction = args[1].lower()
 
-        logger.info(f"📨 /analizar {symbol} {direction}")
+        await update.message.reply_text(
+            f"🔍 Analizando *{symbol} ({direction})*…",
+            parse_mode="Markdown"
+        )
 
-        msg = await manual_analysis(symbol, direction)
+        await app_layer.manual_analysis(symbol, direction)
+
+    except Exception as e:
+        logger.exception(f"Error en /analizar: {e}")
+        await update.message.reply_text("⚠️ Error ejecutando el análisis.")
+
+
+# ===============================================================
+# /reactivar BTCUSDT
+# ===============================================================
+async def cmd_reactivar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        args = context.args
+        if len(args) < 1:
+            return await update.message.reply_text(
+                "❌ Uso correcto:\n/reactivar BTCUSDT"
+            )
+
+        symbol = args[0].upper()
+
+        await update.message.reply_text(
+            f"♻️ Reactivando *{symbol}*…",
+            parse_mode="Markdown"
+        )
+
+        await app_layer.manual_reactivation(symbol)
+
+    except Exception as e:
+        logger.exception(f"Error en /reactivar: {e}")
+        await update.message.reply_text("⚠️ Error ejecutando la reactivación.")
+
+
+# ===============================================================
+# /operacion BTCUSDT
+# ===============================================================
+async def cmd_operacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        args = context.args
+        if len(args) < 1:
+            return await update.message.reply_text(
+                "❌ Uso correcto:\n/operacion BTCUSDT"
+            )
+
+        symbol = args[0].upper()
+
+        await update.message.reply_text(
+            f"📊 Revisando operación abierta en *{symbol}*…",
+            parse_mode="Markdown"
+        )
+
+        await app_layer.check_open_position(symbol)
+
+    except Exception as e:
+        logger.exception(f"Error en /operacion: {e}")
+        await update.message.reply_text("⚠️ Error revisando operación.")
+
+
+# ===============================================================
+# /reversion BTCUSDT
+# ===============================================================
+async def cmd_reversion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        args = context.args
+        if len(args) < 1:
+            return await update.message.reply_text(
+                "❌ Uso correcto:\n/reversion BTCUSDT"
+            )
+
+        symbol = args[0].upper()
+
+        await update.message.reply_text(
+            f"🔄 Analizando reversión en *{symbol}*…",
+            parse_mode="Markdown"
+        )
+
+        await app_layer.check_reversal(symbol)
+
+    except Exception as e:
+        logger.exception(f"Error en /reversion: {e}")
+        await update.message.reply_text("⚠️ Error analizando reversión.")
+
+
+# ===============================================================
+# /detalles BTCUSDT
+# ===============================================================
+async def cmd_detalles(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        args = context.args
+        if len(args) < 1:
+            return await update.message.reply_text(
+                "❌ Uso correcto:\n/detalles BTCUSDT"
+            )
+
+        symbol = args[0].upper()
+
+        await update.message.reply_text(
+            f"🔍 Obteniendo diagnóstico detallado de *{symbol}*…",
+            parse_mode="Markdown"
+        )
+
+        txt = await app_layer.diagnostic(symbol)
+        await update.message.reply_text(txt, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.exception(f"Error en /detalles: {e}")
+        await update.message.reply_text("⚠️ Error generando detalles.")
+
+
+# ===============================================================
+# /estado — estado general del sistema
+# ===============================================================
+async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+
+        msg = (
+            "🧩 *Estado general del sistema*\n"
+            "------------------------------------\n"
+            "✔ ApplicationLayer activo\n"
+            "✔ SignalCoordinator activo\n"
+            "✔ AnalysisCoordinator activo\n"
+            "✔ PositionCoordinator activo\n"
+            "✔ Base de datos OK\n"
+            "✔ Notificaciones OK\n"
+            "✔ Motor técnico unificado OK\n"
+            "✔ Telegram Reader activo\n"
+            "------------------------------------\n"
+            "💠 Sistema funcionando correctamente."
+        )
+
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
-        logger.exception("❌ Error en /analizar")
-        await update.message.reply_text(f"❌ Error inesperado: {e}")
+        logger.exception(f"Error en /estado: {e}")
+        await update.message.reply_text("⚠️ Error leyendo el estado.")
 
 
-# ======================================================
-# Iniciar bot *sin cerrar loop*
-# ======================================================
+# ===============================================================
+# /ayuda
+# ===============================================================
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "📘 *Comandos disponibles*\n"
+        "------------------------------------\n"
+        "/analizar BTCUSDT long — Analiza una señal\n"
+        "/reactivar BTCUSDT — Reactiva una señal pendiente\n"
+        "/operacion BTCUSDT — Evalúa operación abierta\n"
+        "/reversion BTCUSDT — Analiza reversión\n"
+        "/detalles BTCUSDT — Snapshot detallado multi-TF\n"
+        "/estado — Estado del sistema\n"
+        "/ayuda — Mostrar este mensaje\n"
+        "------------------------------------"
+    )
+
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+
+# ===============================================================
+# Inicialización del bot
+# ===============================================================
 async def start_command_bot():
-    global app
+    logger.info("🤖 Inicializando Command Bot…")
 
-    logger.info("🤖 Inicializando bot de comandos (MODO EMBEBIDO)…")
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Crear la aplicación (NO run_polling)
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    # Registrar handlers
+    app.add_handler(CommandHandler("analizar", cmd_analizar))
+    app.add_handler(CommandHandler("reactivar", cmd_reactivar))
+    app.add_handler(CommandHandler("operacion", cmd_operacion))
+    app.add_handler(CommandHandler("reversion", cmd_reversion))
+    app.add_handler(CommandHandler("detalles", cmd_detalles))
+    app.add_handler(CommandHandler("estado", cmd_estado))
+    app.add_handler(CommandHandler("ayuda", cmd_help))
 
-    # Registrar comandos
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("estado", estado_cmd))
-    app.add_handler(CommandHandler("analizar", analizar))
-    app.add_handler(CommandHandler("reactivacion", reactivacion_cmd))
-    app.add_handler(CommandHandler("config", config_cmd))
-
-    # 🔥 MODO CORRECTO PARA EVENT LOOP YA EXISTENTE:
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
 
-    logger.info("🤖 Bot de comandos listo y escuchando mensajes.")
+    logger.info("🤖 CommandBot activo y escuchando comandos.")

@@ -1,56 +1,70 @@
 """
-main.py — Modo multitarea real
-Compatible con embedded bot telegram + telethon + async services.
+main.py — Fase 4 (2025)
+Arranque maestro del Trading AI Monitor v2
+Orquestación completa:
+- Logging
+- Base de datos
+- ApplicationLayer
+- CommandBot
+- TelegramReader
+- ReactivationSync
 """
 
 import asyncio
 import logging
 
-from telethon import TelegramClient
-from config import API_ID, API_HASH, TELEGRAM_SESSION
-
 from core.logger_config import configure_logging
-from core.database import init_db
+from services.database_service.database import Database
 
-from services.signals_service.signal_reactivation_sync import start_reactivation_monitor
-from services.positions_service.operation_tracker import start_operation_tracker
-from services.positions_service.position_reversal_monitor import start_reversal_monitor
-
-from services.telegram_service.telegram_reader import start_telegram_reader
+from application_layer import ApplicationLayer
 from services.telegram_service.command_bot import start_command_bot
+from services.telegram_service.telegram_reader import start_telegram_reader
+from services.signals_service.signal_reactivation_sync import start_reactivation_monitor
+
+logger = logging.getLogger("MAIN")
 
 
+# ===========================================================
+# 🎯 Tarea principal
+# ===========================================================
 async def main():
+    # Inicializar logging
     configure_logging()
-    logger = logging.getLogger("MAIN")
     logger.info("🚀 Trading AI Monitor iniciando...")
 
-    init_db()
+    # Inicializar base de datos global
+    Database().init()
+    logger.info("✅ Base de datos inicializada correctamente.")
 
-    # Telethon
-    client = TelegramClient(TELEGRAM_SESSION, API_ID, API_HASH)
-    await client.start()
+    # Inicializar ApplicationLayer
+    app_layer = ApplicationLayer()
 
     logger.info("📡 Iniciando servicios…")
 
-    # 🔥 El bot corre como tarea paralela
-    asyncio.create_task(start_command_bot())
+    # Bot de comandos (modo embebido)
+    command_task = asyncio.create_task(start_command_bot())
 
-    # Servicios
-    reader_task = asyncio.create_task(start_telegram_reader(client))
+    # Lector de señales desde Telegram VIP
+    reader_task = asyncio.create_task(start_telegram_reader())
+
+    # Monitor de reactivación automática
     reactivation_task = asyncio.create_task(start_reactivation_monitor())
-    operations_task = asyncio.create_task(start_operation_tracker())
-    reversal_task = asyncio.create_task(start_reversal_monitor())
 
-    logger.info("✅ Servicios activos.")
+    logger.info("✅ Todos los servicios iniciados.")
 
+    # Mantener servicios vivos
     await asyncio.gather(
+        command_task,
         reader_task,
-        reactivation_task,
-        operations_task,
-        reversal_task,
+        reactivation_task
     )
 
 
+# ===========================================================
+# 🚀 Punto de entrada
+# ===========================================================
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logging.getLogger("MAIN").exception(f"❌ Error crítico: {e}")
