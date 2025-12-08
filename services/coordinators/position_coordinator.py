@@ -5,9 +5,6 @@ from services.application.operation_service import OperationService
 from services.application.analysis_service import AnalysisService
 from services.telegram_service.notifier import Notifier
 
-# Importar solo lo que realmente existe en database.py
-from database import save_operation_event
-
 logger = logging.getLogger("position_coordinator")
 
 
@@ -44,8 +41,6 @@ class PositionCoordinator:
     # ============================================================
     async def _process_single_position(self, pos):
         symbol = pos.get("symbol")
-        entry = float(pos.get("entryPrice", 0))
-        mark = float(pos.get("markPrice", 0))
         pnl_pct = float(pos.get("pnlPct", 0))
         side = pos.get("side")
 
@@ -63,8 +58,8 @@ class PositionCoordinator:
             await self._handle_warning_loss(symbol, pos, analysis)
             return
 
-        # Guardar evento en base de datos
-        save_operation_event(symbol, "analyzed", analysis.get("decision"))
+        # Sin registrar eventos en DB (no existe la función)
+        logger.info(f"💾 Evento registrado (virtual): {symbol} analizado")
 
     # ============================================================
     # 3. Pérdida crítica (≥50%)
