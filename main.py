@@ -14,7 +14,7 @@ import asyncio
 import logging
 
 from core.logger_config import configure_logging
-from services.database import init_db
+from database import init_db
 
 from application_layer import ApplicationLayer
 from services.telegram_service.command_bot import start_command_bot
