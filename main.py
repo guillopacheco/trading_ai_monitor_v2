@@ -1,5 +1,6 @@
 """
-main.py — versión final estable, bot funcionando.
+main.py — Modo multitarea real
+Compatible con embedded bot telegram + telethon + async services.
 """
 
 import asyncio
@@ -32,18 +33,16 @@ async def main():
 
     logger.info("📡 Iniciando servicios…")
 
-    # 🔥 Bot de comandos en TASK paralela (NO await)
+    # 🔥 El bot corre como tarea paralela
     asyncio.create_task(start_command_bot())
 
-    # Telegram reader (Telethon)
-    reader_task = asyncio.create_task(start_telegram_reader(client))
-
     # Servicios
+    reader_task = asyncio.create_task(start_telegram_reader(client))
     reactivation_task = asyncio.create_task(start_reactivation_monitor())
-    operations_task   = asyncio.create_task(start_operation_tracker())
-    reversal_task     = asyncio.create_task(start_reversal_monitor())
+    operations_task = asyncio.create_task(start_operation_tracker())
+    reversal_task = asyncio.create_task(start_reversal_monitor())
 
-    logger.info("✅ Todos los servicios iniciados.")
+    logger.info("✅ Servicios activos.")
 
     await asyncio.gather(
         reader_task,
