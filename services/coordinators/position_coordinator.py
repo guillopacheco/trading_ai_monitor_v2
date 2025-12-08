@@ -5,11 +5,8 @@ from services.application.operation_service import OperationService
 from services.application.analysis_service import AnalysisService
 from services.telegram_service.notifier import Notifier
 
-# Importar funciones REALES del database.py
-from database import (
-    get_open_positions_by_symbol,
-    save_operation_event,
-)
+# Importar solo lo que realmente existe en database.py
+from database import save_operation_event
 
 logger = logging.getLogger("position_coordinator")
 
@@ -32,7 +29,7 @@ class PositionCoordinator:
     # ============================================================
     async def monitor_positions(self):
         """
-        Procesa TODAS las posiciones abiertas del usuario.
+        Procesa todas las posiciones activas directamente desde Bybit.
         """
         positions = await self.op_service.get_open_positions()
         if not positions:
@@ -50,11 +47,12 @@ class PositionCoordinator:
         entry = float(pos.get("entryPrice", 0))
         mark = float(pos.get("markPrice", 0))
         pnl_pct = float(pos.get("pnlPct", 0))
+        side = pos.get("side")
 
         logger.info(f"📌 Procesando {symbol}: PNL {pnl_pct}%")
 
-        # Análisis técnico para determinar si se mantiene, cierra o revierte
-        analysis = await self.analysis_service.analyze_symbol(symbol, pos.get("side"))
+        # Obtener análisis técnico para esta posición
+        analysis = await self.analysis_service.analyze_symbol(symbol, side)
 
         # Reglas críticas
         if pnl_pct <= -50:
@@ -99,14 +97,14 @@ class PositionCoordinator:
         await self.notifier.notify_position_event(msg)
 
     # ============================================================
-    # 5. Ejecutar cierre manual desde Telegram
+    # 5. Cierre manual
     # ============================================================
     async def manual_close(self, symbol):
         await self.op_service.close_position(symbol)
         await self.notifier.notify_position_event(f"🟪 Cierre manual ejecutado en {symbol}")
 
     # ============================================================
-    # 6. Ejecutar reversión manual
+    # 6. Reversión manual
     # ============================================================
     async def manual_reverse(self, symbol, side):
         await self.op_service.reverse_position(symbol, side)
