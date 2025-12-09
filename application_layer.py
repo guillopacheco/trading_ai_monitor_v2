@@ -44,6 +44,7 @@ class ApplicationLayer:
             self.analysis_service,
             self.notifier
         )
+        self.signal_coordinator = self.signal  # alias para reactivación
 
         self.analysis = AnalysisCoordinator(
             self.analysis_service,
