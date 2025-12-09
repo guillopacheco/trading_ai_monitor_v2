@@ -10,10 +10,34 @@ logger = logging.getLogger("analysis_service")
 async def analyze_symbol(symbol: str, direction: str) -> dict:
     """
     Ejecuta el motor técnico unificado para el símbolo solicitado.
+    Devuelve un dict estándar para coordinadores y notificaciones.
     """
-    logger.info(f"🔍 Ejecutando análisis técnico para {symbol} ({direction})...")
-    result = await engine_analyze(symbol, direction)
-    return result
+    try:
+        logger.info(f"🔍 Ejecutando análisis técnico para {symbol} ({direction})...")
+        result = await engine_analyze(symbol, direction)
+
+        if not result:
+            logger.error(f"❌ Motor devolvió None para {symbol}")
+            return {"error": True, "msg": "Motor técnico no devolvió resultado"}
+
+        # Normalizar campos que siempre deben existir
+        result.setdefault("symbol", symbol)
+        result.setdefault("direction", direction)
+        result.setdefault("major_trend_label", "N/A")
+        result.setdefault("smart_bias_code", "N/A")
+        result.setdefault("confidence", 0)
+        result.setdefault("grade", "N/A")
+        result.setdefault("match_ratio", 0)
+        result.setdefault("technical_score", 0)
+        result.setdefault("decision", "unknown")
+        result.setdefault("decision_reasons", [])
+        result.setdefault("entry", {})
+
+        return result
+
+    except Exception as e:
+        logger.exception(f"❌ Error crítico analizando {symbol}: {e}")
+        return {"error": True, "msg": str(e)}
 
 
 # ============================================================
@@ -21,59 +45,65 @@ async def analyze_symbol(symbol: str, direction: str) -> dict:
 # ============================================================
 def format_analysis_for_telegram(result: dict) -> str:
     """
-    Convierte el dict del motor técnico en un mensaje legible para Telegram.
+    Convierte el dict del motor técnico en un bloque estético para Telegram.
     """
 
-    if not result:
-        return "⚠️ Error: Sin resultados de análisis."
+    if not result or result.get("error"):
+        return "⚠️ *Error en análisis técnico.*"
 
     try:
-        symbol = result.get("symbol", "N/A")
-        direction = result.get("direction", "N/A")
-        main_trend = result.get("major_trend_label", "N/A")
-        smart_bias = result.get("smart_bias_code", "N/A")
-        confidence = result.get("confidence", 0)
-        grade = result.get("grade", "N/A")
-        match_ratio = result.get("match_ratio", 0)
-        score = result.get("technical_score", 0)
-        decision = result.get("decision", "N/A")
-        decision_reasons = result.get("decision_reasons", [])
-        entry = result.get("entry", {}) or {}
-        entry_allowed = entry.get("allowed", False)
-        entry_mode = entry.get("entry_mode", "N/A")
+        symbol = result.get("symbol")
+        direction = result.get("direction")
+        main_trend = result.get("major_trend_label")
+        smart_bias = result.get("smart_bias_code")
+        confidence = result.get("confidence")
+        grade = result.get("grade")
+        match_ratio = result.get("match_ratio")
+        score = result.get("technical_score")
+        decision = result.get("decision")
+        reasons = result.get("decision_reasons", [])
+
+        entry = result.get("entry", {})
+        allowed = entry.get("allowed", False)
+        mode = entry.get("entry_mode", "N/A")
         entry_score = entry.get("entry_score", 0)
 
-        analysis = (
+        msg = (
             f"📊 *Análisis de {symbol} ({direction})*\n"
             f"• Tendencia mayor: *{main_trend}*\n"
             f"• Smart Bias: *{smart_bias}*\n"
-            f"• Confianza global: *{confidence}* (Grado {grade})\n"
+            f"• Confianza global: *{confidence}%* (Grado {grade})\n"
             f"• Match técnico: *{match_ratio}%* | Score: *{score}*\n\n"
             f"🎯 *Smart Entry*\n"
-            f"• Permitido: *{'Sí' if entry_allowed else 'No'}* "
-            f"(modo: {entry_mode})\n"
+            f"• Permitido: *{'Sí' if allowed else 'No'}* (modo: {mode})\n"
             f"• Score entrada: *{entry_score}*\n\n"
-            f"📌 *Decisión final del motor*\n"
-            f"• Decisión: *{decision}* ({confidence} confianza)\n"
+            f"📌 *Decisión final*\n"
+            f"*{decision.upper()}* — confianza {confidence}%\n"
         )
 
-        if decision_reasons:
-            analysis += "• Motivo principal: " + decision_reasons[0]
+        if reasons:
+            msg += f"• Motivo principal: {reasons[0]}\n"
 
-        return analysis
+        return msg
 
     except Exception as e:
         logger.error(f"❌ Error formateando análisis: {e}")
-        return "⚠️ Error formateando análisis técnico."
+        return "⚠️ *Error formateando análisis técnico.*"
 
 
 # ============================================================
-# CLASE OPCIONAL PARA USO DESDE COORDINADORES
+# CLASE PARA USO EN COORDINADORES
 # ============================================================
 class AnalysisService:
 
     async def analyze(self, symbol: str, direction: str):
+        """
+        Interface usada por coordinadores.
+        """
         return await analyze_symbol(symbol, direction)
 
     def format(self, result: dict):
+        """
+        Interface para formateo Telegram.
+        """
         return format_analysis_for_telegram(result)

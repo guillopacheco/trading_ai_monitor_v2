@@ -1,66 +1,82 @@
+# ================================================================
+# signal_service.py — versión corregida y compatible con coordinadores
+# ================================================================
+
 import logging
-from datetime import datetime
-
 from database import (
-    db_insert_signal,
-    db_get_pending_signals,
-    db_update_signal_status,
+    save_signal,
+    get_pending_signals_for_reactivation,
+    mark_signal_reactivated,
+    save_analysis_log
 )
-
-from services.application.analysis_service import analyze_symbol, format_analysis_for_telegram
 
 logger = logging.getLogger("signal_service")
 
 
 class SignalService:
     """
-    Servicio de gestión de señales:
-    - guardar en DB
-    - analizar
-    - obtener pendientes
-    - actualizar estado
+    Servicio oficial para:
+    • Registrar señales nuevas
+    • Consultar pendientes de reactivación
+    • Registrar logs de análisis (entrada y reactivación)
     """
 
-    # -------------------------------
-    #       ENTRADA DE SEÑALES
-    # -------------------------------
-    def process_incoming_signal(self, symbol: str, direction: str):
+    # ------------------------------------------------------------
+    # 1. REGISTRAR SEÑAL (usado por telegram_reader)
+    # ------------------------------------------------------------
+    def register_signal(self, symbol: str, direction: str, raw_text: str) -> int:
         """
-        Guarda la señal en la base de datos.
+        Registrar señal en la DB. Devuelve el ID.
+        El coordinator NO debe construir la estructura completa.
         """
-        logger.info(f"📥 Guardando señal entrante: {symbol} ({direction})")
 
-        db_insert_signal(
-            symbol=symbol,
-            direction=direction,
-            status="pending",
-            created_at=datetime.utcnow().isoformat(),
-        )
+        signal_data = {
+            "symbol": symbol.upper(),
+            "direction": direction.lower(),
+            "raw_text": raw_text
+        }
 
-        logger.info("💾 Señal guardada en DB correctamente.")
+        try:
+            signal_id = save_signal(signal_data)
+            logger.info(f"📥 Señal registrada en DB → {signal_id} | {symbol} {direction}")
+            return signal_id
 
-    # -------------------------------
-    #   OBTENER PENDIENTES
-    # -------------------------------
+        except Exception as e:
+            logger.error(f"❌ Error registrando señal: {e}")
+            return None
+
+    # ------------------------------------------------------------
+    # 2. OBTENER SEÑALES PENDIENTES PARA REACTIVACIÓN
+    # ------------------------------------------------------------
     def get_pending_signals(self):
-        """
-        Devuelve señales pendientes desde la DB.
-        """
-        return db_get_pending_signals()
+        try:
+            results = get_pending_signals_for_reactivation()
+            logger.info(f"🔎 {len(results)} señales pendientes para reactivación.")
+            return results
+        except Exception as e:
+            logger.error(f"❌ Error cargando pendientes: {e}")
+            return []
 
-    # -------------------------------
-    #        ACTUALIZAR ESTADO
-    # -------------------------------
-    def update_status(self, signal_id: int, new_status: str):
-        db_update_signal_status(signal_id, new_status)
-        logger.info(f"🔄 Señal {signal_id} actualizada → {new_status}")
+    # ------------------------------------------------------------
+    # 3. GUARDAR LOG DE ANÁLISIS (entrada o reactivación)
+    # ------------------------------------------------------------
+    def save_analysis_log(self, signal_id: int, analysis: dict, context: str):
+        try:
+            save_analysis_log(
+                signal_id=signal_id,
+                context=context,
+                analysis_json=analysis
+            )
+            logger.info(f"📝 Log técnico guardado ({context}) para ID {signal_id}")
+        except Exception as e:
+            logger.error(f"❌ Error guardando log técnico: {e}")
 
-    # -------------------------------
-    #   ANALIZAR UNA SEÑAL MANUAL
-    # -------------------------------
-    async def analyze_signal(self, symbol: str, direction: str):
-        """
-        Análisis técnico del símbolo.
-        """
-        result = await analyze_symbol(symbol, direction)
-        return format_analysis_for_telegram(result)
+    # ------------------------------------------------------------
+    # 4. MARCAR SEÑAL COMO REACTIVADA
+    # ------------------------------------------------------------
+    def mark_reactivated(self, signal_id: int):
+        try:
+            mark_signal_reactivated(signal_id)
+            logger.info(f"⚡ Señal marcada como reactivada → ID {signal_id}")
+        except Exception as e:
+            logger.error(f"❌ Error marcando señal reactivada: {e}")
