@@ -8,13 +8,30 @@ from urllib.parse import urlencode
 
 # AÑADIR CARGA EXPLÍCITA DE .env
 from dotenv import load_dotenv
-load_dotenv()  # <-- ¡ESTO FALTA!
+load_dotenv(override=True)  # <-- RECARGA POR SEGURIDAD
 
 logger = logging.getLogger("bybit_client")
 
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 BASE_URL = "https://api.bybit.com"
+
+# VERIFICACIÓN EXPLÍCITA EN TIEMPO DE EJECUCIÓN
+if not BYBIT_API_KEY or not BYBIT_API_SECRET:
+    logger.error("🚨🚨🚨 ERROR CRÍTICO: Variables Bybit no configuradas")
+    logger.error(f"   BYBIT_API_KEY: {'✅' if BYBIT_API_KEY else '❌'}")
+    logger.error(f"   BYBIT_API_SECRET: {'✅' if BYBIT_API_SECRET else '❌'}")
+    logger.error("   Revisa tu archivo .env o ejecuta: python fix_env.py")
+    
+    # Intentar carga de emergencia
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+        BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
+        logger.info("   Recarga de emergencia ejecutada")
+    except:
+        pass
 
 # LOG para debug
 logger.debug(f"Bybit API Key cargada: {BYBIT_API_KEY[:8] if BYBIT_API_KEY else 'None'}...")
