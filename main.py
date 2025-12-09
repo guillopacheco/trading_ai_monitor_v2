@@ -42,13 +42,13 @@ async def main():
     logger.info("📡 Iniciando servicios…")
 
     # Bot de comandos (modo embebido)
-    command_task = asyncio.create_task(start_command_bot())
+    command_task = asyncio.create_task(start_command_bot(app_layer))
 
     # Lector de señales desde Telegram VIP
-    reader_task = asyncio.create_task(start_telegram_reader())
+    reader_task = asyncio.create_task(start_telegram_reader(app_layer))
 
     # Monitor de reactivación automática
-    reactivation_task = asyncio.create_task(start_reactivation_monitor())
+    reactivation_task = asyncio.create_task(start_reactivation_monitor(app_layer))
 
     logger.info("✅ Todos los servicios iniciados.")
 
