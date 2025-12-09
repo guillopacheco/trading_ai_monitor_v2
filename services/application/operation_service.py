@@ -1,7 +1,9 @@
 import logging
 from database import save_operation_event
 from services.telegram_service.notifier import Notifier
-from services.bybit.bybit_private import (
+
+# ✅ FIX: Importar del módulo real
+from bybit_client import (
     get_open_positions,
     close_position,
     reverse_position,
