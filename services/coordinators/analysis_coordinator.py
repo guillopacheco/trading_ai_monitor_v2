@@ -19,10 +19,10 @@ class AnalysisCoordinator:
     async def analyze_request(self, symbol: str, direction: str, chat_id: int):
         try:
             result = await self.analysis_service.analyze(symbol, direction)
-            text = format_analysis_for_telegram(result)
+            text = self.analysis_service.format(result)  # Usar format(), no format_for_telegram
 
-            await self.notifier.safe_send(chat_id, text)
+            await self.notifier.send(text)  # Usar send() o send_message()
 
         except Exception as e:
             logger.error(f"❌ Error en análisis bajo demanda para {symbol}: {e}")
-            await self.notifier.safe_send(chat_id, f"❌ Error analizando {symbol}")
+            await self.notifier.send(f"❌ Error analizando {symbol}")
