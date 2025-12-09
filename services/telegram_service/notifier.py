@@ -27,8 +27,14 @@ class Notifier:
         self.chat_id = chat_id
 
     # ============================================================
-    # Métodos de envío
+    # MÉTODO PRINCIPAL - send_message (AGREGAR ESTE)
     # ============================================================
+    async def send_message(self, text: str):
+        """
+        Envía un mensaje básico (alias de send para compatibilidad).
+        """
+        await self.send(text)
+
     async def send(self, text: str):
         """
         Envía un mensaje básico.
