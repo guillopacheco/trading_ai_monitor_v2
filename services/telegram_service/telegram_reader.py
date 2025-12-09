@@ -1,46 +1,50 @@
-# services/telegram_service/telegram_reader.py
-
 import logging
 from telethon import TelegramClient, events
 
 from config import API_ID, API_HASH, TELEGRAM_SESSION, TELEGRAM_CHANNEL_ID
+
 from services.application.signal_service import SignalService
 
-logger = logging.getLogger("telegram_reader")
-
-signal_service = SignalService()
+telegram_reader_logger = logging.getLogger("telegram_reader")
 
 
 async def start_telegram_reader(app_layer):
     """
-    Inicia el lector de señales del canal VIP.
+    Lector de señales del canal VIP.
+    Corre dentro del loop principal (sin hilos).
     """
-    logger.info("📡 Lector de señales — inicializando cliente Telethon...")
+
+    signal_service = SignalService()
 
     client = TelegramClient(TELEGRAM_SESSION, API_ID, API_HASH)
 
+    await client.start()
+    telegram_reader_logger.info("📡 Lector de señales — cliente iniciado.")
+
+    # -------------------------------
+    #   Capturar mensajes entrantes
+    # -------------------------------
     @client.on(events.NewMessage(chats=[TELEGRAM_CHANNEL_ID]))
     async def handler(event):
-        """
-        Maneja mensajes nuevos del canal VIP.
-        """
-        text = event.message.message
-        logger.info(f"📩 Señal recibida: {text}")
+        text = event.raw_text.strip()
+        telegram_reader_logger.info(f"📨 Señal recibida del canal: {text}")
 
+        # Parseo simple de formato: "#BTC/USDT (Long)"
         try:
-            result = await signal_service.process_incoming_signal(text)
-            if result:
-                logger.info(f"📥 Señal procesada correctamente: {result}")
+            parts = text.split()
+            symbol = parts[0].replace("#", "").replace("/", "")
+            direction = "long" if "long" in text.lower() else "short"
+        except:
+            telegram_reader_logger.warning("⚠️ No fue posible parsear la señal.")
+            return
 
-                # Notificar a ApplicationLayer → para ejecutar análisis inicial si aplica
-                if hasattr(app_layer, "signal"):
-                    await app_layer.signal.handle_new_signal(result)
+        signal_service.process_incoming_signal(symbol, direction)
 
-        except Exception as e:
-            logger.exception(f"❌ Error procesando señal: {e}")
+        telegram_reader_logger.info(
+            f"💾 Señal procesada: {symbol} ({direction})"
+        )
 
-    await client.start()
-    logger.info("📡 Lector de señales activo y escuchando canal VIP.")
+    telegram_reader_logger.info("📡 Lector de señales activo y escuchando...")
 
-    # Ejecutar de manera no bloqueante
-    client.loop.run_in_executor(None, client.run_until_disconnected)
+    # Mantener conexión viva dentro del loop principal
+    await client.run_until_disconnected()

@@ -1,68 +1,66 @@
 import logging
-import database
-from services.application.analysis_service import AnalysisService
+from datetime import datetime
+
+from database import (
+    db_insert_signal,
+    db_get_pending_signals,
+    db_update_signal_status,
+)
+
+from services.application.analysis_service import analyze_symbol, format_analysis_for_telegram
 
 logger = logging.getLogger("signal_service")
 
 
 class SignalService:
     """
-    Servicio empresarial para el manejo de señales:
-    - guardar señal en DB
-    - obtener señal
-    - analizar señal
-    - formatear respuesta técnica
+    Servicio de gestión de señales:
+    - guardar en DB
+    - analizar
+    - obtener pendientes
+    - actualizar estado
     """
 
-    def __init__(self):
-        self.db = database
-        self.analysis = AnalysisService()
+    # -------------------------------
+    #       ENTRADA DE SEÑALES
+    # -------------------------------
+    def process_incoming_signal(self, symbol: str, direction: str):
+        """
+        Guarda la señal en la base de datos.
+        """
+        logger.info(f"📥 Guardando señal entrante: {symbol} ({direction})")
 
-    # ============================================================
-    # DB I/O
-    # ============================================================
+        db_insert_signal(
+            symbol=symbol,
+            direction=direction,
+            status="pending",
+            created_at=datetime.utcnow().isoformat(),
+        )
 
-    def save_signal(self, symbol: str, direction: str):
-        self.db.save_signal(symbol, direction)
+        logger.info("💾 Señal guardada en DB correctamente.")
 
-    def load_signal(self, symbol: str):
-        return self.db.get_signal(symbol)
+    # -------------------------------
+    #   OBTENER PENDIENTES
+    # -------------------------------
+    def get_pending_signals(self):
+        """
+        Devuelve señales pendientes desde la DB.
+        """
+        return db_get_pending_signals()
 
-    # ============================================================
-    # Análisis principal de señal
-    # ============================================================
+    # -------------------------------
+    #        ACTUALIZAR ESTADO
+    # -------------------------------
+    def update_status(self, signal_id: int, new_status: str):
+        db_update_signal_status(signal_id, new_status)
+        logger.info(f"🔄 Señal {signal_id} actualizada → {new_status}")
 
+    # -------------------------------
+    #   ANALIZAR UNA SEÑAL MANUAL
+    # -------------------------------
     async def analyze_signal(self, symbol: str, direction: str):
         """
-        Realiza análisis técnico completo usando AnalysisService.
+        Análisis técnico del símbolo.
         """
-        result = await self.analysis.analyze_symbol(symbol, direction)
-        return result
-
-    # ============================================================
-    # Mensajes formateados
-    # ============================================================
-
-    async def format_signal_analysis(self, symbol: str, direction: str) -> str:
-        res = await self.analyze_signal(symbol, direction)
-        d = res["decision"]
-        s = res["snapshot"]
-
-        msg = f"""
-📊 *Análisis de {symbol} ({direction})*
-
-🔹 Tendencia mayor: {s.get('major_trend_label')}
-🔹 Smart Bias: {s.get('smart_bias_code')}
-🔹 Confianza: {s.get('confidence',0)*100:.1f}% (Grado {s.get('grade')})
-🔹 Match técnico: {d.get('match_ratio',0):.1f}% | Score: {d.get('technical_score',0):.1f}
-
-🎯 *Smart Entry*
-🔹 Permitido: {'Sí' if d.get('allowed') else 'No'}
-🔹 Modo: {d.get('decision')}
-🔹 Motivo principal: {d.get('decision_reasons',['N/A'])[0]}
-
-📘 *Decisión final del motor:*
-➡️ {d.get('decision')} ({d.get('confidence',0)*100:.1f}% confianza)
-"""
-
-        return msg.strip()
+        result = await analyze_symbol(symbol, direction)
+        return format_analysis_for_telegram(result)
