@@ -1,127 +1,63 @@
 # services/telegram_service/command_bot.py
 
 import logging
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-)
-from telegram import Update
+from telegram.ext import Application, CommandHandler
+from config import TELEGRAM_BOT_TOKEN
 
 logger = logging.getLogger("command_bot")
 
 
-async def start_command_bot(app_layer):
-    """
-    Inicializa el bot de comandos SIN importar ApplicationLayer.
-    """
-    token = getattr(app_layer, "bot_token", None)
+# -------------------------------------------------------------
+# Comandos
+# -------------------------------------------------------------
 
-    if not token:
+async def cmd_start(update, context):
+    await update.message.reply_text("🤖 Bot activo. Usa /analizar SYMBOL long|short")
+
+
+async def cmd_analizar(update, context, app_layer):
+    try:
+        parts = update.message.text.split()
+        if len(parts) != 3:
+            return await update.message.reply_text("Formato: /analizar BTCUSDT long")
+
+        symbol = parts[1].upper()
+        direction = parts[2].lower()
+
+        await app_layer.analysis.analyze_request(symbol, direction, update.message.chat_id)
+
+    except Exception as e:
+        logger.error(f"Error en /analizar: {e}", exc_info=True)
+        await update.message.reply_text("❌ Error procesando análisis.")
+
+
+# -------------------------------------------------------------
+# Inicialización del bot
+# -------------------------------------------------------------
+
+async def start_command_bot(app_layer):
+    if not TELEGRAM_BOT_TOKEN:
         logger.error("❌ ApplicationLayer no tiene bot_token configurado.")
         return
 
     logger.info("🤖 Inicializando bot de comandos…")
 
-    app = (
-        ApplicationBuilder()
-        .token(token)
-        .build()
-    )
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Guardar referencia al ApplicationLayer
-    app.bot_data["app"] = app_layer
+    # Handlers
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("analizar",
+                   lambda u, c: cmd_analizar(u, c, app_layer)))
 
-    # Registrar comandos
-    app.add_handler(CommandHandler("analizar", cmd_analyze))
-    app.add_handler(CommandHandler("reactivar", cmd_reactivate))
-    app.add_handler(CommandHandler("cerrar", cmd_close))
-    app.add_handler(CommandHandler("revertir", cmd_reverse))
-    app.add_handler(CommandHandler("posiciones", cmd_positions))
-    app.add_handler(CommandHandler("estado", cmd_status))
+    # ---------------------------------------------------------
+    # MODO ASÍNCRONO CORRECTO (no usar run_polling())
+    # ---------------------------------------------------------
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
 
     logger.info("🤖 Bot listo. Iniciando polling…")
 
-    app.run_polling(drop_pending_updates=True)
-
-
-# ============================================================
-# COMANDOS
-# ============================================================
-
-async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    app = context.application.bot_data["app"]
-
-    try:
-        if len(context.args) < 2:
-            return await update.message.reply_text("Uso: /analizar BTCUSDT long")
-
-        symbol = context.args[0].upper()
-        direction = context.args[1].lower()
-
-        result = await app.analyze(symbol, direction)
-        await update.message.reply_text(result)
-
-    except Exception as e:
-        logger.exception(e)
-        await update.message.reply_text(f"❌ Error: {e}")
-
-
-async def cmd_reactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    app = context.application.bot_data["app"]
-
-    try:
-        symbol = context.args[0].upper()
-        result = await app.manual_reactivate(symbol)
-        await update.message.reply_text(result)
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
-
-
-async def cmd_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    app = context.application.bot_data["app"]
-
-    try:
-        symbol = context.args[0].upper()
-        await app.manual_close(symbol)
-        await update.message.reply_text(f"🟪 Cierre enviado para {symbol}")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
-
-
-async def cmd_reverse(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    app = context.application.bot_data["app"]
-
-    try:
-        symbol = context.args[0].upper()
-        side = context.args[1].lower()
-
-        await app.manual_reverse(symbol, side)
-        await update.message.reply_text(f"🔄 Reversión enviada para {symbol}")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
-
-
-async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    app = context.application.bot_data["app"]
-
-    try:
-        await app.monitor_positions()
-        await update.message.reply_text("📊 Revisando posiciones...")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
-
-
-async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🟢 Bot funcionando\n"
-        "• Lector de señales\n"
-        "• Bot de comandos\n"
-        "• Motor técnico\n"
-        "• Monitoreo de posiciones\n"
-        "• Reactivación automática"
-    )
+    # No bloquear loop: devolver app para apagar después si se desea
+    return app
