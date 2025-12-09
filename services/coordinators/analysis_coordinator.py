@@ -1,43 +1,28 @@
-# services/coordinators/analysis_coordinator.py
-
 import logging
-from services.application.analysis_service import AnalysisService
+from services.application.analysis_service import analyze_symbol, format_analysis_for_telegram
 
 logger = logging.getLogger("analysis_coordinator")
 
 
 class AnalysisCoordinator:
     """
-    Coordina el análisis técnico completo:
-    - ejecución del motor técnico
-    - formateo de mensaje
-    - opcional: retorno del análisis crudo
+    Responsable de coordinar análisis bajo demanda de símbolos.
     """
 
-    def __init__(self):
-        self.analysis = AnalysisService()
+    def __init__(self, analysis_service, notifier):
+        self.analysis_service = analysis_service
+        self.notifier = notifier
 
-    # ============================================================
-    # 1. Análisis completo (texto para Telegram)
-    # ============================================================
-    async def analyze(self, symbol: str, direction: str):
-        """
-        Ejecuta análisis técnico y devuelve texto listo para Telegram.
-        """
-        logger.info(f"🧠 AnalysisCoordinator → Analizando {symbol} ({direction})...")
+    # -----------------------------------------------------------
+    # Análisis bajo demanda desde comandos
+    # -----------------------------------------------------------
+    async def analyze_request(self, symbol: str, direction: str, chat_id: int):
+        try:
+            result = await self.analysis_service.analyze(symbol, direction)
+            text = format_analysis_for_telegram(result)
 
-        result = await self.analysis.analyze_symbol(symbol, direction)
-        formatted = await self.analysis.format_analysis_for_telegram(result)
+            await self.notifier.safe_send(chat_id, text)
 
-        return formatted
-
-    # ============================================================
-    # 2. Análisis crudo (útil para reactivaciones y monitoreo)
-    # ============================================================
-    async def analyze_raw(self, symbol: str, direction: str):
-        """
-        Devuelve el JSON completo generado por el motor técnico.
-        """
-        logger.info(f"🧠 AnalysisCoordinator → Análisis RAW {symbol} ({direction})...")
-
-        return await self.analysis.analyze_symbol(symbol, direction)
+        except Exception as e:
+            logger.error(f"❌ Error en análisis bajo demanda para {symbol}: {e}")
+            await self.notifier.safe_send(chat_id, f"❌ Error analizando {symbol}")
