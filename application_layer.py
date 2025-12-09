@@ -1,6 +1,5 @@
 import logging
 
-from database import Database
 from config import TELEGRAM_BOT_TOKEN
 
 # Notificaciones
@@ -24,11 +23,6 @@ class ApplicationLayer:
 
     def __init__(self):
         logger.info("⚙️ Inicializando ApplicationLayer...")
-
-        # ======================================================
-        # 1) Inicializar Base de Datos
-        # ======================================================
-        Database().init()
 
         # ======================================================
         # 2) Crear notificador global
