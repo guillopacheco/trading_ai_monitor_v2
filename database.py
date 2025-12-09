@@ -1,244 +1,236 @@
-"""
-database.py — FASE 2 (2025)
-Base de datos oficial del Trading AI Monitor.
-Compatible con:
- - signal_service
- - signal_reactivation_sync
- - command_bot
- - application_layer
-"""
-
+# ================================================================
+# database.py — VERSIÓN FINALIZADA 2025-12
+# Módulo central de persistencia para Trading AI Monitor v2
+# ================================================================
 import sqlite3
+import json
 import logging
 from datetime import datetime
 
 logger = logging.getLogger("database")
 
-DB_PATH = "trading_ai_monitor.db"
+DB_PATH = "trading_ai.db"
 
 
-# ============================================================
-# 🔧 Conexión segura
-# ============================================================
+# ================================================================
+# Conexión
+# ================================================================
+def _get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def _conn():
-    """Conexión segura con soporte multihilo."""
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
-
-# ============================================================
-# 🏗️ Inicializar DB
-# ============================================================
-
+# ================================================================
+# Inicialización de tablas
+# ================================================================
 def init_db():
-    """Crea tablas necesarias."""
+    conn = _get_conn()
+    cur = conn.cursor()
 
-    try:
-        conn = _conn()
-        cur = conn.cursor()
+    # Tabla de señales recibidas
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            raw_text TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
-        # Tabla de señales
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS signals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                direction TEXT NOT NULL,
-                entry_price REAL,
-                leverage INTEGER DEFAULT 20,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                reactivated_at TEXT,
-                status TEXT DEFAULT 'pending'
-            );
-        """)
+    # Logs técnicos asociados a una señal
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS analysis_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER NOT NULL,
+            context TEXT NOT NULL,
+            analysis_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (signal_id) REFERENCES signals(id)
+        );
+    """)
 
-        # Historial de análisis
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS signal_analysis_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                signal_id INTEGER,
-                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-                match_ratio REAL,
-                recommendation TEXT,
-                details TEXT
-            );
-        """)
+    # Eventos de operación
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS operation_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            details_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
-        conn.commit()
-        conn.close()
+    # Posiciones abiertas localmente (si se requiere)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS open_positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            entry_price REAL,
+            qty REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
-        logger.info("✅ Base de datos inicializada correctamente.")
-
-    except Exception as e:
-        logger.error(f"❌ Error inicializando DB: {e}")
-
-
-# ============================================================
-# 💾 Guardar señal nueva
-# ============================================================
-
-def db_insert_signal(symbol: str, direction: str, entry_price: float | None = None):
-    """Guarda una señal recibida del canal VIP."""
-
-    try:
-        conn = _conn()
-        cur = conn.cursor()
-
-        cur.execute("""
-            INSERT INTO signals (symbol, direction, entry_price)
-            VALUES (?, ?, ?)
-        """, (symbol, direction, entry_price))
-
-        conn.commit()
-        conn.close()
-
-    except Exception as e:
-        logger.error(f"❌ Error guardando señal nueva: {e}")
+    conn.commit()
+    conn.close()
+    logger.info("✅ Base de datos inicializada correctamente.")
 
 
-# ============================================================
-# ♻️ Obtener señales pendientes
-# ============================================================
+# ================================================================
+# -------------------- SECCIÓN: SEÑALES --------------------------
+# ================================================================
 
-def db_get_pending_signals():
-    """Devuelve una lista de señales con estado = 'pending'."""
+def save_signal(payload: dict) -> int:
+    """
+    Inserta una nueva señal proveniente del canal VIP.
+    """
+    conn = _get_conn()
+    cur = conn.cursor()
 
-    try:
-        conn = _conn()
-        cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO signals (symbol, direction, raw_text, status)
+        VALUES (?, ?, ?, 'pending')
+    """, (
+        payload.get("symbol"),
+        payload.get("direction"),
+        payload.get("raw_text")
+    ))
 
-        cur.execute("""
-            SELECT id, symbol, direction, entry_price, status
-            FROM signals
-            WHERE status = 'pending'
-        """)
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
 
-        rows = cur.fetchall()
-        conn.close()
-
-        return [
-            {
-                "id": r[0],
-                "symbol": r[1],
-                "direction": r[2],
-                "entry_price": r[3],
-                "status": r[4],
-            }
-            for r in rows
-        ]
-
-    except Exception as e:
-        logger.error(f"❌ Error leyendo señales pendientes: {e}")
-        return []
+    return new_id
 
 
-# ============================================================
-# 🔄 Actualizar estado de señal
-# ============================================================
+def get_pending_signals_for_reactivation() -> list:
+    """
+    Devuelve todas las señales cuyo estado = 'pending'.
+    """
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT *
+        FROM signals
+        WHERE status = 'pending'
+        ORDER BY id ASC
+    """)
 
-def db_update_signal_status(symbol: str, status: str):
-    """Actualiza estado: pending | reactivated."""
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
 
-    try:
-        conn = _conn()
-        cur = conn.cursor()
-
-        cur.execute("""
-            UPDATE signals
-            SET status = ?, reactivated_at = ?
-            WHERE symbol = ?
-        """, (status, datetime.utcnow().isoformat(), symbol))
-
-        conn.commit()
-        conn.close()
-
-    except Exception as e:
-        logger.error(f"❌ Error actualizando estado de señal: {e}")
+    return rows
 
 
-# ============================================================
-# 📝 Guardar log detallado
-# ============================================================
-
-def db_save_analysis_log(signal_id: int, match_ratio: float, recommendation: str, details: str = ""):
-    """Guarda un análisis técnico detallado."""
-
-    try:
-        conn = _conn()
-        cur = conn.cursor()
-
-        cur.execute("""
-            INSERT INTO signal_analysis_log (signal_id, match_ratio, recommendation, details)
-            VALUES (?, ?, ?, ?)
-        """, (signal_id, match_ratio, recommendation, details))
-
-        conn.commit()
-        conn.close()
-
-    except Exception as e:
-        logger.error(f"❌ Error guardando análisis detallado: {e}")
+def mark_signal_reactivated(signal_id: int):
+    """
+    Cambia estado → 'reactivated'
+    """
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE signals
+        SET status = 'reactivated'
+        WHERE id = ?
+    """, (signal_id,))
+    conn.commit()
+    conn.close()
 
 
-# ============================================================
-# 📜 Obtener historial (/historial)
-# ============================================================
+# ================================================================
+# --------- SECCIÓN: LOGS DE ANÁLISIS TÉCNICO --------------------
+# ================================================================
 
-def db_get_signals(limit: int = 50):
-    """Devuelve las señales más recientes."""
+def save_analysis_log(signal_id: int, context: str, analysis_json: dict):
+    """
+    Guarda el dict completo del análisis técnico (JSON serializado).
+    """
+    conn = _get_conn()
+    cur = conn.cursor()
 
-    try:
-        conn = _conn()
-        cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO analysis_logs (signal_id, context, analysis_json)
+        VALUES (?, ?, ?)
+    """, (
+        signal_id,
+        context,
+        json.dumps(analysis_json)
+    ))
 
-        cur.execute("""
-            SELECT id, symbol, direction, entry_price,
-                   leverage, status, created_at, reactivated_at
-            FROM signals
-            ORDER BY id DESC
-            LIMIT ?
-        """, (limit,))
-
-        rows = cur.fetchall()
-        conn.close()
-
-        return [
-            {
-                "id": r[0],
-                "symbol": r[1],
-                "direction": r[2],
-                "entry_price": r[3],
-                "leverage": r[4],
-                "status": r[5],
-                "created_at": r[6],
-                "reactivated_at": r[7],
-            }
-            for r in rows
-        ]
-
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo historial: {e}")
-        return []
+    conn.commit()
+    conn.close()
 
 
-# ============================================================
-# 🧹 Limpieza automática
-# ============================================================
+# ================================================================
+# ------- SECCIÓN: OPERACIONES (EVENTOS Y POSICIONES) ------------
+# ================================================================
 
-def db_clear_old(days: int = 30):
-    """Elimina señales antiguas."""
+def save_operation_event(symbol: str, side: str, event_type: str, details: dict):
+    """
+    Registra un evento relacionado con una operación.
+    """
+    conn = _get_conn()
+    cur = conn.cursor()
 
-    try:
-        conn = _conn()
-        cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO operation_events (symbol, side, event_type, details_json)
+        VALUES (?, ?, ?, ?)
+    """, (
+        symbol.upper(),
+        side.lower(),
+        event_type,
+        json.dumps(details)
+    ))
 
-        cur.execute("""
-            DELETE FROM signals
-            WHERE julianday('now') - julianday(created_at) > ?
-        """, (days,))
+    conn.commit()
+    conn.close()
 
-        conn.commit()
-        conn.close()
 
-        logger.info(f"🧹 Limpieza realizada: señales > {days} días eliminadas.")
+def get_open_positions_by_symbol(symbol: str) -> list:
+    """
+    Devuelve las posiciones abiertas localmente del símbolo.
+    """
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT *
+        FROM open_positions
+        WHERE symbol = ?
+    """, (symbol.upper(),))
 
-    except Exception as e:
-        logger.error(f"❌ Error en limpieza automática: {e}")
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+
+    return rows
+
+
+# FUTURO: podrías agregar update_position, remove_position, etc.
+
+
+# ================================================================
+# Debug helper (opcional)
+# ================================================================
+def debug_dump():
+    """
+    Imprime un resumen de tablas.
+    """
+    conn = _get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM signals")
+    signals = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM analysis_logs")
+    logs = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM operation_events")
+    ops = cur.fetchone()[0]
+
+    logger.info(f"📊 DEBUG DB → Signals={signals}, Logs={logs}, Ops={ops}")
+
+    conn.close()
