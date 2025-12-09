@@ -1,6 +1,8 @@
 import logging
 
-from database import Database
+# ahora importamos SOLO la función init_db
+from database import init_db
+
 from services.telegram_service.notifier import Notifier
 
 from services.application.signal_service import SignalService
@@ -22,21 +24,21 @@ class ApplicationLayer:
         logger.info("⚙️ Inicializando ApplicationLayer...")
 
         # =====================================================
-        # 1. DATABASE
+        # 1. INICIALIZAR BASE DE DATOS (sin clase)
         # =====================================================
-        self.db = Database()
+        init_db()
 
         # =====================================================
-        # 2. NOTIFICADOR
+        # 2. NOTIFICADOR GLOBAL
         # =====================================================
         self.notifier = Notifier()
 
         # =====================================================
         # 3. APPLICATION SERVICES
         # =====================================================
-        self.signal_service = SignalService(self.db)
+        self.signal_service = SignalService()
         self.analysis_service = AnalysisService()
-        self.operation_service = OperationService(self.db, self.notifier)
+        self.operation_service = OperationService(self.notifier)
 
         # =====================================================
         # 4. COORDINADORES
