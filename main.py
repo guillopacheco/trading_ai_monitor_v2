@@ -14,7 +14,7 @@ import asyncio
 import logging
 
 from logger_config import configure_logging
-from database import init_db
+from database import Database
 
 from application_layer import ApplicationLayer
 from services.telegram_service.command_bot import start_command_bot
@@ -33,7 +33,8 @@ async def main():
     logger.info("🚀 Trading AI Monitor iniciando...")
 
     # Inicializar base de datos global
-    Database().init()
+    db = Database()
+    db.init()
     logger.info("✅ Base de datos inicializada correctamente.")
 
     # Inicializar ApplicationLayer
