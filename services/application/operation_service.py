@@ -1,79 +1,67 @@
 import logging
-from database import save_operation_event
-from services.telegram_service.notifier import Notifier
+from typing import Optional, Dict
 
-# ✅ FIX: Importar del módulo real
-from bybit_client import (
+from services.bybit_service.bybit_client import (
     get_open_positions,
     close_position,
     reverse_position,
 )
+
+from database import save_operation
+from services.telegram_service.notifier import Notifier
 
 logger = logging.getLogger("operation_service")
 
 
 class OperationService:
     """
-    Maneja operaciones abiertas, cierres, reversión y registro de eventos.
+    Gestiona operaciones abiertas, cierres, reversión y registro.
     """
 
     def __init__(self, notifier: Notifier):
         self.notifier = notifier
 
-    # ============================================================
-    # 🔍 OBTENER OPERACIONES ABIERTAS
-    # ============================================================
-    async def get_positions(self):
-        positions = await get_open_positions()
-        return positions or []
+    # -----------------------------------------------------------
+    # Obtener posiciones abiertas
+    # -----------------------------------------------------------
+    async def get_positions(self, symbol: Optional[str] = None) -> list:
+        try:
+            positions = await get_open_positions(symbol)
+            return positions or []
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo posiciones: {e}")
+            return []
 
-    # ============================================================
-    # ❌ CERRAR OPERACIÓN
-    # ============================================================
-    async def close(self, symbol: str, reason: str = "manual"):
-        ok = await close_position(symbol)
+    # -----------------------------------------------------------
+    # Cerrar posición
+    # -----------------------------------------------------------
+    async def close(self, symbol: str) -> bool:
+        try:
+            ok = await close_position(symbol)
 
-        if ok:
-            save_operation_event(symbol, "close", reason)
-            await self.notifier.send(f"🛑 Operación cerrada en {symbol} — Motivo: {reason}")
-        else:
-            await self.notifier.send(f"⚠️ No se pudo cerrar {symbol}")
+            if ok:
+                save_operation(symbol, "close", "closed_by_user")
+                await self.notifier.send_operation_closed(symbol)
 
-        return ok
+            return ok
 
-    # ============================================================
-    # 🔁 REVERTIR OPERACIÓN
-    # ============================================================
-    async def reverse(self, symbol: str, reason: str = "manual"):
-        ok = await reverse_position(symbol)
+        except Exception as e:
+            logger.error(f"❌ Error al cerrar posición {symbol}: {e}")
+            return False
 
-        if ok:
-            save_operation_event(symbol, "reverse", reason)
-            await self.notifier.send(
-                f"🔄 Se revirtió posición en {symbol} — ahora va en la dirección opuesta."
-            )
-        else:
-            await self.notifier.send(f"⚠️ No se pudo revertir {symbol}")
+    # -----------------------------------------------------------
+    # Revertir posición
+    # -----------------------------------------------------------
+    async def reverse(self, symbol: str) -> bool:
+        try:
+            ok = await reverse_position(symbol)
 
-        return ok
+            if ok:
+                save_operation(symbol, "reverse", "reversed")
+                await self.notifier.send_operation_reversed(symbol)
 
-    # ============================================================
-    # 📉 EVALUAR PÉRDIDAS CRÍTICAS
-    # ============================================================
-    async def evaluate_losses(self, symbol: str, loss_pct: float):
-        """
-        Lógica base para decisiones por pérdidas (-30%, -50%, -70%, etc.)
-        """
+            return ok
 
-        if loss_pct <= -70:
-            await self.reverse(symbol, "loss_70")
-            return "reverse"
-
-        if loss_pct <= -50:
-            await self.close(symbol, "loss_50")
-            return "close"
-
-        if loss_pct <= -30:
-            return "warning"
-
-        return "hold"
+        except Exception as e:
+            logger.error(f"❌ Error al revertir posición {symbol}: {e}")
+            return False
