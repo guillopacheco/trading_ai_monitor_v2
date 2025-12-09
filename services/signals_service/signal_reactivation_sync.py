@@ -1,117 +1,121 @@
-#================================================
-#FILE: services/signals_service/signal_reactivation_sync.py
-#================================================
+# ================================================================
+# signal_reactivation_sync.py — VERSIÓN FINAL GPT 2025-12
+# Reactivación estable, sin loops, sin romper arquitectura GPT.
+# ================================================================
+
 import asyncio
 import logging
 
 logger = logging.getLogger("signal_reactivation_sync")
 
-def _normalize_direction_from_row(row: dict) -> str:
-    """
-    Normaliza la dirección de una señal usando los campos disponibles.
-    Prioridad:
-      1) direction
-      2) side
-      3) direction_hint
-      4) Si todo falla → 'long'
-    """
-    raw = (
-        (row.get("direction") or "")
-        or (row.get("side") or "")
-        or (row.get("direction_hint") or "")
-    ).lower()
+INTERVAL_SECONDS = 60  # cada 1 minuto (ajustable)
 
-    if "short" in raw:
-        return "short"
-    if "long" in raw:
-        return "long"
-    # fallback seguro
-    return "long"
 
-# ============================================================
-# 🔄 TAREA PRINCIPAL DE REACTIVACIÓN AUTOMÁTICA
-# ============================================================
-async def start_reactivation_monitor(app_layer, interval_seconds: int = 60):
+# ================================================================
+#  EVALUAR UNA SOLA SEÑAL
+# ================================================================
+async def _evaluate_single_signal(app_layer, signal: dict):
     """
-    Inicia un ciclo infinito que revisa señales pendientes cada X segundos.
-    Usa exclusivamente:
-        - app_layer.signal_service
-        - app_layer.signal (SignalCoordinator)  # ← ¡CORRECCIÓN!
+    Evalúa una señal pendiente y decide si reactivarla o no.
+    Usa solamente:
+      • app_layer.signal_service.get_pending_signals()
+      • app_layer.analysis_service.analyze()
+      • app_layer.signal_service.mark_signal_reactivated()
+      • app_layer.signal_service.save_analysis_log()
+      • app_layer.notifier.send_message()
     """
-    logger.info(f"♻️   Monitor de reactivación automática iniciado (intervalo={interval_seconds}s).")
+
+    try:
+        signal_id = signal.get("id")
+        symbol = signal.get("symbol")
+        direction = signal.get("direction")
+
+        logger.info(
+            f"🔎 Evaluando reactivación | ID={signal_id} | {symbol} {direction}"
+        )
+
+        # -----------------------------------------------------------
+        # 1) Ejecutar análisis técnico REAL
+        # -----------------------------------------------------------
+        analysis = await app_layer.analysis_service.analyze(symbol, direction)
+
+        # Guardar log en DB
+        app_layer.signal_service.save_analysis_log(
+            signal_id=signal_id,
+            context="reactivation",
+            analysis_json=analysis
+        )
+
+        if not analysis or analysis.get("error"):
+            await app_layer.notifier.send_message(
+                f"⚠️ No se pudo analizar {symbol} para reactivación (ID {signal_id})."
+            )
+            return
+
+        # -----------------------------------------------------------
+        # 2) Decisión de reactivación basada en motor técnico
+        # -----------------------------------------------------------
+        decision = analysis.get("decision", "unknown")
+        allowed = False
+
+        # Motores GPT/DeepSeek usan "allowed" en distintos lugares
+        # Intentar detectar cualquiera
+        entry_block = analysis.get("entry", {})
+        decision_block = analysis.get("decision", {})
+
+        if isinstance(decision_block, dict):
+            allowed = decision_block.get("allowed", False)
+
+        if not allowed and isinstance(entry_block, dict):
+            allowed = entry_block.get("allowed", False)
+
+        # -----------------------------------------------------------
+        # 3) Si está permitido → reactivar
+        # -----------------------------------------------------------
+        if allowed:
+            app_layer.signal_service.mark_signal_reactivated(signal_id)
+
+            await app_layer.notifier.send_message(
+                f"✅ Señal REACTIVADA: {symbol} ({direction})\n"
+                f"ID: {signal_id} | decisión: {decision}"
+            )
+
+            logger.info(f"✔ Señal {signal_id} reactivada correctamente.")
+        else:
+            await app_layer.notifier.send_message(
+                f"⏳ Señal pendiente (no viable aún): {symbol} {direction}\n"
+                f"ID={signal_id} | decisión={decision}"
+            )
+            logger.info(f"↷ Señal {signal_id} sigue pendiente: decisión={decision}")
+
+    except Exception as e:
+        logger.error(f"❌ Error evaluando señal ID={signal.get('id')}: {e}", exc_info=True)
+        await app_layer.notifier.send_message(
+            f"❌ Error interno en reactivación de señal ID={signal.get('id')}"
+        )
+
+
+# ================================================================
+#  LOOP PRINCIPAL
+# ================================================================
+async def start_reactivation_monitor(app_layer):
+    """
+    Loop estable: cada INTERVAL_SECONDS revisa señales 'pending'.
+    No usa coordinadores. No rompe arquitectura.
+    """
+    logger.info("🔁 Monitor de reactivación iniciado (GPT versión final).")
 
     while True:
         try:
-            await _process_pending_signals(app_layer)
+            pending = app_layer.signal_service.get_pending_signals()
+
+            if pending:
+                logger.info(f"📌 {len(pending)} señal(es) pendiente(s) para evaluar.")
+
+            for signal in pending:
+                await _evaluate_single_signal(app_layer, signal)
+
         except Exception as e:
-            logger.error(f"❌ Error en ciclo de reactivación: {e}", exc_info=True)
+            logger.error(f"❌ Error en monitor de reactivación: {e}", exc_info=True)
 
-        await asyncio.sleep(interval_seconds)
-
-
-# ============================================================
-# 🔎 PROCESA SEÑALES PENDIENTES
-# ============================================================
-async def _process_pending_signals(app_layer):
-    signal_service = app_layer.signal_service
-    signal_coord = app_layer.signal  # ← SignalCoordinator (TIENE auto_reactivate)
-
-    # 1) Obtener señales pendientes desde SignalService
-    pending = signal_service.get_pending_signals()
-
-    logger.info(f"🔎 {len(pending)} señal(es) pendiente(s) para reactivación.")
-
-    if not pending:
-        return
-
-    # 2) Usar el SignalCoordinator para procesar reactivaciones
-    # ¡El SignalCoordinator YA TIENE la lógica de auto_reactivate!
-    await signal_coord.auto_reactivate()
-
-
-async def _evaluate_single_signal(app_layer, sig: dict) -> None:
-    """
-    Evalúa una sola señal pendiente de reactivación usando el motor técnico
-    y marca en base de datos si debe reactivarse o no.
-    """
-    from services.coordinators.signal_coordinator import SignalCoordinator
-    from database import mark_signal_reactivated
-
-    signal_coord: SignalCoordinator = app_layer.signal_coordinator
-
-    symbol = sig.get("symbol") or sig.get("pair") or "UNKNOWN"
-    direction = _normalize_direction_from_row(sig)
-
-    logger.info(f"♻️ Evaluando reactivación de {symbol} ({direction})")
-
-    # pedimos al coordinador que haga el análisis de reactivación
-    result = await signal_coord.evaluate_for_reactivation(sig, direction_hint=direction)
-
-    decision_obj = getattr(result, "decision", {}) or {}
-    decision = decision_obj.get("decision", "")
-    primary_reason = decision_obj.get("primary_reason") or decision_obj.get("reason") or "N/A"
-
-    if decision == "reactivate":
-        # ✅ marcar en BD
-        mark_signal_reactivated(sig["id"])
-
-        # ✅ notificar por Telegram (si hay notifier configurado)
-        notifier = getattr(app_layer, "notifier", None)
-        if notifier is not None:
-            try:
-                await notifier.safe_send(
-                    "♻️ Señal reactivada automáticamente:\n"
-                    f"• Símbolo: {symbol}\n"
-                    f"• Dirección: {direction}\n"
-                    f"• Motivo: {primary_reason}"
-                )
-            except Exception:
-                logger.exception(f"⚠️ No se pudo enviar notificación de reactivación para {symbol}")
-
-        logger.info(f"✅ Señal {symbol} marcada como reactivada.")
-    else:
-        # No se reactiva, sólo se registra en logs
-        logger.info(
-            f"⏸ Señal {symbol} NO reactivada "
-            f"(decisión={decision}, motivo={primary_reason})"
-        )
+        await asyncio.sleep(INTERVAL_SECONDS)
