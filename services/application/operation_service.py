@@ -7,7 +7,7 @@ from services.bybit_service.bybit_client import (
     reverse_position,
 )
 
-from database import save_position_action
+from database import save_operation_event
 from services.telegram_service.notifier import Notifier
 
 logger = logging.getLogger("operation_service")
@@ -40,7 +40,7 @@ class OperationService:
             ok = await close_position(symbol)
 
             if ok:
-                save_position_action(symbol, "close", "closed_by_user")
+                save_operation_event(symbol, "close", "closed_by_user")
                 await self.notifier.send_operation_closed(symbol)
 
             return ok
@@ -57,7 +57,7 @@ class OperationService:
             ok = await reverse_position(symbol)
 
             if ok:
-                save_position_action(symbol, "reverse", "reversed")
+                save_operation_event(symbol, "reverse", "reversed")
                 await self.notifier.send_operation_reversed(symbol)
 
             return ok
