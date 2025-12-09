@@ -6,12 +6,23 @@ import requests
 import logging
 from urllib.parse import urlencode
 
+# AÑADIR CARGA EXPLÍCITA DE .env
+from dotenv import load_dotenv
+load_dotenv()  # <-- ¡ESTO FALTA!
+
 logger = logging.getLogger("bybit_client")
 
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 BASE_URL = "https://api.bybit.com"
 
+# LOG para debug
+logger.debug(f"Bybit API Key cargada: {BYBIT_API_KEY[:8] if BYBIT_API_KEY else 'None'}...")
+logger.debug(f"Bybit API Secret cargada: {BYBIT_API_SECRET[:8] if BYBIT_API_SECRET else 'None'}...")
+
+if not BYBIT_API_KEY or not BYBIT_API_SECRET:
+    logger.error("❌❌❌ BYBIT_API_KEY o BYBIT_API_SECRET no están configuradas!")
+    logger.error("   Verifica tu archivo .env en: " + os.path.abspath(".env"))
 # ======================================================
 # 🔐 AUTH – GENERADOR DE FIRMA
 # ======================================================

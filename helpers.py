@@ -10,7 +10,6 @@ Incluye:
 - Normalización segura de leverage
 """
 import re
-from services.bybit_service.bybit_client import get_ohlcv_data
 import logging
 
 logger = logging.getLogger("helpers")
@@ -39,7 +38,7 @@ logger = logging.getLogger("helpers")
 
 
 # ============================================================
-# 🔤 Normalización básica MEJORADA
+# 🔤 Normalización básica MEJORADA Y SIMPLIFICADA
 # ============================================================
 
 def normalize_symbol(raw: str) -> str:
@@ -47,24 +46,33 @@ def normalize_symbol(raw: str) -> str:
     Normaliza símbolos del canal VIP que vienen como:
       #SYN/USDT → SYNUSDT
       #PIPPIN/USDT → PIPPINUSDT
-      🔥 → EPIC (ejemplo, no usar emojis)
+      🔥 → EPIC (pero mejor rechazar emojis)
     """
-    # 1) Remover emojis, hashtags, espacios
-    clean = raw.replace("#", "").replace("🔥", "").replace(" ", "").strip()
+    if not raw or not isinstance(raw, str):
+        return "UNKNOWN"
     
-    # 2) Separar por / si existe
-    if "/" in clean:
-        parts = clean.split("/")
-        if len(parts) >= 2:
-            # Tomar la parte antes de / y añadir USDT
-            base = parts[0].upper()
-            return f"{base}USDT"
+    # 1) Remover TODOS los caracteres no alfanuméricos excepto /
+    # Esto quita: #, 🔥, emojis, etc.
+    clean = re.sub(r'[^a-zA-Z0-9/]', '', raw)
     
-    # 3) Si ya termina en USDT, dejarlo tal cual
+    # 2) Si tiene /, tomar parte antes del /
+    if '/' in clean:
+        parts = clean.split('/')
+        base = parts[0].strip().upper()
+        # Si base está vacío después de limpiar, usar un fallback
+        if not base:
+            return "UNKNOWNUSDT"
+        return f"{base}USDT"
+    
+    # 3) Si ya termina en USDT, dejarlo
     if clean.upper().endswith("USDT"):
         return clean.upper()
     
-    # 4) Si no tiene USDT, añadirlo
+    # 4) Si es muy corto o parece inválido, rechazar
+    if len(clean) < 2:
+        return "UNKNOWNUSDT"
+    
+    # 5) Añadir USDT
     return f"{clean.upper()}USDT"
 
 
@@ -72,14 +80,11 @@ def normalize_direction(d: str | None) -> str | None:
     if not d:
         return None
     d = d.strip().lower()
-    if d in ["long", "buy", "compra", "📈"]:
+    if d in ["long", "buy", "compra", "📈", "long📈"]:
         return "long"
-    if d in ["short", "sell", "venta", "📉"]:
+    if d in ["short", "sell", "venta", "📉", "short📉"]:
         return "short"
     return None
-
-
-# Resto del archivo igual...
 
 
 # ============================================================
