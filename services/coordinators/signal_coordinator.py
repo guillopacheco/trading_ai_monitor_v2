@@ -95,7 +95,7 @@ class SignalCoordinator:
         logger.info(f"🔎 Reactivación → {symbol} ({direction})")
 
         # Ejecutar análisis técnico
-        analysis = await self.analysis_service.run(symbol, direction, context="reactivation")
+        analysis = await self.analysis_service.analyze(symbol, direction)
 
         # Registrar análisis
         self.signal_service.save_analysis_log(signal_id, analysis, context="reactivation")

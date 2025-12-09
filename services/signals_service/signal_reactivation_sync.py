@@ -1,3 +1,6 @@
+#================================================
+#FILE: services/signals_service/signal_reactivation_sync.py
+#================================================
 import asyncio
 import logging
 
@@ -5,14 +8,16 @@ logger = logging.getLogger("signal_reactivation_sync")
 
 
 # ============================================================
-# 🔄 Monitor Automático de Reactivación de Señales
+# 🔄 TAREA PRINCIPAL DE REACTIVACIÓN AUTOMÁTICA
 # ============================================================
-
-async def start_reactivation_monitor(app_layer, interval_sec: int = 60):
+async def start_reactivation_monitor(app_layer, interval_seconds: int = 60):
     """
-    Ciclo automático que revisa señales pendientes y evalúa si deben reactivarse.
+    Inicia un ciclo infinito que revisa señales pendientes cada X segundos.
+    Usa exclusivamente:
+        - app_layer.signal_service
+        - app_layer.signal (SignalCoordinator)  # ← ¡CORRECCIÓN!
     """
-    logger.info(f"♻️   Monitor de reactivación automática iniciado (intervalo={interval_sec}s).")
+    logger.info(f"♻️   Monitor de reactivación automática iniciado (intervalo={interval_seconds}s).")
 
     while True:
         try:
@@ -20,83 +25,30 @@ async def start_reactivation_monitor(app_layer, interval_sec: int = 60):
         except Exception as e:
             logger.error(f"❌ Error en ciclo de reactivación: {e}", exc_info=True)
 
-        await asyncio.sleep(interval_sec)
+        await asyncio.sleep(interval_seconds)
 
 
 # ============================================================
-# 🔍 Revisión de señales pendientes
+# 🔎 PROCESA SEÑALES PENDIENTES
 # ============================================================
-
 async def _process_pending_signals(app_layer):
     signal_service = app_layer.signal_service
+    signal_coord = app_layer.signal  # ← SignalCoordinator (TIENE auto_reactivate)
 
+    # 1) Obtener señales pendientes desde SignalService
     pending = signal_service.get_pending_signals()
-    total = len(pending)
 
-    logger.info(f"🔎 {total} señal(es) pendiente(s) para reactivación.")
+    logger.info(f"🔎 {len(pending)} señal(es) pendiente(s) para reactivación.")
 
-    if total == 0:
+    if not pending:
         return
 
-    for sig in pending:
-        try:
-            await _evaluate_single_signal(app_layer, sig)
-        except Exception as e:
-            symbol = sig.get("symbol", "N/A")
-            logger.error(f"❌ Error evaluando reactivación de {symbol}: {e}", exc_info=True)
+    # 2) Usar el SignalCoordinator para procesar reactivaciones
+    # ¡El SignalCoordinator YA TIENE la lógica de auto_reactivate!
+    await signal_coord.auto_reactivate()
 
 
 # ============================================================
-# 🧠 Evaluación individual de reactivación
+# ⚙️ EVALÚA LA REACTIVACIÓN DE UNA SEÑAL (NO NECESARIO AHORA)
 # ============================================================
-
-async def _evaluate_single_signal(app_layer, sig: dict):
-    """
-    Evalúa si una señal debe reactivarse usando análisis técnico.
-    """
-
-    signal_service = app_layer.signal_service
-    analysis_coord = app_layer.analysis
-
-    symbol = sig.get("symbol")
-
-    # --------------------------------------------------------
-    # 🔧 Compatibilidad con DB vieja y DB nueva
-    # --------------------------------------------------------
-    original_side = sig.get("side") or sig.get("direction")
-    if not original_side:
-        logger.error(f"❌ Señal sin campo side/direction: {sig}")
-        return
-
-    # --------------------------------------------------------
-    # 📊 1. Analizar mercado en vivo
-    # --------------------------------------------------------
-    analysis = await analysis_coord.analyze_for_signal(symbol, original_side)
-
-    # Score numérico del análisis técnico
-    match_ratio = analysis.get("score", 0)
-
-    # --------------------------------------------------------
-    # 🗃 2. Guardar resultados del análisis
-    # --------------------------------------------------------
-    try:
-        signal_service.save_analysis_log(
-            signal_id=sig["id"],
-            symbol=symbol,
-            result=f"match_ratio={match_ratio}",
-            raw_json=analysis
-        )
-    except Exception as e:
-        logger.error(f"⚠️ Error al guardar log de análisis: {e}")
-
-    # --------------------------------------------------------
-    # 🎯 3. Decidir si se reactiva
-    # --------------------------------------------------------
-    THRESHOLD = 70  # Requisito mínimo
-
-    if match_ratio >= THRESHOLD:
-        signal_service.mark_reactivated(sig["id"])
-        logger.info(f"🔔 Señal {symbol} REACTIVADA automáticamente (score={match_ratio}).")
-        return
-
-    logger.info(f"⚪ Señal {symbol} NO se reactiva (score={match_ratio} < {THRESHOLD}).")
+# ¡ELIMINADO! Esta lógica ya está en SignalCoordinator._evaluate_reactivation()
