@@ -56,7 +56,7 @@ def _get(path: str, payload: dict):
     return data
 
 # ======================================================
-# 📊 OHLCV
+# 📊 OHLCV - FIX para devolver DataFrame
 # ======================================================
 def get_ohlcv_data(symbol: str, interval: str, limit: int = 200):
     try:
@@ -70,10 +70,33 @@ def get_ohlcv_data(symbol: str, interval: str, limit: int = 200):
         if not data or data.get("retCode") != 0:
             logger.error(f"Error OHLCV {symbol}: {data}")
             return None
-        return data["result"]["list"]
+        
+        # CONVERTIR lista a DataFrame
+        import pandas as pd
+        kline_list = data["result"]["list"]
+        
+        if not kline_list:
+            return pd.DataFrame()
+            
+        # Crear DataFrame
+        df = pd.DataFrame(kline_list, columns=[
+            "timestamp", "open", "high", "low", "close", 
+            "volume", "turnover"
+        ])
+        
+        # Convertir tipos
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
+        for col in ["open", "high", "low", "close", "volume", "turnover"]:
+            df[col] = df[col].astype(float)
+            
+        df.set_index("timestamp", inplace=True)
+        
+        return df
+
     except Exception as e:
         logger.error(f"Exception in get_ohlcv_data: {e}")
         return None
+
 
 # ======================================================
 # 📌 POSICIONES ABIERTAS

@@ -37,27 +37,28 @@ class SignalCoordinator:
         )
 
         return msg
-
-    # ============================================================
+    
+        # ============================================================
     # 2. PROCESAR SEÑAL RECIBIDA POR TELEGRAM
     # ============================================================
     async def process_telegram_signal(self, symbol: str, direction: str, raw_text: str):
         """
         Registrada desde telegram_reader cuando llega una nueva señal.
         """
-        signal_id = self.signal_service.register_signal(symbol, direction, raw_text)
+        # PRIMERO normalizar símbolo usando helpers
+        from helpers import normalize_symbol
+        normalized_symbol = normalize_symbol(symbol)
+        
+        signal_id = self.signal_service.register_signal(normalized_symbol, direction, raw_text)
 
         # Analizar de inmediato
-        analysis = await self.analysis_service.run(symbol, direction, context="entry")
+        analysis = await self.analysis_service.analyze(normalized_symbol, direction)
 
         # Guardar log técnico de la entrada
         self.signal_service.save_analysis_log(signal_id, analysis, context="entry")
 
-        # Respuesta para el canal del usuario
-        msg = self.analysis_service.format_for_telegram(
-            symbol, direction, analysis,
-            header="📡 Señal recibida + análisis"
-        )
+        # Respuesta para el canal del usuario - usar format() no format_for_telegram
+        msg = self.analysis_service.format(analysis)
 
         # Enviar notificación
         await self.notifier.send_message(msg)
@@ -84,6 +85,7 @@ class SignalCoordinator:
             except Exception as e:
                 logger.error(f"❌ Error evaluando {signal['symbol']}: {e}", exc_info=True)
 
+
     # ============================================================
     # 4. Evaluar una señal para reactivación
     # ============================================================
@@ -94,17 +96,18 @@ class SignalCoordinator:
 
         logger.info(f"🔎 Reactivación → {symbol} ({direction})")
 
+        # PRIMERO normalizar símbolo
+        from helpers import normalize_symbol
+        normalized_symbol = normalize_symbol(symbol)
+
         # Ejecutar análisis técnico
-        analysis = await self.analysis_service.analyze(symbol, direction)
+        analysis = await self.analysis_service.analyze(normalized_symbol, direction)
 
         # Registrar análisis
         self.signal_service.save_analysis_log(signal_id, analysis, context="reactivation")
 
-        # Preparar mensaje para Telegram
-        msg = self.analysis_service.format_for_telegram(
-            symbol, direction, analysis,
-            header="♻️ Evaluación de reactivación"
-        )
+        # Preparar mensaje para Telegram - usar format() no format_for_telegram
+        msg = self.analysis_service.format(analysis)
         await self.notifier.send_message(msg)
 
         # Motor indica reactivación

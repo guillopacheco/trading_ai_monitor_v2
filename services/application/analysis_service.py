@@ -1,5 +1,5 @@
 import logging
-from services.technical_engine.technical_engine import analyze as engine_analyze
+from services.technical_engine.motor_wrapper import analyze as engine_analyze
 
 logger = logging.getLogger("analysis_service")
 
@@ -14,7 +14,8 @@ async def analyze_symbol(symbol: str, direction: str) -> dict:
     """
     try:
         logger.info(f"🔍 Ejecutando análisis técnico para {symbol} ({direction})...")
-        result = await engine_analyze(symbol, direction)
+        # ¡QUITAR AWAIT! engine_analyze es función normal
+        result = engine_analyze(symbol, direction)
 
         if not result:
             logger.error(f"❌ Motor devolvió None para {symbol}")
