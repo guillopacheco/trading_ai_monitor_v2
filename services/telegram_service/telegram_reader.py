@@ -3,7 +3,7 @@
 import logging
 from telethon import TelegramClient, events
 
-from config import API_ID, API_HASH, TELEGRAM_SESSION, SIGNAL_SOURCE_CHANNEL
+from config import API_ID, API_HASH, TELEGRAM_SESSION, TELEGRAM_CHANNEL_ID
 from services.application.signal_service import SignalService
 
 logger = logging.getLogger("telegram_reader")
@@ -19,7 +19,7 @@ async def start_telegram_reader(app_layer):
 
     client = TelegramClient(TELEGRAM_SESSION, API_ID, API_HASH)
 
-    @client.on(events.NewMessage(chats=[SIGNAL_SOURCE_CHANNEL]))
+    @client.on(events.NewMessage(chats=[TELEGRAM_CHANNEL_ID]))
     async def handler(event):
         """
         Maneja mensajes nuevos del canal VIP.
