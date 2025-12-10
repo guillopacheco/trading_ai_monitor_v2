@@ -6,7 +6,6 @@ from config import TELEGRAM_BOT_TOKEN
 
 logger = logging.getLogger("command_bot")
 
-
 # -------------------------------------------------------------
 # Comandos
 # -------------------------------------------------------------
@@ -17,21 +16,22 @@ async def cmd_start(update, context):
 
 
 class CommandBot:
-    def __init__(self, application_layer):
-        self.app = application_layer
-        self.bot = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    def __init__(self, app_layer, application):
+        self.app = app_layer
+        self.application = application
 
-        self.bot.add_handler(CommandHandler("analizar", self.cmd_analizar))
+        self.application.add_handler(CommandHandler("analizar", self.cmd_analizar))
 
     async def cmd_analizar(self, update, context):
         symbol = context.args[0].upper()
         direction = context.args[1].lower()
+
         await self.app.analysis.analyze_request(
             symbol, direction, update.effective_chat.id
         )
 
     def run(self):
-        self.bot.run_polling()
+        self.application.run_polling()
 
 
 # -------------------------------------------------------------
