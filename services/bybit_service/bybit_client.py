@@ -68,16 +68,23 @@ def _get(path: str, payload: dict):
 # ============================================================
 # ✅ FUNCIÓN CORREGIDA — SIEMPRE DEVUELVE DataFrame o None
 # ============================================================
-def get_ohlcv_data(symbol: str, timeframe: str = None, interval: str = None, limit: int = 200):
+
+def get_ohlcv_data(
+    symbol: str,
+    timeframe: str = None,
+    interval: str = None,
+    limit: int = 200
+):
     """
-    Retrocompatible: acepta timeframe o interval.
-    Devuelve DataFrame o None.
+    Compatibilidad total:
+    - timeframe (nuevo)
+    - interval (legacy)
     """
-    try:
-        tf = timeframe or interval
-        if not tf:
-            logger.error("❌ get_ohlcv_data sin timeframe/interval")
-            return None
+
+    tf = timeframe or interval
+    if not tf:
+        logger.error("❌ get_ohlcv_data llamado sin timeframe/interval")
+        return None
 
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
 

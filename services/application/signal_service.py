@@ -8,7 +8,7 @@ from database import (
     save_signal,
     get_pending_signals_for_reactivation,
     mark_signal_reactivated,
-    save_analysis_log
+    save_analysis_log,
 )
 
 logger = logging.getLogger("signal_service")
@@ -35,7 +35,7 @@ class SignalService:
         payload = {
             "symbol": symbol.upper(),
             "direction": direction.lower(),
-            "raw_text": raw_text
+            "raw_text": raw_text,
         }
 
         try:
@@ -68,14 +68,9 @@ class SignalService:
     # 3) GUARDAR LOG DE ANÁLISIS (entrada/reactivación)
     # ------------------------------------------------------------
     def save_analysis_log(self, signal_id, context, analysis):
-        try:
-            if isinstance(analysis, dict):
-                analysis = json.dumps(analysis, ensure_ascii=False)
+        from database import save_analysis_log
 
-            save_analysis_log(signal_id, context, analysis)
-
-        except Exception as e:
-            logger.error(f"❌ Error guardando log de análisis (ID={signal_id}): {e}")
+        save_analysis_log(signal_id, context, json.dumps(analysis))
 
     # ------------------------------------------------------------
     # 4) MARCAR UNA SEÑAL COMO REACTIVADA
