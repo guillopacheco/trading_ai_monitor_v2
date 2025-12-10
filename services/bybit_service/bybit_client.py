@@ -4,7 +4,17 @@ import hmac
 import hashlib
 import requests
 import logging
+import pandas as pd
 from urllib.parse import urlencode
+import ccxt
+
+# Instancia CCXT (ajusta si ya la tienes global)
+exchange = ccxt.bybit({
+    "enableRateLimit": True,
+    "options": {
+        "defaultType": "linear"
+    }
+})
 
 logger = logging.getLogger("bybit_client")
 
@@ -55,24 +65,53 @@ def _get(path: str, payload: dict):
         return None
     return data
 
-# ======================================================
-# 📊 OHLCV
-# ======================================================
-def get_ohlcv_data(symbol: str, interval: str, limit: int = 200):
+# ============================================================
+# ✅ FUNCIÓN CORREGIDA — SIEMPRE DEVUELVE DataFrame o None
+# ============================================================
+def get_ohlcv_data(symbol: str, timeframe: str, limit: int = 200):
+    """
+    Obtiene OHLCV desde Bybit y devuelve SIEMPRE un DataFrame válido o None.
+    """
+
     try:
-        params = {
-            "category": "linear",
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit
-        }
-        data = _get("/v5/market/kline", params)
-        if not data or data.get("retCode") != 0:
-            logger.error(f"Error OHLCV {symbol}: {data}")
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+
+        if not ohlcv or not isinstance(ohlcv, list):
+            logger.error(f"❌ OHLCV inválido para {symbol} ({timeframe})")
             return None
-        return data["result"]["list"]
+
+        # Convertir a DataFrame
+        df = pd.DataFrame(
+            ohlcv,
+            columns=["timestamp", "open", "high", "low", "close", "volume"]
+        )
+
+        if df.empty:
+            logger.warning(f"⚠️ DataFrame vacío para {symbol} ({timeframe})")
+            return None
+
+        # Convertir timestamp
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+
+        # Asegurar tipos numéricos
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # Eliminar filas corruptas
+        df.dropna(inplace=True)
+
+        if df.empty:
+            logger.warning(f"⚠️ DataFrame vacío tras limpieza para {symbol} ({timeframe})")
+            return None
+
+        return df
+
     except Exception as e:
-        logger.error(f"Exception in get_ohlcv_data: {e}")
+        logger.error(
+            f"❌ Error obteniendo OHLCV {symbol} ({timeframe}): {e}",
+            exc_info=True
+        )
         return None
 
 # ======================================================
