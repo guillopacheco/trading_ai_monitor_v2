@@ -11,31 +11,13 @@ logger = logging.getLogger("MAIN")
 
 
 async def main():
-    configure_logging()
-    logger.info("🚀 Trading AI Monitor iniciando...")
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # ------------------------------------------------------------------
-    # DB
-    # ------------------------------------------------------------------
-    init_db()
-    logger.info("✅ Base de datos inicializada correctamente.")
+    notifier = Notifier(application.bot)
+    app_layer = ApplicationLayer(notifier)
 
-    # ------------------------------------------------------------------
-    # Application Layer
-    # ------------------------------------------------------------------
-    app_layer = ApplicationLayer()
-
-    # ------------------------------------------------------------------
-    # Start services async
-    # ------------------------------------------------------------------
-    logger.info("📡 Iniciando servicios…")
-
-    bot_app = await start_command_bot(app_layer)
-
-    await asyncio.gather(
-        start_telegram_reader(app_layer),
-        start_reactivation_monitor(app_layer),
-    )
+    command_bot = CommandBot(app_layer)
+    command_bot.run()
 
     # Mantener bot vivo
     await bot_app.updater.wait_for_stop()

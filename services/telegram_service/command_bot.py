@@ -16,22 +16,22 @@ async def cmd_start(update, context):
     await update.message.reply_text("🤖 Bot activo. Usa /analizar SYMBOL long|short")
 
 
-async def cmd_analizar(update, context, app_layer):
-    try:
-        parts = update.message.text.split()
-        if len(parts) != 3:
-            return await update.message.reply_text("Formato: /analizar BTCUSDT long")
+class CommandBot:
+    def __init__(self, application_layer):
+        self.app = application_layer
+        self.bot = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-        symbol = parts[1].upper()
-        direction = parts[2].lower()
+        self.bot.add_handler(CommandHandler("analizar", self.cmd_analizar))
 
-        await app_layer.analysis.analyze_request(
-            symbol, direction, update.message.chat_id
+    async def cmd_analizar(self, update, context):
+        symbol = context.args[0].upper()
+        direction = context.args[1].lower()
+        await self.app.analysis.analyze_request(
+            symbol, direction, update.effective_chat.id
         )
 
-    except Exception as e:
-        logger.error(f"Error en /analizar: {e}", exc_info=True)
-        await update.message.reply_text("❌ Error procesando análisis.")
+    def run(self):
+        self.bot.run_polling()
 
 
 # -------------------------------------------------------------

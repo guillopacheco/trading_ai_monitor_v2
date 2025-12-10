@@ -22,16 +22,11 @@ logger = logging.getLogger("application_layer")
 
 
 class ApplicationLayer:
-    def __init__(self):
-        self.notifier = Notifier()
-
-        self.command_bot = CommandBot(notifier=self.notifier)
+    def __init__(self, notifier):
+        self.notifier = notifier
 
         self.analysis_service = AnalysisService()
-
-        self.analysis = AnalysisCoordinator(
-            analysis_service=self.analysis_service, notifier=self.notifier
-        )
+        self.analysis = AnalysisCoordinator(self.analysis_service, self.notifier)
 
         # ======================================================
         # 5) Configurar token del bot
