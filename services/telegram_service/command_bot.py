@@ -54,6 +54,8 @@ async def start_command_bot(app_layer):
         CommandHandler("analizar", lambda u, c: cmd_analizar(u, c, app_layer))
     )
 
+    self.notifier.configure(self.bot, DEFAULT_CHAT_ID)
+
     # ---------------------------------------------------------
     # MODO ASÍNCRONO CORRECTO (no usar run_polling())
     # ---------------------------------------------------------

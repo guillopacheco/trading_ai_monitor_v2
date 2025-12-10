@@ -10,44 +10,27 @@ from services.application.signal_service import SignalService
 from services.application.analysis_service import AnalysisService
 from services.application.operation_service import OperationService
 
+from services.telegram_service.command_bot import CommandBot
+from services.coordinators.analysis_coordinator import AnalysisCoordinator
+
 # Coordinadores
 from services.coordinators.signal_coordinator import SignalCoordinator
-from services.coordinators.analysis_coordinator import AnalysisCoordinator
 from services.coordinators.position_coordinator import PositionCoordinator
-from services.telegram_service.notifier import Notifier
+
 
 logger = logging.getLogger("application_layer")
 
 
 class ApplicationLayer:
-
     def __init__(self):
-        logger.info("⚙️ Inicializando ApplicationLayer...")
+        self.notifier = Notifier()
 
-        # ======================================================
-        # 2) Crear notificador global
-        # ======================================================
-        self.notifier = Notifier(self.command_bot.bot)
+        self.command_bot = CommandBot(notifier=self.notifier)
 
-        # ======================================================
-        # 3) Instanciar servicios de aplicación
-        # ======================================================
-        self.signal_service = SignalService()
         self.analysis_service = AnalysisService()
-        self.operation_service = OperationService(self.notifier)
 
-        # ======================================================
-        # 4) Instanciar coordinadores (capa de dominio)
-        # ======================================================
-        self.signal = SignalCoordinator(
-            self.signal_service, self.analysis_service, self.notifier
-        )
-        self.signal_coordinator = self.signal  # alias para reactivación
-
-        self.analysis = AnalysisCoordinator(self.analysis_service, self.notifier)
-
-        self.position = PositionCoordinator(
-            self.operation_service, self.analysis_service, self.notifier
+        self.analysis = AnalysisCoordinator(
+            analysis_service=self.analysis_service, notifier=self.notifier
         )
 
         # ======================================================
