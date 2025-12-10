@@ -1,15 +1,20 @@
 # services/telegram_service/notifier.py
 
 import logging
+from telegram import Bot
 
 logger = logging.getLogger("notifier")
 
 
 class Notifier:
-    def __init__(self, bot):
+    def __init__(self, bot: Bot):
         self.bot = bot
 
-    async def send_message(self, chat_id, text: str):
+    async def send_message(self, chat_id: int, text: str):
+        if not self.bot or not chat_id:
+            logger.error("❌ Notifier no configurado con bot/chat_id")
+            return
+
         try:
             await self.bot.send_message(chat_id=chat_id, text=text)
         except Exception as e:

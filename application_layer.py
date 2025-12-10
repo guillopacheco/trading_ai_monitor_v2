@@ -14,7 +14,7 @@ from services.application.operation_service import OperationService
 from services.coordinators.signal_coordinator import SignalCoordinator
 from services.coordinators.analysis_coordinator import AnalysisCoordinator
 from services.coordinators.position_coordinator import PositionCoordinator
-
+from services.telegram_service.notifier import Notifier
 
 logger = logging.getLogger("application_layer")
 

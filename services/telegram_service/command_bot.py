@@ -11,6 +11,7 @@ logger = logging.getLogger("command_bot")
 # Comandos
 # -------------------------------------------------------------
 
+
 async def cmd_start(update, context):
     await update.message.reply_text("🤖 Bot activo. Usa /analizar SYMBOL long|short")
 
@@ -24,7 +25,9 @@ async def cmd_analizar(update, context, app_layer):
         symbol = parts[1].upper()
         direction = parts[2].lower()
 
-        await app_layer.analysis.analyze_request(symbol, direction, update.message.chat_id)
+        await app_layer.analysis.analyze_request(
+            symbol, direction, update.message.chat_id
+        )
 
     except Exception as e:
         logger.error(f"Error en /analizar: {e}", exc_info=True)
@@ -34,6 +37,7 @@ async def cmd_analizar(update, context, app_layer):
 # -------------------------------------------------------------
 # Inicialización del bot
 # -------------------------------------------------------------
+
 
 async def start_command_bot(app_layer):
     if not TELEGRAM_BOT_TOKEN:
@@ -46,8 +50,9 @@ async def start_command_bot(app_layer):
 
     # Handlers
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("analizar",
-                   lambda u, c: cmd_analizar(u, c, app_layer)))
+    app.add_handler(
+        CommandHandler("analizar", lambda u, c: cmd_analizar(u, c, app_layer))
+    )
 
     # ---------------------------------------------------------
     # MODO ASÍNCRONO CORRECTO (no usar run_polling())
