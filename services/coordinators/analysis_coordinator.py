@@ -1,6 +1,5 @@
 import logging
 from services.application.analysis_service import (
-    analyze_symbol,
     format_analysis_for_telegram,
 )
 
@@ -21,11 +20,17 @@ class AnalysisCoordinator:
     # -----------------------------------------------------------
     async def analyze_request(self, symbol, direction, chat_id):
         try:
+            # 1️⃣ Ejecutar análisis real
             result = await self.analysis_service.analyze(symbol, direction)
 
-            text = self._format_analysis(result)
-            await self.notifier.send_message(text)
+            # 2️⃣ Formatear usando función EXISTENTE
+            text = format_analysis_for_telegram(result)
+
+            # 3️⃣ Enviar usando método REAL del notifier
+            await self.notifier.send(text)
 
         except Exception as e:
-            logger.error(f"❌ Error en análisis bajo demanda para {symbol}: {e}")
-            await self.notifier.send_message(f"❌ Error analizando {symbol}")
+            logger.error(
+                f"❌ Error en análisis bajo demanda para {symbol}: {e}", exc_info=True
+            )
+            await self.notifier.send(f"❌ Error analizando {symbol}")
