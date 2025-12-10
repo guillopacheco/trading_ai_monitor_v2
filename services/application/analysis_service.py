@@ -30,23 +30,116 @@ async def analyze_symbol(symbol: str, direction: str) -> dict:
 # FORMATEO PARA TELEGRAM
 # ============================================================
 def format_analysis_for_telegram(result: dict) -> str:
+    """
+    Formatea el resultado del motor técnico para mostrarlo en Telegram
+    de forma clara y compacta.
+    """
     if not result or result.get("error"):
-        return "⚠️ Error en análisis técnico."
+        return "⚠️ No se pudo completar el análisis técnico."
 
-    try:
-        symbol = result.get("symbol", "N/A")
-        decision = result.get("decision", "N/A")
-        confidence = result.get("confidence", 0)
+    # Campos base
+    symbol = result.get("symbol", "N/D")
+    direction = result.get("direction", "").upper()
+    context = result.get("context", "entry")
 
-        return (
-            f"📊 *Análisis de {symbol}*\n"
-            f"📌 Decisión: *{decision}*\n"
-            f"🔎 Confianza: *{confidence}%*"
-        )
+    decision = (result.get("decision") or "unknown").lower()
+    allowed = bool(result.get("allowed", False))
 
-    except Exception as e:
-        logger.error(f"❌ Error formateando análisis: {e}")
-        return "⚠️ Error formateando análisis."
+    confidence_raw = result.get("confidence")
+    technical_score = result.get("technical_score")
+    match_ratio = result.get("match_ratio")
+    grade = result.get("grade", "N/D")
+    reasons = result.get("decision_reasons") or []
+
+    # Normalizar confianza (0.6 → 60 %)
+    if confidence_raw is None:
+        confidence_str = "N/D"
+    else:
+        try:
+            val = float(confidence_raw)
+            if val <= 1:
+                val *= 100.0
+            confidence_str = f"{val:.0f} %"
+        except Exception:
+            confidence_str = str(confidence_raw)
+
+    # Normalizar score
+    if technical_score is None:
+        score_str = "N/D"
+    else:
+        try:
+            score_str = f"{float(technical_score):.0f} / 100"
+        except Exception:
+            score_str = str(technical_score)
+
+    # Normalizar match_ratio
+    if match_ratio is None:
+        match_str = "N/D"
+    else:
+        try:
+            m = float(match_ratio)
+            if m <= 1:
+                m *= 100.0
+            match_str = f"{m:.0f} %"
+        except Exception:
+            match_str = str(match_ratio)
+
+    # Mapear decisión a icono + texto
+    if allowed and decision in ("enter", "long", "short", "reenter", "reactivate"):
+        decision_icon = "🟢"
+        decision_label = "Escenario favorable"
+    elif decision in ("hold", "monitor"):
+        decision_icon = "🟡"
+        decision_label = "Observar / mantener"
+    elif decision in ("close", "exit", "reverse"):
+        decision_icon = "🟠"
+        decision_label = "Riesgo alto – considerar salida"
+    elif decision == "skip":
+        decision_icon = "🔴"
+        decision_label = "Evitar entrada"
+    else:
+        decision_icon = "⚪"
+        decision_label = decision.upper()
+
+    # Contexto legible
+    context_map = {
+        "entry": "Entrada",
+        "reactivation": "Reactivación",
+        "reentry": "Reentrada",
+        "open_position": "Posición abierta",
+    }
+    context_label = context_map.get(context, context.capitalize())
+
+    # Dirección legible
+    if direction in ("LONG", "SHORT"):
+        direction_label = direction
+    else:
+        direction_label = "N/D"
+
+    # Construir texto principal
+    header = f"📊 *Análisis de {symbol}*"
+    if direction_label != "N/D":
+        header += f" ({direction_label})"
+
+    lines = [
+        header,
+        f"🧭 Contexto: *{context_label}*",
+        "",
+        f"{decision_icon} *Decisión:* `{decision}` — {decision_label}",
+        f"📈 *Score técnico:* {score_str}",
+        f"🎯 *Match técnico:* {match_str}",
+        f"🔎 *Confianza:* {confidence_str}",
+        f"🏅 *Grade:* {grade}",
+    ]
+
+    # Razones de la decisión (si existen)
+    if reasons:
+        lines.append("")
+        lines.append("📌 *Motivos:*")
+        for r in reasons:
+            lines.append(f"• {r}")
+
+    return "\n".join(lines)
 
 
 # ============================================================
