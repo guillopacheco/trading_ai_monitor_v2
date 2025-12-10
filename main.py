@@ -16,7 +16,7 @@ async def main():
     notifier = Notifier(application.bot)
     app_layer = ApplicationLayer(notifier)
 
-    command_bot = CommandBot(app_layer, application)
+    command_bot = CommandBot(app_layer)
     command_bot.run()
 
 
