@@ -9,18 +9,14 @@ from urllib.parse import urlencode
 import ccxt
 
 # Instancia CCXT (ajusta si ya la tienes global)
-exchange = ccxt.bybit({
-    "enableRateLimit": True,
-    "options": {
-        "defaultType": "linear"
-    }
-})
+exchange = ccxt.bybit({"enableRateLimit": True, "options": {"defaultType": "linear"}})
 
 logger = logging.getLogger("bybit_client")
 
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 BASE_URL = "https://api.bybit.com"
+
 
 # ======================================================
 # 🔐 AUTH – GENERADOR DE FIRMA
@@ -32,12 +28,11 @@ def _sign(params: dict) -> dict:
     params["timestamp"] = timestamp
     query_string = urlencode(sorted(params.items()))
     signature = hmac.new(
-        BYBIT_API_SECRET.encode("utf-8"),
-        query_string.encode("utf-8"),
-        hashlib.sha256
+        BYBIT_API_SECRET.encode("utf-8"), query_string.encode("utf-8"), hashlib.sha256
     ).hexdigest()
     params["sign"] = signature
     return params
+
 
 # ======================================================
 # 🧾 UTILIDAD — PETICIÓN HTTP
@@ -65,38 +60,39 @@ def _get(path: str, payload: dict):
         return None
     return data
 
+
 # ============================================================
 # ✅ FUNCIÓN CORREGIDA — SIEMPRE DEVUELVE DataFrame o None
 # ============================================================
 
+
 def get_ohlcv_data(
-    symbol: str,
-    timeframe: str = None,
-    interval: str = None,
-    limit: int = 200
+    symbol: str, timeframe: str = None, interval: str = None, limit: int = 200
 ):
     """
     Compatibilidad total:
     - timeframe (nuevo)
     - interval (legacy)
+    Devuelve siempre DataFrame o None
     """
-
-    tf = timeframe or interval
-    if not tf:
-        logger.error("❌ get_ohlcv_data llamado sin timeframe/interval")
-        return None
+    try:
+        tf = timeframe or interval
+        if not tf:
+            logger.error("❌ get_ohlcv_data llamado sin timeframe/interval")
+            return None
 
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
 
         if not ohlcv or not isinstance(ohlcv, list):
+            logger.error(f"❌ OHLCV inválido para {symbol} ({tf})")
             return None
 
         df = pd.DataFrame(
-            ohlcv,
-            columns=["timestamp", "open", "high", "low", "close", "volume"]
+            ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
         )
 
         if df.empty:
+            logger.warning(f"⚠️ DataFrame vacío para {symbol} ({tf})")
             return None
 
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
@@ -110,7 +106,10 @@ def get_ohlcv_data(
         return df if not df.empty else None
 
     except Exception as e:
-        logger.error(f"❌ Error obteniendo OHLCV {symbol} ({tf}): {e}")
+        logger.error(
+            f"❌ Error obteniendo OHLCV {symbol} ({timeframe or interval}): {e}",
+            exc_info=True,
+        )
         return None
 
 
@@ -132,10 +131,7 @@ def get_open_positions(symbol: str = None):
 # 📌 OBTENER PRECIO ACTUAL
 # ======================================================
 def get_last_price(symbol: str):
-    data = _get(
-        "/v5/market/tickers",
-        {"category": "linear", "symbol": symbol}
-    )
+    data = _get("/v5/market/tickers", {"category": "linear", "symbol": symbol})
     if not data or data.get("retCode") != 0:
         logger.error(f"Error ticker {symbol}: {data}")
         return None
@@ -217,7 +213,7 @@ def reverse_position(symbol: str):
         "orderType": "Market",
         "qty": qty,
         "timeInForce": "IOC",
-        "reduceOnly": False
+        "reduceOnly": False,
     }
 
     data = _post("/v5/order/create", payload)
@@ -250,7 +246,7 @@ def place_market_order(symbol: str, side: str, usdt: float, leverage: int = 20):
         "orderType": "Market",
         "qty": qty,
         "timeInForce": "IOC",
-        "reduceOnly": False
+        "reduceOnly": False,
     }
 
     data = _post("/v5/order/create", payload)
