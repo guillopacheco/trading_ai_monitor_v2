@@ -2,7 +2,7 @@
 # signal_service.py — VERSIÓN FINAL 2025-12
 # Servicio oficial y único para gestionar señales
 # ================================================================
-
+import json
 import logging
 from database import (
     save_signal,
@@ -67,18 +67,12 @@ class SignalService:
     # ------------------------------------------------------------
     # 3) GUARDAR LOG DE ANÁLISIS (entrada/reactivación)
     # ------------------------------------------------------------
-    def save_analysis_log(self, signal_id: int, analysis: dict, context: str):
-        """
-        Guarda el JSON completo del análisis técnico.
-        context ∈ {"entry", "reactivation"}
-        """
+    def save_analysis_log(self, signal_id, context, analysis):
         try:
-            save_analysis_log(
-                signal_id=signal_id,
-                context=context,
-                analysis_json=analysis
-            )
-            logger.info(f"📝 Log técnico guardado (context={context}) | ID={signal_id}")
+            if isinstance(analysis, dict):
+                analysis = json.dumps(analysis, ensure_ascii=False)
+
+            save_analysis_log(signal_id, context, analysis)
 
         except Exception as e:
             logger.error(f"❌ Error guardando log de análisis (ID={signal_id}): {e}")

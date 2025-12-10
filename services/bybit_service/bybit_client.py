@@ -68,51 +68,44 @@ def _get(path: str, payload: dict):
 # ============================================================
 # ✅ FUNCIÓN CORREGIDA — SIEMPRE DEVUELVE DataFrame o None
 # ============================================================
-def get_ohlcv_data(symbol: str, timeframe: str, limit: int = 200):
+def get_ohlcv_data(symbol: str, timeframe: str = None, interval: str = None, limit: int = 200):
     """
-    Obtiene OHLCV desde Bybit y devuelve SIEMPRE un DataFrame válido o None.
+    Retrocompatible: acepta timeframe o interval.
+    Devuelve DataFrame o None.
     """
-
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-
-        if not ohlcv or not isinstance(ohlcv, list):
-            logger.error(f"❌ OHLCV inválido para {symbol} ({timeframe})")
+        tf = timeframe or interval
+        if not tf:
+            logger.error("❌ get_ohlcv_data sin timeframe/interval")
             return None
 
-        # Convertir a DataFrame
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+
+        if not ohlcv or not isinstance(ohlcv, list):
+            return None
+
         df = pd.DataFrame(
             ohlcv,
             columns=["timestamp", "open", "high", "low", "close", "volume"]
         )
 
         if df.empty:
-            logger.warning(f"⚠️ DataFrame vacío para {symbol} ({timeframe})")
             return None
 
-        # Convertir timestamp
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         df.set_index("timestamp", inplace=True)
 
-        # Asegurar tipos numéricos
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        # Eliminar filas corruptas
         df.dropna(inplace=True)
 
-        if df.empty:
-            logger.warning(f"⚠️ DataFrame vacío tras limpieza para {symbol} ({timeframe})")
-            return None
-
-        return df
+        return df if not df.empty else None
 
     except Exception as e:
-        logger.error(
-            f"❌ Error obteniendo OHLCV {symbol} ({timeframe}): {e}",
-            exc_info=True
-        )
+        logger.error(f"❌ Error obteniendo OHLCV {symbol} ({tf}): {e}")
         return None
+
 
 # ======================================================
 # 📌 POSICIONES ABIERTAS
