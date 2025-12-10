@@ -1,7 +1,6 @@
 # services/telegram_service/notifier.py
 
 import logging
-from telegram import Bot
 
 logger = logging.getLogger("notifier")
 
@@ -10,10 +9,11 @@ class Notifier:
     def __init__(self, bot):
         self.bot = bot
 
-    async def send(self, chat_id: int, text: str):
-        if not self.bot:
-            raise RuntimeError("Notifier sin bot configurado")
-        await self.bot.send_message(chat_id=chat_id, text=text)
+    async def send_message(self, chat_id, text: str):
+        try:
+            await self.bot.send_message(chat_id=chat_id, text=text)
+        except Exception as e:
+            logger.error(f"❌ Error enviando mensaje Telegram: {e}")
 
     # ============================================================
     # Métodos de inicialización (útiles cuando se inyecta el bot)

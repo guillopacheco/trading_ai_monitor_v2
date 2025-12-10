@@ -27,7 +27,7 @@ class ApplicationLayer:
         # ======================================================
         # 2) Crear notificador global
         # ======================================================
-        self.notifier = Notifier()
+        self.notifier = Notifier(self.command_bot.bot)
 
         # ======================================================
         # 3) Instanciar servicios de aplicación
@@ -40,21 +40,14 @@ class ApplicationLayer:
         # 4) Instanciar coordinadores (capa de dominio)
         # ======================================================
         self.signal = SignalCoordinator(
-            self.signal_service,
-            self.analysis_service,
-            self.notifier
+            self.signal_service, self.analysis_service, self.notifier
         )
         self.signal_coordinator = self.signal  # alias para reactivación
 
-        self.analysis = AnalysisCoordinator(
-            self.analysis_service,
-            self.notifier
-        )
+        self.analysis = AnalysisCoordinator(self.analysis_service, self.notifier)
 
         self.position = PositionCoordinator(
-            self.operation_service,
-            self.analysis_service,
-            self.notifier
+            self.operation_service, self.analysis_service, self.notifier
         )
 
         # ======================================================
