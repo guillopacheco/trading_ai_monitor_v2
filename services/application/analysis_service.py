@@ -14,7 +14,7 @@ async def analyze_symbol(symbol: str, direction: str) -> dict:
     """
     try:
         logger.info(f"🔍 Ejecutando análisis técnico para {symbol} ({direction})...")
-        result = await engine_analyze(symbol, direction)
+        result = engine_analyze(symbol, direction)
 
         if not result:
             return {"error": True, "msg": "Motor técnico no devolvió resultado"}

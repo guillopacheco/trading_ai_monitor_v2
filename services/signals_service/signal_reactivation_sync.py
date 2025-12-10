@@ -41,13 +41,14 @@ async def _evaluate_single_signal(app_layer, signal: dict):
 
         # Guardar log en DB
         app_layer.signal_service.save_analysis_log(
-            signal_id=signal_id,
-            context="reactivation",
-            analysis_json=analysis
+            signal_id,
+            "reactivation",
+            analysis
         )
 
+
         if not analysis or analysis.get("error"):
-            await app_layer.notifier.send_message(
+            logger.info(
                 f"⚠️ No se pudo analizar {symbol} para reactivación (ID {signal_id})."
             )
             return
@@ -75,14 +76,14 @@ async def _evaluate_single_signal(app_layer, signal: dict):
         if allowed:
             app_layer.signal_service.mark_signal_reactivated(signal_id)
 
-            await app_layer.notifier.send_message(
+            logger.info(
                 f"✅ Señal REACTIVADA: {symbol} ({direction})\n"
                 f"ID: {signal_id} | decisión: {decision}"
             )
 
             logger.info(f"✔ Señal {signal_id} reactivada correctamente.")
         else:
-            await app_layer.notifier.send_message(
+            logger.info(
                 f"⏳ Señal pendiente (no viable aún): {symbol} {direction}\n"
                 f"ID={signal_id} | decisión={decision}"
             )
@@ -90,7 +91,7 @@ async def _evaluate_single_signal(app_layer, signal: dict):
 
     except Exception as e:
         logger.error(f"❌ Error evaluando señal ID={signal.get('id')}: {e}", exc_info=True)
-        await app_layer.notifier.send_message(
+        logger.info(
             f"❌ Error interno en reactivación de señal ID={signal.get('id')}"
         )
 
