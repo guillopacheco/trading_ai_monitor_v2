@@ -6,40 +6,12 @@ import requests
 import logging
 from urllib.parse import urlencode
 
-# AÑADIR CARGA EXPLÍCITA DE .env
-from dotenv import load_dotenv
-load_dotenv(override=True)  # <-- RECARGA POR SEGURIDAD
-
 logger = logging.getLogger("bybit_client")
 
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 BASE_URL = "https://api.bybit.com"
 
-# VERIFICACIÓN EXPLÍCITA EN TIEMPO DE EJECUCIÓN
-if not BYBIT_API_KEY or not BYBIT_API_SECRET:
-    logger.error("🚨🚨🚨 ERROR CRÍTICO: Variables Bybit no configuradas")
-    logger.error(f"   BYBIT_API_KEY: {'✅' if BYBIT_API_KEY else '❌'}")
-    logger.error(f"   BYBIT_API_SECRET: {'✅' if BYBIT_API_SECRET else '❌'}")
-    logger.error("   Revisa tu archivo .env o ejecuta: python fix_env.py")
-    
-    # Intentar carga de emergencia
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
-        BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
-        BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
-        logger.info("   Recarga de emergencia ejecutada")
-    except:
-        pass
-
-# LOG para debug
-logger.debug(f"Bybit API Key cargada: {BYBIT_API_KEY[:8] if BYBIT_API_KEY else 'None'}...")
-logger.debug(f"Bybit API Secret cargada: {BYBIT_API_SECRET[:8] if BYBIT_API_SECRET else 'None'}...")
-
-if not BYBIT_API_KEY or not BYBIT_API_SECRET:
-    logger.error("❌❌❌ BYBIT_API_KEY o BYBIT_API_SECRET no están configuradas!")
-    logger.error("   Verifica tu archivo .env en: " + os.path.abspath(".env"))
 # ======================================================
 # 🔐 AUTH – GENERADOR DE FIRMA
 # ======================================================
@@ -84,7 +56,7 @@ def _get(path: str, payload: dict):
     return data
 
 # ======================================================
-# 📊 OHLCV - FIX para devolver DataFrame
+# 📊 OHLCV
 # ======================================================
 def get_ohlcv_data(symbol: str, interval: str, limit: int = 200):
     try:
@@ -98,33 +70,10 @@ def get_ohlcv_data(symbol: str, interval: str, limit: int = 200):
         if not data or data.get("retCode") != 0:
             logger.error(f"Error OHLCV {symbol}: {data}")
             return None
-        
-        # CONVERTIR lista a DataFrame
-        import pandas as pd
-        kline_list = data["result"]["list"]
-        
-        if not kline_list:
-            return pd.DataFrame()
-            
-        # Crear DataFrame
-        df = pd.DataFrame(kline_list, columns=[
-            "timestamp", "open", "high", "low", "close", 
-            "volume", "turnover"
-        ])
-        
-        # Convertir tipos
-        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
-        for col in ["open", "high", "low", "close", "volume", "turnover"]:
-            df[col] = df[col].astype(float)
-            
-        df.set_index("timestamp", inplace=True)
-        
-        return df
-
+        return data["result"]["list"]
     except Exception as e:
         logger.error(f"Exception in get_ohlcv_data: {e}")
         return None
-
 
 # ======================================================
 # 📌 POSICIONES ABIERTAS

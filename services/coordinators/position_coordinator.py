@@ -49,7 +49,7 @@ class PositionCoordinator:
         logger.info(f"📌 Procesando {symbol}: PNL {pnl_pct}%")
 
         # Obtener análisis técnico
-        analysis = await self.analysis_service.analyze(symbol, side)
+        analysis = await self.analysis_service.run(symbol, side)
 
         # Reglas automáticas
         if pnl_pct <= -50:

@@ -35,3 +35,4 @@ def configure_logging():
 
     logger = logging.getLogger("LOGGER")
     logger.info("✔ Logging configurado correctamente.")
+

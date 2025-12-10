@@ -1,140 +1,118 @@
 import logging
-from services.technical_engine.motor_wrapper import analyze as engine_analyze
 
 logger = logging.getLogger("analysis_service")
 
+# Motor técnico (DeepSeek o GPT)
+# El wrapper puede ser async o sync dependiendo de la versión
+try:
+    from services.technical_engine.motor_wrapper import analyze as engine_analyze
+except:
+    from services.technical_engine.technical_engine import analyze as engine_analyze
+
 
 # ============================================================
-# FUNCIÓN PRINCIPAL DE ANÁLISIS
+#  FUNCIÓN DE NORMALIZACIÓN
+# ============================================================
+def _normalize_analysis(symbol: str, direction: str, raw: dict) -> dict:
+    """
+    Garantiza que el análisis SIEMPRE regrese una estructura estándar,
+    sin importar si viene del motor GPT, DeepSeek o un wrapper.
+    """
+
+    if not isinstance(raw, dict):
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "error": True,
+            "msg": "Motor devolvió estructura inválida"
+        }
+
+    # --- BASE ---
+    result = {
+        "symbol": raw.get("symbol", symbol),
+        "direction": direction,
+        "error": False,
+
+        # DECISIÓN
+        "decision": {
+            "decision": "unknown",
+            "allowed": False,
+            "decision_reasons": []
+        },
+
+        # ENTRADA
+        "entry": {
+            "allowed": False,
+            "entry_mode": "N/A",
+            "entry_score": 0
+        }
+    }
+
+    # --- CASO 1: DeepSeek-style (decision y smart_entry anidados) ---
+    if "decision" in raw and isinstance(raw["decision"], dict):
+        decision = raw["decision"]
+        result["decision"]["decision"] = decision.get("decision", "unknown")
+        result["decision"]["allowed"] = decision.get("allowed", False)
+        result["decision"]["decision_reasons"] = decision.get("decision_reasons", [])
+
+    # --- CASO 2: GPT-style (entry separado) ---
+    if "entry" in raw and isinstance(raw["entry"], dict):
+        entry = raw["entry"]
+        result["entry"]["allowed"] = entry.get("allowed", False)
+        result["entry"]["entry_mode"] = entry.get("entry_mode", "N/A")
+        result["entry"]["entry_score"] = entry.get("entry_score", 0)
+
+    # Si la decisión no tiene allowed, pero entry sí → fallback
+    if not result["decision"]["allowed"] and result["entry"]["allowed"]:
+        result["decision"]["allowed"] = True
+        result["decision"]["decision"] = "entry_allowed"
+
+    return result
+
+
+# ============================================================
+#  ANÁLISIS PRINCIPAL
 # ============================================================
 async def analyze_symbol(symbol: str, direction: str) -> dict:
     """
-    Ejecuta el motor técnico unificado para el símbolo solicitado.
-    Devuelve un dict estándar para coordinadores y notificaciones.
+    Ejecuta el motor técnico (sin saber si es async o sync)
+    y normaliza el resultado.
     """
     try:
-        logger.info(f"🔍 Ejecutando análisis técnico para {symbol} ({direction})...")
-        # ¡QUITAR AWAIT! engine_analyze es función normal
-        result = engine_analyze(symbol, direction)
+        # DeepSeek: función normal
+        # GPT: async
+        try:
+            raw = engine_analyze(symbol, direction)
+        except TypeError:
+            raw = await engine_analyze(symbol, direction)
 
-        if not result:
-            logger.error(f"❌ Motor devolvió None para {symbol}")
-            return {"error": True, "msg": "Motor técnico no devolvió resultado"}
-
-        # Asegurar que el resultado tiene la estructura esperada
-        # El motor devuelve varios niveles: snapshot, decision, etc.
-        return result
+        normalized = _normalize_analysis(symbol, direction, raw)
+        return normalized
 
     except Exception as e:
-        logger.exception(f"❌ Error crítico analizando {symbol}: {e}")
-        return {"error": True, "msg": str(e)}
-
-        # Normalizar campos que siempre deben existir
-        result.setdefault("symbol", symbol)
-        result.setdefault("direction", direction)
-        result.setdefault("major_trend_label", "N/A")
-        result.setdefault("smart_bias_code", "N/A")
-        result.setdefault("confidence", 0)
-        result.setdefault("grade", "N/A")
-        result.setdefault("match_ratio", 0)
-        result.setdefault("technical_score", 0)
-        result.setdefault("decision", "unknown")
-        result.setdefault("decision_reasons", [])
-        result.setdefault("entry", {})
-
-        return result
-
-    except Exception as e:
-        logger.exception(f"❌ Error crítico analizando {symbol}: {e}")
-        return {"error": True, "msg": str(e)}
+        logger.exception(f"❌ Error analizando {symbol}: {e}")
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "error": True,
+            "msg": str(e)
+        }
 
 
 # ============================================================
-# FORMATEAR RESULTADO PARA TELEGRAM - CORREGIDO
+# FORMATEO TELEGRAM (opcional, no crítico para reactivación)
 # ============================================================
 def format_analysis_for_telegram(result: dict) -> str:
-    """
-    Convierte el dict del motor técnico en un bloque estético para Telegram.
-    AHORA maneja la estructura anidada del motor unificado.
-    """
     if not result or result.get("error"):
-        return "⚠️ *Error en análisis técnico.*"
+        return "⚠️ Error en análisis técnico."
 
-    try:
-        # El motor devuelve estructura anidada:
-        # {
-        #   "symbol": "...",
-        #   "snapshot": {...},
-        #   "decision": {...},
-        #   "smart_entry": {...}
-        # }
-        
-        # Extraer valores de SNAPSHOT
-        snapshot = result.get("snapshot", {})
-        symbol = snapshot.get("symbol", result.get("symbol", "N/A"))
-        direction_hint = result.get("direction_hint", "N/A")
-        
-        # Valores principales del snapshot
-        major_trend = snapshot.get("major_trend_label", snapshot.get("major_trend", "N/A"))
-        smart_bias = snapshot.get("smart_bias_code", snapshot.get("smart_bias", "N/A"))
-        match_ratio = float(snapshot.get("match_ratio", 0))
-        technical_score = float(snapshot.get("technical_score", 0))
-        grade = snapshot.get("grade", "N/A")
-        confidence = float(snapshot.get("confidence", 0))
-        
-        # Extraer valores de DECISION
-        decision_block = result.get("decision", {})
-        decision = decision_block.get("decision", "unknown")
-        decision_reasons = decision_block.get("decision_reasons", [])
-        allowed = decision_block.get("allowed", False)
-        
-        # Extraer valores de SMART ENTRY
-        entry_block = result.get("smart_entry", {})
-        entry_allowed = entry_block.get("entry_allowed", False)
-        entry_mode = entry_block.get("entry_mode", "N/A")
-        entry_score = float(entry_block.get("entry_score", 0))
-        entry_grade = entry_block.get("entry_grade", "N/A")
+    dec = result.get("decision", {})
+    entry = result.get("entry", {})
 
-        # Formatear mensaje
-        msg = (
-            f"📊 *Análisis de {symbol} ({direction_hint})*\n"
-            f"• Tendencia mayor: *{major_trend}*\n"
-            f"• Smart Bias: *{smart_bias}*\n"
-            f"• Confianza global: *{confidence*100:.1f}%* (Grado {grade})\n"
-            f"• Match técnico: *{match_ratio:.1f}%* | Score: *{technical_score:.1f}*\n\n"
-            f"🎯 *Smart Entry*\n"
-            f"• Permitido: *{'Sí' if entry_allowed else 'No'}* (modo: {entry_mode})\n"
-            f"• Score entrada: *{entry_score:.1f}* (Grado {entry_grade})\n\n"
-            f"📌 *Decisión final*\n"
-            f"*{decision.upper()}* — permitido: {'Sí' if allowed else 'No'}\n"
-        )
-
-        if decision_reasons and isinstance(decision_reasons, list) and len(decision_reasons) > 0:
-            msg += f"• Motivo: {decision_reasons[0]}\n"
-            if len(decision_reasons) > 1:
-                msg += f"• Razón adicional: {decision_reasons[1]}\n"
-
-        return msg
-
-    except Exception as e:
-        logger.error(f"❌ Error formateando análisis: {e}", exc_info=True)
-        # Fallback simple
-        return f"📊 *Análisis técnico completado*\n• Símbolo: {result.get('symbol', 'N/A')}\n• Decisión: {result.get('decision', {}).get('decision', 'N/A')}"
-
-
-# ============================================================
-# CLASE PARA USO EN COORDINADORES
-# ============================================================
-class AnalysisService:
-
-    async def analyze(self, symbol: str, direction: str):
-        """
-        Interface usada por coordinadores.
-        """
-        return await analyze_symbol(symbol, direction)
-
-    def format(self, result: dict):
-        """
-        Interface para formateo Telegram.
-        """
-        return format_analysis_for_telegram(result)
+    return (
+        f"📊 *Análisis de {result.get('symbol')} ({result.get('direction')})*\n"
+        f"• Decisión: *{dec.get('decision', 'N/A')}*\n"
+        f"• Permitido: *{'Sí' if dec.get('allowed') else 'No'}*\n"
+        f"• Entrada permitida: *{'Sí' if entry.get('allowed') else 'No'}*\n"
+        f"• Score: {entry.get('entry_score', 0)}\n"
+    )

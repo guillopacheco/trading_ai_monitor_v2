@@ -1,6 +1,6 @@
 import logging
-from telegram import Bot
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_USER_ID
+
+from config import TELEGRAM_BOT_TOKEN
 
 # Notificaciones
 from services.telegram_service.notifier import Notifier
@@ -25,18 +25,9 @@ class ApplicationLayer:
         logger.info("⚙️ Inicializando ApplicationLayer...")
 
         # ======================================================
-        # 1) Crear bot de Telegram y configurar notificador
+        # 2) Crear notificador global
         # ======================================================
-        self.bot_token = TELEGRAM_BOT_TOKEN
-        self.chat_id = str(TELEGRAM_USER_ID)  # Convertir a string
-        
-        if self.bot_token and self.chat_id:
-            bot = Bot(token=self.bot_token)
-            self.notifier = Notifier(bot, self.chat_id)
-            logger.info(f"🤖 Notifier configurado para chat ID: {self.chat_id}")
-        else:
-            logger.warning("⚠️ No se pudo configurar Notifier (falta token o chat_id)")
-            self.notifier = Notifier()  # Instancia vacía
+        self.notifier = Notifier()
 
         # ======================================================
         # 3) Instanciar servicios de aplicación

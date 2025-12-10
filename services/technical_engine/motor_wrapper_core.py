@@ -54,24 +54,16 @@ def _get_ohlcv(symbol: str, interval: str, limit: int = 300) -> pd.DataFrame | N
     """Wrapper seguro sobre get_ohlcv_data."""
     try:
         df = get_ohlcv_data(symbol, interval=interval, limit=limit)
-        if df is None:
+        if df is None or df.empty:
             return None
-            
-        # FIX: Verificar si es DataFrame vacío, no atributo 'empty'
-        if isinstance(df, pd.DataFrame) and df.empty:
-            return None
-            
-        # Si es lista, convertir a DataFrame
-        if isinstance(df, list):
-            if len(df) == 0:
-                return None
-            # Intentar convertir lista a DataFrame
-            try:
-                df = pd.DataFrame(df)
-            except:
-                return None
 
-        return df
+        # Asegurar columnas estándar
+        cols = {"open", "high", "low", "close", "volume"}
+        if not cols.issubset(df.columns):
+            logger.warning(f"⚠️ {symbol} ({interval}) sin columnas OHLCV completas.")
+            return None
+
+        return df.copy()
     except Exception as e:
         logger.error(f"❌ Error obteniendo OHLCV {symbol} ({interval}): {e}")
         return None

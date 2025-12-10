@@ -14,7 +14,6 @@ Incluye:
 """
 
 import os
-import sys
 from dotenv import load_dotenv
 
 # ============================================================
@@ -23,43 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ============================================================
-# 1. CARGA FORZADA DE .env - ABSOLUTAMENTE PRIMERO
-# ============================================================
 
-# Verificar ruta actual
-current_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(current_dir, ".env")
-
-# Debug: mostrar información
-print(f"🔧 [CONFIG] Cargando .env desde: {env_path}")
-print(f"🔧 [CONFIG] Directorio actual: {current_dir}")
-
-# Cargar .env con override
-load_dotenv(dotenv_path=env_path, override=True)
-
-# Verificar que se cargaron
-api_key = os.getenv("BYBIT_API_KEY")
-api_secret = os.getenv("BYBIT_API_SECRET")
-
-if not api_key or not api_secret:
-    print("❌❌❌ ERROR CRÍTICO: BYBIT_API_KEY o BYBIT_API_SECRET NO CARGADAS")
-    print("   Verificando .env...")
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            content = f.read()
-            print(f"   Contenido de .env ({len(content)} bytes):")
-            # Mostrar solo líneas con API
-            for line in content.split('\n'):
-                if 'API' in line or 'BYBIT' in line:
-                    print(f"     {line}")
-    else:
-        print(f"   ❌ Archivo .env no encontrado en: {env_path}")
-    sys.exit(1)
-else:
-    print(f"✅ [CONFIG] Bybit API Key cargada: {api_key[:8]}...")
-    print(f"✅ [CONFIG] Bybit API Secret cargada: {api_secret[:8]}...")
-    
 # ============================================================
 # RUTAS DEL PROYECTO
 # ============================================================
@@ -203,4 +166,3 @@ MACD_SIGNAL = 9
 # Modo de análisis del motor técnico
 # Opciones: "normal" / "aggressive" / "conservative"
 ANALYSIS_MODE = os.getenv("ANALYSIS_MODE", "normal")
-
