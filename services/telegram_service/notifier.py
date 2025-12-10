@@ -7,16 +7,13 @@ logger = logging.getLogger("notifier")
 
 
 class Notifier:
-    """
-    Wrapper centralizado para enviar mensajes a Telegram desde cualquier servicio.
-    """
-
-    def __init__(self, bot: Bot = None, chat_id: str = None):
-        """
-        Si no se pasa bot/chat_id, se obtendrán desde ApplicationLayer.
-        """
+    def __init__(self, bot):
         self.bot = bot
-        self.chat_id = chat_id
+
+    async def send(self, chat_id: int, text: str):
+        if not self.bot:
+            raise RuntimeError("Notifier sin bot configurado")
+        await self.bot.send_message(chat_id=chat_id, text=text)
 
     # ============================================================
     # Métodos de inicialización (útiles cuando se inyecta el bot)
