@@ -6,6 +6,11 @@
 import asyncio
 import logging
 
+from services.reactivation_engine.reactivation_engine import (
+    ReactivationEngine,
+    ReactivationState,
+)
+
 logger = logging.getLogger("signal_reactivation_sync")
 
 INTERVAL_SECONDS = 60  # cada 1 minuto (ajustable)
@@ -40,12 +45,7 @@ async def _evaluate_single_signal(app_layer, signal: dict):
         analysis = await app_layer.analysis_service.analyze(symbol, direction)
 
         # Guardar log en DB
-        app_layer.signal_service.save_analysis_log(
-            signal_id,
-            "reactivation",
-            analysis
-        )
-
+        app_layer.signal_service.save_analysis_log(signal_id, "reactivation", analysis)
 
         if not analysis or analysis.get("error"):
             logger.info(
@@ -90,10 +90,10 @@ async def _evaluate_single_signal(app_layer, signal: dict):
             logger.info(f"↷ Señal {signal_id} sigue pendiente: decisión={decision}")
 
     except Exception as e:
-        logger.error(f"❌ Error evaluando señal ID={signal.get('id')}: {e}", exc_info=True)
-        logger.info(
-            f"❌ Error interno en reactivación de señal ID={signal.get('id')}"
+        logger.error(
+            f"❌ Error evaluando señal ID={signal.get('id')}: {e}", exc_info=True
         )
+        logger.info(f"❌ Error interno en reactivación de señal ID={signal.get('id')}")
 
 
 # ================================================================

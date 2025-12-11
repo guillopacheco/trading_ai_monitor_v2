@@ -121,6 +121,37 @@ def format_analysis_for_telegram(result: dict) -> str:
     if direction_label != "N/D":
         header += f" ({direction_label})"
 
+    # --------------------------------------------------
+    # Detectar TF dominante
+    # --------------------------------------------------
+    dominant_tf = None
+    dominant_reason = None
+
+    timeframes = result.get("timeframes") or []
+    divergences = result.get("divergences") or {}
+
+    # 1️⃣ Si hay divergencias claras, usar ese TF
+    for tf in timeframes:
+        tf_label = tf.get("tf_label")
+        if not tf_label:
+            continue
+
+        # Divergencias por TF
+        if tf.get("div_rsi") not in (None, "ninguna"):
+            dominant_tf = tf_label
+            dominant_reason = f"Divergencia RSI en {tf_label}"
+            break
+
+        if tf.get("div_macd") not in (None, "ninguna"):
+            dominant_tf = tf_label
+            dominant_reason = f"Divergencia MACD en {tf_label}"
+            break
+
+    # 2️⃣ Si no hubo divergencia, usar el TF mayor
+    if not dominant_tf and timeframes:
+        dominant_tf = timeframes[0].get("tf_label")
+        dominant_reason = "TF de mayor jerarquía"
+
     lines = [
         header,
         f"🧭 Contexto: *{context_label}*",
