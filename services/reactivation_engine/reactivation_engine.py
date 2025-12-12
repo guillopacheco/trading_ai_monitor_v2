@@ -4,6 +4,17 @@ from services.technical_engine.technical_engine import analyze as technical_anal
 logger = logging.getLogger("reactivation_engine")
 
 
+# ---------------------------------------------------------
+# Compatibilidad histórica (usado por signal_reactivation_sync)
+# ---------------------------------------------------------
+class ReactivationState:
+    """Estados posibles para reactivación (placeholder)."""
+
+    ALLOWED = "allowed"
+    BLOCKED = "blocked"
+    PENDING = "pending"
+
+
 class ReactivationEngine:
     """
     Motor táctico de reactivación de señales.
