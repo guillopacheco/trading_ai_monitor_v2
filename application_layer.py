@@ -57,9 +57,10 @@ class ApplicationLayer:
         # Coordinadores de alto nivel
         # -----------------------------
         self.signal = SignalCoordinator(
-            signal_service=self.signal_service,
-            analysis_service=self.analysis_service,
-            notifier=self.notifier,
+            self.signal_service,
+            self.reactivation_engine,
+            self.notifier,
+            self.analysis_service,  # técnico/analítico
         )
 
         self.analysis = AnalysisCoordinator(
