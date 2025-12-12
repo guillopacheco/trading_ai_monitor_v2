@@ -1,128 +1,63 @@
-# services/coordinators/signal_coordinator.py
-
 import logging
-from services.application.signal_service import SignalService
-from services.application.analysis_service import AnalysisService
-from services.telegram_service.notifier import Notifier
 
 logger = logging.getLogger("signal_coordinator")
 
 
 class SignalCoordinator:
     """
-    Coordina:
-    • análisis manual de señales (/analizar)
-    • registro y análisis de señales recibidas por Telegram
-    • reactivación automática
-    • reactivación manual
+    Coordina acciones relacionadas con señales:
+
+      • guardar señales nuevas
+      • registrar análisis
+      • interactuar con ReactivationEngine
+      • notificar resultados
     """
 
-    def __init__(self, signal_service: SignalService, analysis_service: AnalysisService, notifier: Notifier):
+    def __init__(self, signal_service, notifier, reactivation_engine):
         self.signal_service = signal_service
-        self.analysis_service = analysis_service
         self.notifier = notifier
+        self.reactivation_engine = reactivation_engine
 
-    # ============================================================
-    # 1. ANÁLISIS MANUAL /analizar
-    # ============================================================
-    async def analyze_signal(self, symbol: str, direction: str):
+    # ---------------------------------------------------------
+    # REGISTRO DE SEÑALES
+    # ---------------------------------------------------------
+    async def save_signal(self, symbol: str, direction: str, entry_price: float):
         """
-        Análisis técnico solicitado por usuario (bot).
+        Guarda una señal recién recibida desde telegram_reader.
+        (Se usa cuando llegan señales del canal VIP)
         """
-        analysis = await self.analysis_service.run(symbol, direction, context="entry")
+        try:
+            signal_id = self.signal_service.save_signal(symbol, direction, entry_price)
+            logger.info(f"📌 Señal registrada: ID={signal_id} {symbol} {direction}")
+            return signal_id
+        except Exception as e:
+            logger.error(f"❌ Error guardando señal: {e}", exc_info=True)
 
-        msg = self.analysis_service.format_for_telegram(
-            symbol, direction, analysis,
-            header="📊 Análisis técnico"
-        )
-
-        return msg
-
-    # ============================================================
-    # 2. PROCESAR SEÑAL RECIBIDA POR TELEGRAM
-    # ============================================================
-    async def process_telegram_signal(self, symbol: str, direction: str, raw_text: str):
+    # ---------------------------------------------------------
+    # EVALUACIÓN / REACTIVACIÓN MANUAL
+    # ---------------------------------------------------------
+    async def evaluate_for_reactivation(self, signal):
         """
-        Registrada desde telegram_reader cuando llega una nueva señal.
+        Evalúa si una señal puede ser reactivada (modo manual).
         """
-        signal_id = self.signal_service.register_signal(symbol, direction, raw_text)
+        symbol = signal["symbol"]
+        direction = signal["direction"]
 
-        # Analizar de inmediato
-        analysis = await self.analysis_service.run(symbol, direction, context="entry")
+        logger.info(f"🔎 Reactivación manual solicitada: {symbol} {direction}")
 
-        # Guardar log técnico de la entrada
-        self.signal_service.save_analysis_log(signal_id, analysis, context="entry")
+        try:
+            result = await self.reactivation_engine.evaluate_signal(symbol, direction)
 
-        # Respuesta para el canal del usuario
-        msg = self.analysis_service.format_for_telegram(
-            symbol, direction, analysis,
-            header="📡 Señal recibida + análisis"
-        )
+            text = (
+                f"📌 *Reactivación manual*\n"
+                f"Par: *{symbol}*\n"
+                f"Dirección: *{direction}*\n"
+                f"Resultado: `{result['reason']}`"
+            )
+            await self.notifier.safe_send(text)
 
-        # Enviar notificación
-        await self.notifier.send_message(msg)
-
-        return msg
-
-    # ============================================================
-    # 3. REACTIVACIÓN AUTOMÁTICA (cada 60s)
-    # ============================================================
-    async def auto_reactivate(self):
-        """
-        Llamado por signal_reactivation_sync.
-        """
-        pending = self.signal_service.get_pending_signals()
-        if not pending:
-            logger.info("♻️ No hay señales pendientes para reactivación.")
-            return
-
-        logger.info(f"♻️ Reactivando {len(pending)} señales pendientes...")
-
-        for signal in pending:
-            try:
-                await self._evaluate_reactivation(signal)
-            except Exception as e:
-                logger.error(f"❌ Error evaluando {signal['symbol']}: {e}", exc_info=True)
-
-    # ============================================================
-    # 4. Evaluar una señal para reactivación
-    # ============================================================
-    async def _evaluate_reactivation(self, record: dict):
-        symbol = record["symbol"]
-        direction = record["direction"]
-        signal_id = record["id"]
-
-        logger.info(f"🔎 Reactivación → {symbol} ({direction})")
-
-        # Ejecutar análisis técnico
-        analysis = await self.analysis_service.run(symbol, direction, context="reactivation")
-
-        # Registrar análisis
-        self.signal_service.save_analysis_log(signal_id, analysis, context="reactivation")
-
-        # Preparar mensaje para Telegram
-        msg = self.analysis_service.format_for_telegram(
-            symbol, direction, analysis,
-            header="♻️ Evaluación de reactivación"
-        )
-        await self.notifier.send_message(msg)
-
-        # Motor indica reactivación
-        if analysis.get("decision") == "reactivate":
-            self.signal_service.mark_reactivated(signal_id)
-            logger.info(f"⚡ Señal reactivada automáticamente: {symbol} {direction}")
-
-        return msg
-
-    # ============================================================
-    # 5. REACTIVACIÓN MANUAL (/reactivar <symbol>)
-    # ============================================================
-    async def manual_reactivate(self, symbol: str):
-        pending = self.signal_service.get_pending_signals()
-
-        target = next((s for s in pending if s["symbol"].lower() == symbol.lower()), None)
-
-        if not target:
-            return f"⚠️ No hay señal pendiente para {symbol}."
-
-        return await self._evaluate_reactivation(target)
+            return result
+        except Exception as e:
+            logger.error(f"❌ Error evaluando reactivación manual: {e}", exc_info=True)
+            await self.notifier.safe_send("❌ Error interno evaluando reactivación.")
+            return None
