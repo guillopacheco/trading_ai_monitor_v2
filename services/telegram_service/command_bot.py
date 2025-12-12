@@ -21,6 +21,13 @@ class CommandBot:
         self.application = application
 
         self.application.add_handler(CommandHandler("analizar", self.cmd_analizar))
+        self.bot.add_handler(
+            CommandHandler("activar_monitor", self.cmd_activar_monitor)
+        )
+        self.bot.add_handler(
+            CommandHandler("detener_monitor", self.cmd_detener_monitor)
+        )
+        self.bot.add_handler(CommandHandler("estado_monitor", self.cmd_estado_monitor))
 
     async def cmd_analizar(self, update, context):
         symbol = context.args[0].upper()
@@ -55,6 +62,29 @@ async def start_command_bot(app_layer):
     )
 
     self.notifier.configure(self.bot, DEFAULT_CHAT_ID)
+
+
+async def cmd_activar_monitor(self, update, context):
+    ok = await self.app_layer.start_position_monitor()
+    if ok:
+        await self.app_layer.notifier.safe_send("🟩 *Monitor de posiciones activado.*")
+    else:
+        await self.app_layer.notifier.safe_send("⚠️ El monitor ya estaba activo.")
+
+
+async def cmd_detener_monitor(self, update, context):
+    ok = self.app_layer.stop_position_monitor()
+    if ok:
+        await self.app_layer.notifier.safe_send("🟥 *Monitor de posiciones detenido.*")
+    else:
+        await self.app_layer.notifier.safe_send("⚠️ El monitor ya estaba detenido.")
+
+
+async def cmd_estado_monitor(self, update, context):
+    if self.app_layer.is_monitor_running():
+        await self.app_layer.notifier.safe_send("🟦 *Monitor de posiciones:* ACTIVO")
+    else:
+        await self.app_layer.notifier.safe_send("⬜ *Monitor de posiciones:* INACTIVO")
 
     # ---------------------------------------------------------
     # MODO ASÍNCRONO CORRECTO (no usar run_polling())

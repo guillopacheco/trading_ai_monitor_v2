@@ -17,6 +17,9 @@ from services.coordinators.analysis_coordinator import AnalysisCoordinator
 from services.coordinators.signal_coordinator import SignalCoordinator
 from services.coordinators.position_coordinator import PositionCoordinator
 
+from services.open_position_engine.open_position_engine import OpenPositionEngine
+from services.open_position_engine.position_monitor import PositionMonitor
+from services.positions_service.operation_tracker import OperationTracker
 
 logger = logging.getLogger("application_layer")
 
@@ -32,6 +35,17 @@ class ApplicationLayer:
         # 5) Configurar token del bot
         # ======================================================
         self.bot_token = TELEGRAM_BOT_TOKEN
+
+        self.operation_tracker = OperationTracker()
+        self.open_position_engine = OpenPositionEngine(
+            notifier=self.notifier, tracker=self.operation_tracker
+        )
+
+        self.position_monitor = PositionMonitor(
+            engine=self.open_position_engine, notifier=self.notifier
+        )
+
+        self.monitor_task = None
 
         logger.info("✅ ApplicationLayer inicializado correctamente.")
 
@@ -58,3 +72,21 @@ class ApplicationLayer:
     async def monitor_positions(self):
         """Activar monitoreo general de posiciones."""
         return await self.position.monitor()
+
+    async def start_position_monitor(self):
+        if self.monitor_task and not self.monitor_task.done():
+            return False  # ya estaba corriendo
+
+        self.monitor_task = asyncio.create_task(self.position_monitor.start())
+        return True
+
+    def stop_position_monitor(self):
+        if self.position_monitor:
+            self.position_monitor.stop()
+            return True
+        return False
+
+    def is_monitor_running(self):
+        if self.monitor_task and not self.monitor_task.done():
+            return True
+        return False
