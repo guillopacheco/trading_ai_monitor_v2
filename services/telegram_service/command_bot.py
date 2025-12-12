@@ -1,100 +1,135 @@
-# services/telegram_service/command_bot.py
-
 import logging
-from telegram.ext import Application, CommandHandler
-from config import TELEGRAM_BOT_TOKEN
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 logger = logging.getLogger("command_bot")
 
-# -------------------------------------------------------------
-# Comandos
-# -------------------------------------------------------------
-
-
-async def cmd_start(update, context):
-    await update.message.reply_text("🤖 Bot activo. Usa /analizar SYMBOL long|short")
-
 
 class CommandBot:
-    def __init__(self, app_layer, application):
-        self.app = app_layer
+    """
+    Bot de comandos Telegram para Trading AI Monitor.
+    Se conecta a ApplicationLayer sin lógica de negocio interna.
+    """
+
+    def __init__(self, app_layer, application: Application):
+        self.app_layer = app_layer
         self.application = application
 
+        # Registrar comandos
+        self._register_handlers()
+
+    # ----------------------------------------------------------------------
+    # Registrar comandos oficiales
+    # ----------------------------------------------------------------------
+    def _register_handlers(self):
+        self.application.add_handler(CommandHandler("start", self.cmd_start))
+        self.application.add_handler(CommandHandler("help", self.cmd_help))
+        self.application.add_handler(CommandHandler("estado", self.cmd_estado))
+
         self.application.add_handler(CommandHandler("analizar", self.cmd_analizar))
-        self.bot.add_handler(
-            CommandHandler("activar_monitor", self.cmd_activar_monitor)
-        )
-        self.bot.add_handler(
-            CommandHandler("detener_monitor", self.cmd_detener_monitor)
-        )
-        self.bot.add_handler(CommandHandler("estado_monitor", self.cmd_estado_monitor))
+        self.application.add_handler(CommandHandler("reactivar", self.cmd_reactivar))
 
+        self.application.add_handler(CommandHandler("reanudar", self.cmd_reanudar))
+        self.application.add_handler(CommandHandler("detener", self.cmd_detener))
+
+        # Captura de texto no reconocido
+        self.application.add_handler(MessageHandler(filters.TEXT, self.cmd_unknown))
+
+    # ----------------------------------------------------------------------
+    # Comandos
+    # ----------------------------------------------------------------------
+
+    async def cmd_start(self, update, context):
+        await update.message.reply_text(
+            "🤖 *Trading AI Monitor activo*\n"
+            "Usa /help para ver los comandos disponibles.",
+            parse_mode="Markdown",
+        )
+
+    async def cmd_help(self, update, context):
+        text = (
+            "📘 *Comandos disponibles*\n\n"
+            "• /analizar SYMBOL long|short — Análisis inmediato\n"
+            "• /reactivar ID — Fuerza reactivación de una señal\n"
+            "• /estado — Estado del sistema\n"
+            "• /reanudar — Iniciar monitoreo de posiciones\n"
+            "• /detener — Detener monitoreo de posiciones\n"
+            "• /help — Ayuda\n"
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    async def cmd_estado(self, update, context):
+        status = self.app_layer.get_status()
+
+        text = (
+            "📊 *Estado del sistema*\n\n"
+            f"• Reactivación activa: `{status['reactivation_running']}`\n"
+            f"• Monitoreo de posiciones: `{status['position_monitor_running']}`\n"
+            f"• Usuario: `{status['telegram_user']}`\n"
+        )
+
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    # ----------------------------------------------------------------------
+    # Análisis bajo demanda
+    # ----------------------------------------------------------------------
     async def cmd_analizar(self, update, context):
-        symbol = context.args[0].upper()
-        direction = context.args[1].lower()
+        try:
+            parts = update.message.text.split()
 
-        await self.app.analysis.analyze_request(
-            symbol, direction, update.effective_chat.id
+            if len(parts) < 3:
+                return await update.message.reply_text(
+                    "Uso correcto:\n/analizar SYMBOL long|short"
+                )
+
+            symbol = parts[1].upper()
+            direction = parts[2].lower()
+            chat_id = update.message.chat_id
+
+            await self.app_layer.analyze_symbol(symbol, direction, chat_id)
+
+        except Exception as e:
+            logger.error(f"Error en /analizar: {e}", exc_info=True)
+            await update.message.reply_text("❌ Error procesando análisis.")
+
+    # ----------------------------------------------------------------------
+    # Reactivación manual
+    # ----------------------------------------------------------------------
+    async def cmd_reactivar(self, update, context):
+        try:
+            parts = update.message.text.split()
+            if len(parts) < 2:
+                return await update.message.reply_text("Uso: /reactivar ID")
+
+            signal_id = int(parts[1])
+            await self.app_layer.evaluate_reactivation(signal_id)
+
+        except Exception as e:
+            logger.error(f"Error en /reactivar: {e}", exc_info=True)
+            await update.message.reply_text("❌ Error procesando reactivación.")
+
+    # ----------------------------------------------------------------------
+    # Monitoreo de posiciones abiertas
+    # ----------------------------------------------------------------------
+    async def cmd_reanudar(self, update, context):
+        try:
+            await self.app_layer.start_position_monitor()
+            await update.message.reply_text("▶️ *Monitoreo de posiciones reanudado*")
+        except Exception as e:
+            logger.error(f"Error en /reanudar: {e}", exc_info=True)
+            await update.message.reply_text("❌ No se pudo iniciar monitoreo.")
+
+    async def cmd_detener(self, update, context):
+        try:
+            await self.app_layer.stop_position_monitor()
+            await update.message.reply_text("⏹ *Monitoreo detenido*")
+        except Exception as e:
+            logger.error(f"Error en /detener: {e}", exc_info=True)
+            await update.message.reply_text("❌ No se pudo detener monitoreo.")
+
+    # ----------------------------------------------------------------------
+    # Captura de texto desconocido
+    # ----------------------------------------------------------------------
+    async def cmd_unknown(self, update, context):
+        await update.message.reply_text(
+            "❓ No entiendo ese comando. Usa /help para ver opciones."
         )
-
-    def run(self):
-        self.application.run_polling()
-
-
-# -------------------------------------------------------------
-# Inicialización del bot
-# -------------------------------------------------------------
-
-
-async def start_command_bot(app_layer):
-    if not TELEGRAM_BOT_TOKEN:
-        logger.error("❌ ApplicationLayer no tiene bot_token configurado.")
-        return
-
-    logger.info("🤖 Inicializando bot de comandos…")
-
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # Handlers
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(
-        CommandHandler("analizar", lambda u, c: cmd_analizar(u, c, app_layer))
-    )
-
-    self.notifier.configure(self.bot, DEFAULT_CHAT_ID)
-
-
-async def cmd_activar_monitor(self, update, context):
-    ok = await self.app_layer.start_position_monitor()
-    if ok:
-        await self.app_layer.notifier.safe_send("🟩 *Monitor de posiciones activado.*")
-    else:
-        await self.app_layer.notifier.safe_send("⚠️ El monitor ya estaba activo.")
-
-
-async def cmd_detener_monitor(self, update, context):
-    ok = self.app_layer.stop_position_monitor()
-    if ok:
-        await self.app_layer.notifier.safe_send("🟥 *Monitor de posiciones detenido.*")
-    else:
-        await self.app_layer.notifier.safe_send("⚠️ El monitor ya estaba detenido.")
-
-
-async def cmd_estado_monitor(self, update, context):
-    if self.app_layer.is_monitor_running():
-        await self.app_layer.notifier.safe_send("🟦 *Monitor de posiciones:* ACTIVO")
-    else:
-        await self.app_layer.notifier.safe_send("⬜ *Monitor de posiciones:* INACTIVO")
-
-    # ---------------------------------------------------------
-    # MODO ASÍNCRONO CORRECTO (no usar run_polling())
-    # ---------------------------------------------------------
-
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-
-    logger.info("🤖 Bot listo. Iniciando polling…")
-
-    # No bloquear loop: devolver app para apagar después si se desea
-    return app
