@@ -76,8 +76,8 @@ class ApplicationLayer:
         )
 
         self.position = PositionCoordinator(
-            operation_service=self.operation_service,
-            analysis_service=self.analysis_service,
+            monitor=self.position_monitor,
+            tracker=self.operation_tracker,
             notifier=self.notifier,
         )
 

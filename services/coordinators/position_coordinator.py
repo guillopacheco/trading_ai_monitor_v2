@@ -5,44 +5,38 @@ logger = logging.getLogger("position_coordinator")
 
 class PositionCoordinator:
     """
-    Coordina el monitoreo continuo de operaciones abiertas.
+    Coordina todo lo relacionado con posiciones abiertas:
+    - Iniciar/detener el monitor async
+    - Solicitar evaluación inmediata
+    - Enviar notificaciones
     """
 
-    def __init__(self, position_service, position_monitor, notifier):
-        self.position_service = position_service
-        self.position_monitor = position_monitor
+    def __init__(self, monitor, tracker, notifier):
+        self.monitor = monitor
+        self.tracker = tracker
         self.notifier = notifier
 
-        logger.info("🔧 PositionCoordinator inicializado correctamente.")
-
-    # ---------------------------------------------------------
-    # CONTROL DEL MONITOR
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # Control del monitor
+    # --------------------------------------------------------
     async def start_monitor(self):
-        logger.info("▶️ Iniciando monitoreo de posiciones abiertas...")
-        await self.notifier.safe_send("📡 Monitoreo de operaciones abierto.")
-        self.position_monitor.start()
+        await self.monitor.start()
 
     async def stop_monitor(self):
-        logger.info("⏹ Deteniendo monitoreo de posiciones abiertas...")
-        self.position_monitor.stop()
-        await self.notifier.safe_send("🛑 Monitoreo de operaciones detenido.")
+        self.monitor.stop()
 
-    # ---------------------------------------------------------
-    # EVALUACIÓN BAJO DEMANDA
-    # ---------------------------------------------------------
+    def is_running(self) -> bool:
+        return self.monitor.is_running()
+
+    # --------------------------------------------------------
+    # Evaluación manual inmediata (comando /evaluar por ejemplo)
+    # --------------------------------------------------------
     async def evaluate_now(self):
-        """
-        Evalúa inmediatamente todas las posiciones abiertas.
-        """
-        logger.info("🔍 Evaluación bajo demanda de posiciones abiertas...")
-
-        positions = self.position_service.get_open_positions()
-
-        if not positions:
-            await self.notifier.safe_send("ℹ️ No hay posiciones abiertas.")
-            return
-
-        for pos in positions:
-            evaluation = await self.position_monitor.evaluate_position(pos)
-            await self.notifier.safe_send(evaluation.to_telegram_message())
+        try:
+            result = await self.monitor.evaluate_once()
+            await self.notifier.safe_send("📊 Evaluación manual completada.")
+            return result
+        except Exception as e:
+            logger.exception(f"❌ Error evaluando posiciones manualmente: {e}")
+            await self.notifier.safe_send("❌ Error evaluando posiciones.")
+            return None
