@@ -65,9 +65,10 @@ class ApplicationLayer:
         # ----------------------------------------------------
         self.signal = SignalCoordinator(
             self.signal_service,
-            self.reactivation_engine,
+            self.analysis,
             self.notifier,
-            self.analysis_service,  # technical_engine real
+            self.technical_engine,
+            self.reactivation_engine,
         )
 
         self.analysis = AnalysisCoordinator(
