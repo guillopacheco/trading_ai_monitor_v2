@@ -1,47 +1,31 @@
 import logging
 from telegram import Bot
+from config import TELEGRAM_USER_ID
 
 logger = logging.getLogger("notifier")
 
 
 class Notifier:
     """
-    Capa unificada para enviar mensajes a Telegram.
-    Se configura dinámicamente desde ApplicationLayer.set_bot().
+    Enviar mensajes a Telegram usando el bot ya inicializado en main.py
     """
 
-    def __init__(self):
-        self.bot: Bot | None = None
-        self.chat_id: int | None = None
-
-    # ---------------------------------------------------------
-    # CONFIGURACIÓN
-    # ---------------------------------------------------------
-    def configure(self, bot: Bot, chat_id: int):
-        """
-        Se llama desde ApplicationLayer.set_bot() para inyectar
-        el bot real y el chat destino.
-        """
+    def __init__(self, bot: Bot):
         self.bot = bot
-        self.chat_id = chat_id
-        logger.info("📨 Notifier configurado correctamente con bot y chat_id.")
+        self.chat_id = TELEGRAM_USER_ID
 
-    # ---------------------------------------------------------
-    # MÉTODOS SEGUROS
-    # ---------------------------------------------------------
     async def safe_send(self, text: str):
-        """
-        Envía mensajes de forma segura sin detener la app.
-        """
-        if not self.bot or not self.chat_id:
-            logger.error("❌ Notifier no configurado con bot/chat_id")
+        """Envía mensaje a Telegram, capturando errores sin romper el sistema."""
+        if not self.bot:
+            logger.error("❌ Notifier no configurado con bot.")
             return
 
         try:
             await self.bot.send_message(chat_id=self.chat_id, text=text)
+            logger.info(f"📨 Notificado: {text[:60]}")
         except Exception as e:
-            logger.error(f"❌ Error enviando mensaje Telegram: {e}", exc_info=True)
+            logger.error(f"❌ Error enviando mensaje Telegram: {e}")
 
     async def send_message(self, text: str):
-        """Alias por compatibilidad."""
+        """Alias por compatibilidad con módulos antiguos."""
         await self.safe_send(text)
