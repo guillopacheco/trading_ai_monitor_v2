@@ -48,6 +48,9 @@ class PositionMonitor:
             )
             await asyncio.sleep(sleep_time)
 
+    def is_running(self) -> bool:
+        return self._running
+
     # ============================================================
     # 🔴 Detener monitor
     # ============================================================
