@@ -1,5 +1,3 @@
-# application_layer.py
-
 import logging
 
 from services.telegram_service.notifier import Notifier
@@ -12,55 +10,64 @@ from services.coordinators.signal_coordinator import SignalCoordinator
 from services.coordinators.analysis_coordinator import AnalysisCoordinator
 from services.coordinators.position_coordinator import PositionCoordinator
 
+from services.reactivation_engine.reactivation_engine import ReactivationEngine
+
 from services.open_position_engine.open_position_engine import OpenPositionEngine
 from services.open_position_engine.position_monitor import PositionMonitor
+
 from services.positions_service.operation_tracker import OperationTracker
+
 
 logger = logging.getLogger("application_layer")
 
 
 class ApplicationLayer:
     """
-    Capa orquestadora de alto nivel.
-
-    Aquí se conectan:
-    - Servicios de aplicación (signals, analysis, operations)
-    - Coordinadores (señales, análisis bajo demanda, posiciones)
-    - Motores tácticos (open_position_engine + position_monitor)
+    Clúster central del sistema.
+    Conecta servicios, coordinadores y motores tácticos.
     """
 
-    def __init__(self, notifier: Notifier):
-        logger.info("⚙️ Inicializando ApplicationLayer...")
-        self.notifier = notifier
+    def __init__(self, bot):
 
-        # -----------------------------
-        # Servicios base
-        # -----------------------------
+        logger.info("⚙️ Inicializando ApplicationLayer...")
+
+        # ----------------------------------------------------
+        # NOTIFICADOR
+        # ----------------------------------------------------
+        self.notifier = Notifier(bot)
+
+        # ----------------------------------------------------
+        # SERVICIOS BASE
+        # ----------------------------------------------------
         self.signal_service = SignalService()
         self.analysis_service = AnalysisService()
         self.operation_service = OperationService(self.notifier)
 
-        # -----------------------------
-        # Motor táctico de posiciones abiertas
-        # -----------------------------
+        # ----------------------------------------------------
+        # MOTORES DE APOYO
+        # ----------------------------------------------------
+        self.reactivation_engine = ReactivationEngine()  # <-- antes NO existía
+
         self.operation_tracker = OperationTracker()
+
         self.open_position_engine = OpenPositionEngine(
             notifier=self.notifier,
             tracker=self.operation_tracker,
         )
+
         self.position_monitor = PositionMonitor(
             engine=self.open_position_engine,
             notifier=self.notifier,
         )
 
-        # -----------------------------
-        # Coordinadores de alto nivel
-        # -----------------------------
+        # ----------------------------------------------------
+        # COORDINADORES (interfaz de alto nivel)
+        # ----------------------------------------------------
         self.signal = SignalCoordinator(
             self.signal_service,
             self.reactivation_engine,
             self.notifier,
-            self.analysis_service,  # técnico/analítico
+            self.analysis_service,  # technical_engine real
         )
 
         self.analysis = AnalysisCoordinator(
@@ -74,43 +81,33 @@ class ApplicationLayer:
             notifier=self.notifier,
         )
 
+        # Monitor async
         self._monitor_task = None
 
         logger.info("✅ ApplicationLayer inicializado correctamente.")
 
     # ============================================================
-    # Atajos usados por command_bot / telegram_reader
+    # ATAJOS PARA USO POR BOTS/comandos
     # ============================================================
 
     async def analizar_manual(self, symbol: str, direction: str, chat_id: int):
-        """
-        Wrapper para /analizar <symbol> <long|short>
-        """
         await self.analysis.analyze_request(symbol, direction, chat_id)
 
     async def procesar_senal_telegram(self, signal):
-        """
-        Llamado desde telegram_reader cuando llega una señal del canal VIP.
-        """
         await self.signal.process_new_signal(signal)
 
     # ============================================================
-    # Control del monitor de posiciones abiertas (Punto C)
+    # CONTROL DEL MONITOR DE POSICIONES ABIERTAS
     # ============================================================
 
     async def start_open_positions_monitor(self):
-        """
-        Inicia el monitor de posiciones abiertas en background.
-        Lo ideal es que command_bot lo llame desde un comando tipo /monitor_on.
-        """
+        import asyncio
+
         if self._monitor_task and not self._monitor_task.done():
-            logger.info("ℹ️ Monitor de posiciones ya estaba en ejecución.")
+            logger.info("ℹ️ PositionMonitor ya estaba activo.")
             return
 
         logger.info("▶️ Iniciando PositionMonitor...")
-        # PositionMonitor.start() es un bucle async infinito controlado por su flag interno.
-        # Lo envolvemos en un task para no bloquear.
-        import asyncio
 
         self._monitor_task = asyncio.create_task(self.position_monitor.start())
 
