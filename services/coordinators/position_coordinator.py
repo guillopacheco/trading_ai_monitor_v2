@@ -5,61 +5,44 @@ logger = logging.getLogger("position_coordinator")
 
 class PositionCoordinator:
     """
-    Coordina el monitoreo de operaciones abiertas.
-
-    Funciones:
-      • Iniciar monitor de posiciones (/reanudar)
-      • Detener monitor (/detener)
-      • Mostrar estado (/estado)
+    Coordina el monitoreo continuo de operaciones abiertas.
     """
 
-    def __init__(self, position_monitor, notifier):
+    def __init__(self, position_service, position_monitor, notifier):
+        self.position_service = position_service
         self.position_monitor = position_monitor
         self.notifier = notifier
 
+        logger.info("🔧 PositionCoordinator inicializado correctamente.")
+
     # ---------------------------------------------------------
-    # INICIAR MONITOR
+    # CONTROL DEL MONITOR
     # ---------------------------------------------------------
     async def start_monitor(self):
-        """
-        Llamado desde /reanudar.
-        """
-        try:
-            await self.position_monitor.start()
-            await self.notifier.safe_send("📡 *Monitor de operaciones iniciado*.")
-        except Exception as e:
-            logger.error(
-                f"❌ Error iniciando monitor de posiciones: {e}", exc_info=True
-            )
-            await self.notifier.safe_send("❌ Error iniciando monitor de posiciones.")
+        logger.info("▶️ Iniciando monitoreo de posiciones abiertas...")
+        await self.notifier.safe_send("📡 Monitoreo de operaciones abierto.")
+        self.position_monitor.start()
 
-    # ---------------------------------------------------------
-    # DETENER MONITOR
-    # ---------------------------------------------------------
     async def stop_monitor(self):
-        """
-        Llamado desde /detener.
-        """
-        try:
-            self.position_monitor.stop()
-            await self.notifier.safe_send("⏹ *Monitor de operaciones detenido*.")
-        except Exception as e:
-            logger.error(
-                f"❌ Error deteniendo monitor de posiciones: {e}", exc_info=True
-            )
-            await self.notifier.safe_send("❌ Error deteniendo monitor de posiciones.")
+        logger.info("⏹ Deteniendo monitoreo de posiciones abiertas...")
+        self.position_monitor.stop()
+        await self.notifier.safe_send("🛑 Monitoreo de operaciones detenido.")
 
     # ---------------------------------------------------------
-    # ESTADO ACTUAL
+    # EVALUACIÓN BAJO DEMANDA
     # ---------------------------------------------------------
-    def get_status(self) -> dict:
+    async def evaluate_now(self):
         """
-        Usado por /estado para reportar si el monitor está corriendo.
+        Evalúa inmediatamente todas las posiciones abiertas.
         """
-        return {
-            "running": (
-                self.position_monitor.is_running()
-                if hasattr(self.position_monitor, "is_running")
-                else False
-            )
-        }
+        logger.info("🔍 Evaluación bajo demanda de posiciones abiertas...")
+
+        positions = self.position_service.get_open_positions()
+
+        if not positions:
+            await self.notifier.safe_send("ℹ️ No hay posiciones abiertas.")
+            return
+
+        for pos in positions:
+            evaluation = await self.position_monitor.evaluate_position(pos)
+            await self.notifier.safe_send(evaluation.to_telegram_message())

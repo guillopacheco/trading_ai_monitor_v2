@@ -5,59 +5,65 @@ logger = logging.getLogger("signal_coordinator")
 
 class SignalCoordinator:
     """
-    Coordina acciones relacionadas con señales:
-
-      • guardar señales nuevas
-      • registrar análisis
-      • interactuar con ReactivationEngine
-      • notificar resultados
+    Coordina:
+    - Nuevas señales recibidas
+    - Reactivación avanzada
     """
 
-    def __init__(self, signal_service, notifier, reactivation_engine):
+    def __init__(self, signal_service, reactivation_engine, notifier, technical_engine):
         self.signal_service = signal_service
-        self.notifier = notifier
         self.reactivation_engine = reactivation_engine
+        self.notifier = notifier
+        self.technical_engine = technical_engine
+
+        logger.info("🔧 SignalCoordinator inicializado correctamente.")
 
     # ---------------------------------------------------------
-    # REGISTRO DE SEÑALES
+    # NUEVA SEÑAL
     # ---------------------------------------------------------
-    async def save_signal(self, symbol: str, direction: str, entry_price: float):
+    async def process_new_signal(self, signal):
         """
-        Guarda una señal recién recibida desde telegram_reader.
-        (Se usa cuando llegan señales del canal VIP)
+        Maneja una señal recién llegada del canal VIP.
         """
-        try:
-            signal_id = self.signal_service.save_signal(symbol, direction, entry_price)
-            logger.info(f"📌 Señal registrada: ID={signal_id} {symbol} {direction}")
-            return signal_id
-        except Exception as e:
-            logger.error(f"❌ Error guardando señal: {e}", exc_info=True)
+        logger.info(f"📥 Nueva señal recibida | {signal.symbol} {signal.direction}")
+
+        # Guardar en la base de datos
+        self.signal_service.save_signal(signal)
+
+        # Analizar inmediatamente (contexto = 'entry')
+        analysis = await self.technical_engine.analyze(
+            signal.symbol, signal.direction, context="entry"
+        )
+
+        # Guardar log del análisis
+        self.signal_service.save_analysis_log(signal.id, analysis)
+
+        # Notificar al usuario
+        await self.notifier.safe_send(
+            f"📊 *Nueva señal analizada: {signal.symbol}*\n"
+            f"Dirección: *{signal.direction}*\n"
+            f"Decisión: `{analysis['decision']}`\n"
+            f"Confianza: *{analysis['confidence']}*\n"
+        )
 
     # ---------------------------------------------------------
-    # EVALUACIÓN / REACTIVACIÓN MANUAL
+    # REACTIVACIÓN AVANZADA
     # ---------------------------------------------------------
-    async def evaluate_for_reactivation(self, signal):
+    async def evaluate_reactivation(self, signal):
         """
-        Evalúa si una señal puede ser reactivada (modo manual).
+        Evalúa si una señal ignorada debe reactivarse.
+        Usa ReactivationEngine.
         """
-        symbol = signal["symbol"]
-        direction = signal["direction"]
+        logger.info(f"♻️ Evaluando reactivación para ID={signal.id}")
 
-        logger.info(f"🔎 Reactivación manual solicitada: {symbol} {direction}")
+        result = await self.reactivation_engine.evaluate(signal)
 
-        try:
-            result = await self.reactivation_engine.evaluate_signal(symbol, direction)
+        # Guardamos trace
+        self.signal_service.save_reactivation_state(
+            signal.id, result.state, result.to_dict()
+        )
 
-            text = (
-                f"📌 *Reactivación manual*\n"
-                f"Par: *{symbol}*\n"
-                f"Dirección: *{direction}*\n"
-                f"Resultado: `{result['reason']}`"
-            )
-            await self.notifier.safe_send(text)
+        # Notificación
+        await self.notifier.safe_send(result.to_telegram_message())
 
-            return result
-        except Exception as e:
-            logger.error(f"❌ Error evaluando reactivación manual: {e}", exc_info=True)
-            await self.notifier.safe_send("❌ Error interno evaluando reactivación.")
-            return None
+        return result
