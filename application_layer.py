@@ -32,7 +32,9 @@ class ApplicationLayer:
         # SERVICIOS BASE
         # -----------------------------
         self.signal_service = SignalService()
-        self.operation_service = OperationService()
+        # Operation Service
+        self.operation_service = OperationService(self.notifier)
+
         self.analysis = AnalysisService()
 
         # -----------------------------
