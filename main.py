@@ -26,7 +26,7 @@ async def main():
     bot_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Conectar el notifier dentro del ApplicationLayer
-    app_layer.set_bot(bot_app.bot)
+    app_layer = ApplicationLayer(bot_app.bot)
 
     # ---------------------------------------------------------
     # 3) Cargar CommandBot (registrar comandos)
