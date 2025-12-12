@@ -67,3 +67,41 @@ class SignalCoordinator:
         await self.notifier.safe_send(result.to_telegram_message())
 
         return result
+
+    async def auto_reactivate(self):
+        """
+        Revisa todas las señales pendientes en la base de datos
+        y decide si reactivarlas, mantenerlas pendientes o descartarlas.
+        """
+
+        pending = self.signal_service.get_pending_signals()
+        if not pending:
+            return
+
+        for signal in pending:
+            try:
+                # 1. Ejecutar análisis técnico completo
+                analysis = await self.engine.run(
+                    signal.symbol, signal.direction, context="reactivation"
+                )
+
+                # 2. Evaluar si debe reactivarse
+                decision = self.signal_service.evaluate_reactivation_logic(
+                    signal, analysis
+                )
+
+                # 3. Guardar resultado
+                self.signal_service.update_reactivation_status(
+                    signal.id, decision, analysis
+                )
+
+                # 4. Notificación
+                await self.notifier.safe_send(
+                    f"🔄 Reactivación para {signal.symbol}: *{decision}*"
+                )
+
+            except Exception as e:
+                logger.exception(f"❌ Error evaluando reactivación ID={signal.id}: {e}")
+                await self.notifier.safe_send(
+                    f"❌ Error procesando reactivación de {signal.symbol}"
+                )
