@@ -19,7 +19,9 @@ async def post_init(app):
     logger.info("✅ Background tasks iniciadas correctamente")
 
 
-application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+application = (
+    Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+)
 
 application.run_polling()
 
