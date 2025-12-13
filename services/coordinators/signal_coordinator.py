@@ -15,102 +15,93 @@ class SignalCoordinator:
         self.signal_service = signal_service
         self.analysis_service = analysis_service
         self.notifier = notifier
-        self.engine = technical_engine
+        self.engine = technical_engine  # Motor técnico correcto
         self.reactivation_engine = reactivation_engine
 
         logger.info("🔧 SignalCoordinator inicializado correctamente.")
 
     # ---------------------------------------------------------
-    # NUEVA SEÑAL
+    # 1) PROCESAR SEÑAL RECIÉN LLEGADA
     # ---------------------------------------------------------
     async def process_new_signal(self, signal):
-        """
-        Maneja una señal recién llegada del canal VIP.
-        """
-        logger.info(f"📥 Nueva señal recibida | {signal.symbol} {signal.direction}")
+        logger.info(f"📥 Nueva señal | {signal.symbol} {signal.direction}")
 
-        # Guardar en la base de datos
+        # Guardar la señal
         self.signal_service.save_signal(signal)
 
-        # Analizar inmediatamente (contexto = 'entry')
-        analysis = await self.technical_engine.analyze(
+        # Analizar entrada
+        analysis = await self.engine.analyze(
             signal.symbol, signal.direction, context="entry"
         )
 
-        # Guardar log del análisis
+        # Guardar trace del análisis
         self.signal_service.save_analysis_log(signal.id, analysis)
 
-        # Notificar al usuario
+        # Notificación en Telegram
         await self.notifier.safe_send(
-            f"📊 *Nueva señal analizada: {signal.symbol}*\n"
+            f"📊 *Nueva señal: {signal.symbol}*\n"
             f"Dirección: *{signal.direction}*\n"
             f"Decisión: `{analysis['decision']}`\n"
-            f"Confianza: *{analysis['confidence']}*\n"
+            f"Confianza: *{analysis['confidence']}*"
         )
 
     # ---------------------------------------------------------
-    # REACTIVACIÓN AVANZADA
+    # 2) EVALUAR UNA SEÑAL INDIVIDUAL PARA REACTIVACIÓN
     # ---------------------------------------------------------
     async def evaluate_reactivation(self, signal):
-        """
-        Evalúa si una señal ignorada debe reactivarse.
-        Usa ReactivationEngine.
-        """
-        logger.info(f"♻️ Evaluando reactivación para ID={signal.id}")
+        logger.info(f"♻️ Reactivación manual ID={signal.id}")
 
         result = await self.reactivation_engine.evaluate(signal)
 
-        # Guardamos trace
         self.signal_service.save_reactivation_state(
             signal.id, result.state, result.to_dict()
         )
 
-        # Notificación
         await self.notifier.safe_send(result.to_telegram_message())
 
         return result
 
-        async def auto_reactivate(self):
-            """
-            Revisa señales pendientes de reactivación y aplica la lógica avanzada.
-            """
+    # ---------------------------------------------------------
+    # 3) AUTO-REACTIVACIÓN INTELIGENTE
+    # ---------------------------------------------------------
+    async def auto_reactivate(self):
+        """
+        Revisa señales pendientes y decide si reactivarlas.
+        """
+        pending = self.signal_service.get_pending_signals()
+        if not pending:
+            return
 
-            pending = self.signal_service.get_pending_signals()
-            if not pending:
-                return
+        logger.info(f"🔄 {len(pending)} señales pendientes para reactivación.")
 
-            for signal in pending:
-                try:
-                    signal_id = signal["id"]
-                    symbol = signal["symbol"]
-                    direction = signal["direction"]
+        for s in pending:
+            try:
+                signal_id = s["id"]
+                symbol = s["symbol"]
+                direction = s["direction"]
 
-                    # 1. Ejecutar análisis técnico completo
-                    analysis = await self.engine.run(
-                        symbol, direction, context="reactivation"
-                    )
+                logger.info(f"🔍 Evaluando reactivación | ID={signal_id} {symbol}")
 
-                    # 2. Lógica de decisión avanzada
-                    decision = (
-                        self.reactivation_engine.evaluate_signal_for_reactivation(
-                            signal, analysis
-                        )
-                    )
+                # 1. Análisis técnico actual
+                analysis = await self.engine.analyze(
+                    symbol, direction, context="reactivation"
+                )
 
-                    # 3. Guardar resultado
-                    self.signal_service.update_reactivation_status(
-                        signal_id, decision, analysis
-                    )
+                # 2. Decisión táctica de reactivación
+                decision = await self.reactivation_engine.evaluate_dict_signal(
+                    s, analysis
+                )
 
-                    # 4. Notificación
-                    await self.notifier.safe_send(
-                        f"🔄 Reactivación {symbol}: *{decision}*"
-                    )
+                # 3. Guardar decisión
+                self.signal_service.update_reactivation_status(
+                    signal_id, decision, analysis
+                )
 
-                except Exception as e:
-                    logger.exception(
-                        f"❌ Error evaluando reactivación ID={signal_id}: {e}"
-                    )
-                    await self.notifier.safe_send(
-                        f"❌ Error procesando reactivación de {symbol}"
-                    )
+                # 4. Notificación
+                await self.notifier.safe_send(f"🔄 Reactivación {symbol}: *{decision}*")
+
+            except Exception as e:
+                logger.exception(f"❌ Error en reactivación ID={signal_id}: {e}")
+                await self.notifier.safe_send(
+                    f"❌ Error procesando reactivación de {symbol}"
+                )
