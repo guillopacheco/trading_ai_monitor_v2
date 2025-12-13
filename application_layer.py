@@ -1,12 +1,12 @@
 # application_layer.py
+
 import logging
 
 from services.telegram_service.notifier import Notifier
 from services.application.analysis_service import AnalysisService
-
-from services.reactivation_engine.reactivation_engine import ReactivationEngine
 from services.application.signal_service import SignalService
 
+from services.reactivation_engine.reactivation_engine import ReactivationEngine
 from services.coordinators.signal_coordinator import SignalCoordinator
 
 logger = logging.getLogger("application_layer")
@@ -14,23 +14,24 @@ logger = logging.getLogger("application_layer")
 
 class ApplicationLayer:
     """
-    Capa central: arma dependencias y expone APIs coherentes para:
-    - CommandBot (/analizar)
-    - Telegram reader (señales entrantes)
-    - Reactivation monitor
-    - (más adelante) open_position_engine
+    Contenedor de dependencias (DI simple).
+    Construye servicios y coordinadores con firmas estables.
     """
 
     def __init__(self, bot):
-        logger.info("⚙️ Inicializando ApplicationLayer...")
+        self.bot = bot
 
+        # Notifier (PTB bot)
         self.notifier = Notifier(bot)
 
+        # Services
         self.analysis_service = AnalysisService()
         self.signal_service = SignalService()
 
-        self.reactivation_engine = ReactivationEngine(self.analysis_service)
+        # Engines
+        self.reactivation_engine = ReactivationEngine()
 
+        # Coordinators
         self.signal = SignalCoordinator(
             signal_service=self.signal_service,
             analysis_service=self.analysis_service,
@@ -39,13 +40,3 @@ class ApplicationLayer:
         )
 
         logger.info("✅ ApplicationLayer inicializado correctamente.")
-
-    async def analyze_symbol(
-        self, symbol: str, direction: str, context: str = "entry"
-    ) -> dict:
-        """
-        API única para análisis manual o por señal.
-        """
-        return await self.analysis_service.analyze_symbol(
-            symbol, direction, context=context
-        )

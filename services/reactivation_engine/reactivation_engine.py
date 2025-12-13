@@ -1,93 +1,81 @@
+# services/reactivation_engine/reactivation_engine.py
+
 import logging
-from services.technical_engine.technical_engine import analyze as technical_analyze
 
 logger = logging.getLogger("reactivation_engine")
 
 
-class ReactivationState:
-    """Estados posibles para reactivación (placeholder simple)."""
-
-    ALLOWED = "allowed"
-    BLOCKED = "blocked"
-    PENDING = "pending"
-
-
 class ReactivationEngine:
     """
-    Motor táctico de reactivación de señales.
-
-    - No recibe parámetros en __init__()
-    - Invoca technical_engine.analyze() internamente
-    - Evalúa condiciones de activación tardía de forma segura.
+    Capa táctica: decide si una señal ignorada debe reactivarse,
+    usando el resultado del análisis técnico (motor base).
     """
 
     def __init__(self):
-        logger.info("🔄 ReactivationEngine inicializado (constructor vacío).")
+        logger.info("🔧 ReactivationEngine inicializado.")
 
-    # ---------------------------------------------------------
-    # MÉTODO PRINCIPAL (async para integrarse con el resto)
-    # ---------------------------------------------------------
     async def evaluate_signal(
-        self,
-        symbol: str,
-        direction: str,
-        analysis: dict | None = None,
+        self, symbol: str, direction: str, analysis: dict
     ) -> dict:
         """
-        Evalúa si una señal puede / debe ser reactivada.
+        API ESTÁNDAR usada por SignalCoordinator.auto_reactivate()
 
-        Devuelve un dict estandarizado:
+        Retorna:
         {
-            "allowed": bool,
-            "reason": str,
-            "analysis": dict
+          "allowed": bool,
+          "reason": str,
+          "analysis": dict
         }
         """
-        logger.info(f"🔎 ReactivationEngine: evaluando {symbol} ({direction})...")
 
-        try:
-            # Si no nos pasan análisis pre-calculado, lo generamos
-            if analysis is None:
-                analysis = technical_analyze(
-                    symbol,
-                    direction_hint=direction,
-                    context="reactivation",
-                )
-        except Exception as e:
-            logger.error(f"❌ Error técnico analizando {symbol}: {e}", exc_info=True)
-            return {
-                "allowed": False,
-                "reason": "Error técnico en análisis",
-                "analysis": None,
-            }
-
-        if not analysis:
-            return {
-                "allowed": False,
-                "reason": "Motor técnico no devolvió resultado",
-                "analysis": None,
-            }
-
-        # -----------------------------------------------------
-        # DECISIÓN BÁSICA (placeholder seguro)
-        # Aquí se puede conectar smart_reactivation_validator más adelante.
-        # -----------------------------------------------------
+        decision = analysis.get("decision")
+        score = float(analysis.get("technical_score", 0) or 0)
         match_ratio = float(analysis.get("match_ratio", 0) or 0)
-        tech_score = float(analysis.get("technical_score", 0) or 0)
+        confidence = float(analysis.get("confidence", 0) or 0)
+        grade = analysis.get("grade", "-")
+        bias = analysis.get("smart_bias_code", "")
 
-        # Regla simple:
-        # - match >= 60 y score >= 55 → permitir reactivación
-        if match_ratio >= 60 and tech_score >= 55:
-            return {
-                "allowed": True,
-                "reason": f"Condiciones favorables (match={match_ratio:.1f}, "
-                f"score={tech_score:.1f})",
-                "analysis": analysis,
-            }
+        # ---------------------------------------------------------
+        # Regla 1: si el motor ya dice "skip" pero hay reversión fuerte
+        # (bias bullish-reversal / bearish-reversal), permitir re-evaluación.
+        # ---------------------------------------------------------
+        strong_reversal = "reversal" in (bias or "")
+
+        # ---------------------------------------------------------
+        # Regla 2: umbrales mínimos para reactivación inteligente
+        # (ajustables)
+        # ---------------------------------------------------------
+        allowed = False
+        reasons = []
+
+        # Caso obvio: si el análisis explícitamente decide "reactivate"
+        if decision == "reactivate":
+            allowed = True
+            reasons.append("El motor marcó decision=reactivate")
+
+        # Caso táctico: buen puntaje + match aceptable
+        if (
+            score >= 55
+            and match_ratio >= 70
+            and confidence >= 0.55
+            and grade in ["A", "B", "C"]
+        ):
+            allowed = True
+            reasons.append("Umbrales tácticos OK (score/match/confidence/grade)")
+
+        # Caso especial: reversión fuerte detectada (para evitar perder el giro)
+        if strong_reversal and score >= 45 and match_ratio >= 60:
+            allowed = True
+            reasons.append("Reversión fuerte + umbrales mínimos (anti-TP4 perdido)")
+
+        if not allowed:
+            reasons.append(
+                f"No cumple reactivación: decision={decision}, score={score}, match={match_ratio}, "
+                f"conf={confidence}, grade={grade}, bias={bias}"
+            )
 
         return {
-            "allowed": False,
-            "reason": f"Aún no coincide suficiente para reactivar "
-            f"(match={match_ratio:.1f}, score={tech_score:.1f})",
+            "allowed": bool(allowed),
+            "reason": " | ".join(reasons),
             "analysis": analysis,
         }
