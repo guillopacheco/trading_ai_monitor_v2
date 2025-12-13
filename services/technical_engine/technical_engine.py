@@ -35,7 +35,7 @@ async def analyze(symbol: str, direction: str = "auto", context: str = "entry") 
 
     try:
         # 1) Snapshot multi-temporalidad desde el wrapper
-        snapshot = await get_multi_tf_snapshot(symbol)
+        snapshot = get_multi_tf_snapshot(symbol)
         if not snapshot or "timeframes" not in snapshot:
             raise RuntimeError("Snapshot inválido o incompleto.")
 

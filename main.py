@@ -13,23 +13,15 @@ from services.signals_service.signal_reactivation_sync import start_reactivation
 logger = logging.getLogger("main")
 
 
-async def _post_init(application: Application):
-    """
-    Se ejecuta una vez el bot ya inicializó.
-    Aquí construimos ApplicationLayer con application.bot (PTB bot real).
-    """
-    app_layer = ApplicationLayer(application.bot)
-    application.bot_data["app_layer"] = app_layer
+async def post_init(app):
+    app.create_task(start_telegram_reader(app_layer))
+    app.create_task(start_reactivation_monitor(app_layer))
+    logger.info("✅ Background tasks iniciadas correctamente")
 
-    # Registrar handlers
-    CommandBot(application, app_layer)
 
-    # Iniciar background monitor de reactivación (si existe)
-    try:
-        application.create_task(start_reactivation_monitor(app_layer))
-        logger.info("✅ Monitor reactivación iniciado.")
-    except Exception as e:
-        logger.warning(f"⚠️ No se inició monitor de reactivación: {e}")
+application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
+application.run_polling()
 
 
 def main():
