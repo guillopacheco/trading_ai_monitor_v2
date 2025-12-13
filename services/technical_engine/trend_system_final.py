@@ -1,102 +1,101 @@
+"""
+trend_system_final.py — Trend Engine 3.0
+Evalúa tendencias multi-TF sin depender del motor completo.
+"""
+
 import logging
-from typing import Optional, Dict, Any
 
-# ✅ ÚNICO MOTOR TÉCNICO REAL
-# En vez de usar technical_brain_unified.run_unified_analysis,
-# delegamos TODO al motor unificado de technical_engine.analyze.
-from services.technical_engine.technical_engine import analyze as core_analyze
-
-logger = logging.getLogger("trend_system_final")
+logger = logging.getLogger("trend_system")
 
 
-# ============================================================
-# THRESHOLDS Y PESOS — DEFINIDOS LOCALMENTE
-# (Se mantienen por compatibilidad, pero la lógica fina
-#  de score y decisión vive en technical_engine)
-# ============================================================
-
-def get_thresholds() -> Dict[str, Any]:
-    return {
-        "grade_A": 85,
-        "grade_B": 70,
-        "grade_C": 55,
-        "min_match_for_reactivation": 65,
-        "min_score_for_reactivation": 60,
-    }
-
-
-# ============================================================
-# 🎯 ENVOLTURA SOBRE EL MOTOR ÚNICO
-# ============================================================
-
-def analyze_trend_core(
-    symbol: str,
-    side: str,
-    entry_price: Optional[float] = None,
-    roi: Optional[float] = None,
-    loss_pct: Optional[float] = None,
-    context: str = "entry",
-) -> Dict[str, Any]:
-    """Puerta de entrada *única* para el análisis técnico.
-
-    IMPORTANTE:
-    - Todos los servicios externos (reactivación, reversales,
-      operación abierta, /analizar en Telegram) deben llamar SIEMPRE
-      a esta función o a los helpers de motor_wrapper.
-    - Internamente delega al motor unificado technical_engine.analyze.
-    - `entry_price` hoy no se usa en el motor, pero se mantiene
-      en la firma para compatibilidad hacia atrás.
+def evaluate_trend_single_tf(tf_snapshot: dict) -> dict:
     """
-    logger.info(
-        "➡️ [trend_system_final] Delegando análisis a technical_engine.analyze "
-        "(%s, %s, context=%s, roi=%s, loss=%s)",
-        symbol,
-        side,
-        context,
-        roi,
-        loss_pct,
+    Evalúa una sola temporalidad y asigna:
+    - trend_code_value  (numérico)
+    - trend_label
+    - votes_bull / votes_bear
+    """
+
+    ema_short = tf_snapshot.get("ema_short")
+    ema_long = tf_snapshot.get("ema_long")
+    rsi = tf_snapshot.get("rsi", 50)
+    macd_hist = tf_snapshot.get("macd_hist", 0)
+
+    votes_bull = 0
+    votes_bear = 0
+
+    # EMA crossover
+    if ema_short > ema_long:
+        votes_bull += 2
+    else:
+        votes_bear += 2
+
+    # RSI bias
+    if rsi > 55:
+        votes_bull += 1
+    elif rsi < 45:
+        votes_bear += 1
+
+    # MACD bias
+    if macd_hist > 0:
+        votes_bull += 1
+    else:
+        votes_bear += 1
+
+    # Trend code final
+    if votes_bull >= 4:
+        trend_code = 2
+        trend_label = "Fuerte alcista"
+    elif votes_bull == 3:
+        trend_code = 1
+        trend_label = "Alcista"
+    elif votes_bear == 3:
+        trend_code = -1
+        trend_label = "Bajista"
+    else:
+        trend_code = -2
+        trend_label = "Fuerte bajista"
+
+    tf_snapshot.update(
+        {
+            "votes_bull": votes_bull,
+            "votes_bear": votes_bear,
+            "trend_code": trend_code,
+            "trend_label": trend_label,
+        }
     )
 
-    try:
-        # Motor único real
-        result = core_analyze(
-            symbol=symbol,
-            side=side,
-            context=context,
-            loss_pct=loss_pct,
-            roi=roi,
-        )
-
-        # Nos aseguramos de adjuntar siempre el símbolo y side
-        result.setdefault("symbol", symbol)
-        result.setdefault("direction_hint", side)
-
-        return result
-
-    except Exception as e:
-        logger.exception("❌ Error en analyze_trend_core para %s: %s", symbol, e)
-        return {
-            "allowed": False,
-            "decision": "wait",
-            "decision_reasons": [str(e)],
-            "symbol": symbol,
-            "direction_hint": side,
-            "technical_score": 0.0,
-            "match_ratio": 0.0,
-            "grade": "D",
-            "confidence": 0.0,
-            "context": context,
-            "roi": roi,
-            "loss_pct": loss_pct,
-        }
+    return tf_snapshot
 
 
-# ============================================================
-# ⚙️ API PÚBLICA (para otros módulos)
-# ============================================================
+def evaluate_major_trend(timeframes: list) -> dict:
+    """
+    Recibe lista de snapshots TF ya evaluados.
+    Produce la tendencia mayor → usada por TechnicalEngine.
+    """
 
-def _get_thresholds() -> Dict[str, Any]:
-    return get_thresholds()
+    total = 0
+    for tf in timeframes:
+        total += tf.get("trend_code", 0)
 
-# Alias de compatibilidad para otros módulos
-get_thresholds_public = _get_thresholds
+    if total >= 4:
+        code = 2
+        label = "Fuerte alcista"
+    elif total >= 1:
+        code = 1
+        label = "Alcista"
+    elif total <= -4:
+        code = -2
+        label = "Fuerte bajista"
+    elif total <= -1:
+        code = -1
+        label = "Bajista"
+    else:
+        code = 0
+        label = "Neutral"
+
+    return {
+        "major_trend_code": label,
+        "trend_code_value": code,
+        "trend_label": label,
+    }
