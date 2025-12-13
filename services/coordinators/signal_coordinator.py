@@ -174,6 +174,5 @@ class SignalCoordinator:
                     )
 
             except Exception as e:
-                logger.exception(
-                    f"❌ Error evaluando reactivación ID={sig.get('id')}: {e}"
-                )
+                signal_id = signal.get("id", "?")
+                logger.exception(f"Error evaluando reactivación ID={signal_id}")

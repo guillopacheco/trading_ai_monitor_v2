@@ -20,11 +20,7 @@ async def analyze_symbol(symbol: str, direction: str, context: str = "entry") ->
         )
 
         # analyze(symbol, direction_hint=..., context=...)
-        result = engine_analyze(
-            symbol,
-            direction,
-            context=context,
-        )
+        engine_analyze(symbol=symbol, direction=direction, context=context)
 
         if not result:
             return {"error": True, "msg": "Motor técnico no devolvió resultado"}
