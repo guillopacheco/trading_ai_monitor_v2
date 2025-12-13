@@ -1,43 +1,32 @@
+import logging
 from telegram.ext import Application
+
 from config import TELEGRAM_BOT_TOKEN
 from application_layer import ApplicationLayer
 from services.telegram_service.telegram_reader import start_telegram_reader
-import logging
 
 logger = logging.getLogger("main")
 
-# ✅ crear ApplicationLayer ANTES
-app_layer = ApplicationLayer()
 
+async def post_init(app: Application):
+    # 🔹 Crear ApplicationLayer con el bot ya existente
+    app.app_layer = ApplicationLayer(app)
 
-async def post_init(app):
-    app.create_task(start_telegram_reader(app_layer))
+    # 🔹 Iniciar tareas de background reales
+    app.create_task(start_telegram_reader(app.app_layer))
+
     logger.info("✅ Background tasks iniciadas correctamente")
 
 
-application = (
-    Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
-)
-
-application.run_polling()
-
-
 def main():
-    try:
-        logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO)
 
-        application = (
-            Application.builder()
-            .token(TELEGRAM_BOT_TOKEN)
-            .post_init(_post_init)
-            .build()
-        )
+    application = (
+        Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+    )
 
-        logger.info("🚀 Bot iniciado. Polling...")
-        application.run_polling(close_loop=False)
-
-    except Exception:
-        logger.exception("❌ Error crítico en main")
+    logger.info("🚀 Bot iniciado. Polling...")
+    application.run_polling()
 
 
 if __name__ == "__main__":
