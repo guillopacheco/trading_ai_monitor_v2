@@ -29,9 +29,7 @@ class ApplicationLayer:
         self.analysis_service = AnalysisService()
         self.signal_service = SignalService()
 
-        self.reactivation_engine = ReactivationEngine(
-            technical_engine=self.analysis_service
-        )
+        self.reactivation_engine = ReactivationEngine(self.analysis_service)
 
         self.signal = SignalCoordinator(
             signal_service=self.signal_service,
