@@ -7,7 +7,7 @@ from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
 from services.technical_engine.smart_entry_validator import evaluate_smart_entry
 from services.technical_engine.trend_system_final import evaluate_major_trend
 from services.technical_engine.smart_divergences import detect_divergences
-from services.helpers import safe_float
+from helpers import safe_float
 
 logger = logging.getLogger("technical_engine")
 
