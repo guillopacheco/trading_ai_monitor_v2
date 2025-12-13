@@ -7,9 +7,17 @@ from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
 from services.technical_engine.smart_entry_validator import evaluate_smart_entry
 from services.technical_engine.trend_system_final import evaluate_major_trend
 from services.technical_engine.smart_divergences import detect_divergences
-from helpers import safe_float
 
 logger = logging.getLogger("technical_engine")
+
+
+def _safe_float(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (ValueError, TypeError):
+        return default
 
 
 # ============================================================
@@ -66,15 +74,6 @@ async def analyze(symbol: str, direction: str = "auto", context: str = "entry") 
         }
 
 
-def _safe_float(value, default=0.0):
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except (ValueError, TypeError):
-        return default
-
-
 # ============================================================
 #   FUSIÓN DE RESULTADOS
 # ============================================================
@@ -86,6 +85,7 @@ def _build_final_decision(
     """
     match_ratio = _safe_float(snapshot.get("match_ratio"))
     technical_score = _safe_float(snapshot.get("technical_score"))
+
     grade = snapshot.get("grade", "-")
 
     reasons = []
