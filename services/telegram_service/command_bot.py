@@ -5,16 +5,9 @@ logger = logging.getLogger("command_bot")
 
 
 class CommandBot:
-    """
-    Bot de comandos Telegram para Trading AI Monitor.
-    Se conecta a ApplicationLayer sin lógica de negocio interna.
-    """
-
-    def __init__(self, app_layer, application: Application):
-        self.app_layer = app_layer
-        self.application = application
-
-        # Registrar comandos
+    def __init__(self, application, app_layer):
+        self.application = application  # telegram.ext.Application
+        self.app_layer = app_layer  # ApplicationLayer
         self._register_handlers()
 
     # ----------------------------------------------------------------------
