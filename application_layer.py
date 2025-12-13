@@ -8,6 +8,8 @@ from services.application.operation_service import OperationService
 from services.coordinators.analysis_coordinator import AnalysisCoordinator
 from services.coordinators.signal_coordinator import SignalCoordinator
 from services.coordinators.position_coordinator import PositionCoordinator
+from services.technical_engine.technical_engine import analyze as technical_engine
+from services.reactivation_engine.reactivation_engine import ReactivationEngine
 
 logger = logging.getLogger("application_layer")
 
@@ -44,10 +46,15 @@ class ApplicationLayer:
             notifier=self.notifier,
         )
 
+        technical_engine_instance = technical_engine  # es una función, no una clase
+        reactivation_engine = ReactivationEngine()
+
         # 📡 Señales (entrada + reactivación básica)
         self.signal = SignalCoordinator(
             signal_service=self.signal_service,
             analysis_service=self.analysis_service,
+            technical_engine=technical_engine_instance,
+            reactivation_engine=reactivation_engine,
             notifier=self.notifier,
         )
 
