@@ -6,26 +6,14 @@ logger = logging.getLogger("notifier")
 
 
 class Notifier:
-    """
-    Enviar mensajes a Telegram usando el bot ya inicializado en main.py
-    """
-
-    def __init__(self, bot: Bot):
+    def __init__(self, bot):
         self.bot = bot
-        self.chat_id = TELEGRAM_USER_ID
 
-    async def safe_send(self, text: str):
-        """Envía mensaje a Telegram, capturando errores sin romper el sistema."""
-        if not self.bot:
-            logger.error("❌ Notifier no configurado con bot.")
-            return
-
+    async def send_message(self, chat_id: int, text: str, **kwargs):
         try:
-            await self.bot.send_message(chat_id=self.chat_id, text=text)
-            logger.info(f"📨 Notificado: {text[:60]}")
+            await self.bot.send_message(chat_id=chat_id, text=text, **kwargs)
         except Exception as e:
-            logger.error(f"❌ Error enviando mensaje Telegram: {e}")
+            logger.exception(f"❌ Error enviando mensaje: {e}")
 
-    async def send_message(self, text: str):
-        """Alias por compatibilidad con módulos antiguos."""
-        await self.safe_send(text)
+    async def safe_send(self, chat_id: int, text: str, **kwargs):
+        await self.send_message(chat_id, text, **kwargs)
