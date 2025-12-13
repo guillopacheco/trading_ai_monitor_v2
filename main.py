@@ -10,14 +10,13 @@ from services.telegram_service.telegram_reader import start_telegram_reader
 
 
 # Si tienes monitor de reactivación por loop:
-from services.reactivation_engine import start_reactivation_monitor
+
 
 logger = logging.getLogger("main")
 
 
 async def post_init(app):
     app.create_task(start_telegram_reader(app_layer))
-    app.create_task(start_reactivation_monitor(app_layer))
     logger.info("✅ Background tasks iniciadas correctamente")
 
 
