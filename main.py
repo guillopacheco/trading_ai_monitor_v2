@@ -17,13 +17,16 @@ async def main():
     logger.info("🚀 Trading AI Monitor iniciando...")
 
     # 1️⃣ Crear bot Telegram
-    bot_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    app_layer = ApplicationLayer(application.bot)
 
     # 2️⃣ Crear capa de aplicación con el bot
     app_layer = ApplicationLayer(bot_app.bot)
 
     # 3️⃣ Crear CommandBot
-    command_bot = CommandBot(app_layer, bot_app)
+    command_bot = CommandBot(application, app_layer)
+    command_bot.register_handlers()
 
     # 4️⃣ Iniciar Telegram reader
     asyncio.create_task(start_telegram_reader(app_layer))
@@ -32,7 +35,7 @@ async def main():
     asyncio.create_task(start_reactivation_monitor(app_layer))
 
     # 6️⃣ Iniciar CommandBot (polling)
-    await bot_app.run_polling(close_loop=False)
+    application.run_polling()
 
     logger.info("✔ Sistema ejecutándose.")
 

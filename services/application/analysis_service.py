@@ -22,7 +22,7 @@ async def analyze_symbol(symbol: str, direction: str, context: str = "entry") ->
         # analyze(symbol, direction_hint=..., context=...)
         result = engine_analyze(
             symbol,
-            direction_hint=direction,
+            direction,
             context=context,
         )
 

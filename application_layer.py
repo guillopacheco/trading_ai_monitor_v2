@@ -42,7 +42,7 @@ class TechnicalEngineAdapter:
         # analyze(symbol, direction_hint=..., context=...)
         return _technical_engine_module.analyze(
             symbol,
-            direction_hint=direction,
+            direction,
             context=context,
             **kwargs,
         )
