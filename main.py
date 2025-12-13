@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from telegram.ext import Application
 
@@ -8,13 +9,9 @@ from services.telegram_service.telegram_reader import start_telegram_reader
 logger = logging.getLogger("main")
 
 
-async def post_init(app: Application):
-    # 🔹 Crear ApplicationLayer con el bot ya existente
+async def post_init(app):
     app.app_layer = ApplicationLayer(app)
-
-    # 🔹 Iniciar tareas de background reales
-    app.create_task(start_telegram_reader(app.app_layer))
-
+    asyncio.create_task(start_telegram_reader(app.app_layer))
     logger.info("✅ Background tasks iniciadas correctamente")
 
 
