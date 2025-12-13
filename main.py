@@ -1,18 +1,13 @@
-# main.py
-
-import logging
 from telegram.ext import Application
-
 from config import TELEGRAM_BOT_TOKEN
 from application_layer import ApplicationLayer
-from services.telegram_service.command_bot import CommandBot
 from services.telegram_service.telegram_reader import start_telegram_reader
-
-
-# Si tienes monitor de reactivación por loop:
-
+import logging
 
 logger = logging.getLogger("main")
+
+# ✅ crear ApplicationLayer ANTES
+app_layer = ApplicationLayer()
 
 
 async def post_init(app):
