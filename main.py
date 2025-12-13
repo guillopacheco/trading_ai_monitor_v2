@@ -6,9 +6,11 @@ from telegram.ext import Application
 from config import TELEGRAM_BOT_TOKEN
 from application_layer import ApplicationLayer
 from services.telegram_service.command_bot import CommandBot
+from services.telegram_service.telegram_reader import start_telegram_reader
+
 
 # Si tienes monitor de reactivación por loop:
-from services.signals_service.signal_reactivation_sync import start_reactivation_monitor
+from services.reactivation_engine import start_reactivation_monitor
 
 logger = logging.getLogger("main")
 
