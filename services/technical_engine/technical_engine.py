@@ -66,6 +66,15 @@ async def analyze(symbol: str, direction: str = "auto", context: str = "entry") 
         }
 
 
+def _safe_float(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 # ============================================================
 #   FUSIÓN DE RESULTADOS
 # ============================================================
@@ -75,8 +84,8 @@ def _build_final_decision(
     """
     Fusiona los datos técnicos para crear la decisión final normalizada.
     """
-    match_ratio = safe_float(snapshot.get("match_ratio"))
-    technical_score = safe_float(snapshot.get("technical_score"))
+    match_ratio = _safe_float(snapshot.get("match_ratio"))
+    technical_score = _safe_float(snapshot.get("technical_score"))
     grade = snapshot.get("grade", "-")
 
     reasons = []
