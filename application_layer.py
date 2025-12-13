@@ -7,7 +7,7 @@ from services.application.signal_service import SignalService
 
 from services.coordinators.signal_coordinator import SignalCoordinator
 
-# El coordinador de posiciones se dejará para una fase posterior
+# El coordinador de posiciones se deja para una fase posterior
 # from services.coordinators.position_coordinator import PositionCoordinator
 
 from services.open_position_engine.open_position_engine import OpenPositionEngine
@@ -24,7 +24,7 @@ class TechnicalEngineAdapter:
     """
     Adaptador ASÍNCRONO sobre el motor técnico basado en funciones.
 
-    SignalCoordinator espera:
+    Los coordinadores esperan algo como:
 
         await technical_engine.analyze(symbol, direction, context="entry")
 
@@ -39,6 +39,7 @@ class TechnicalEngineAdapter:
         context: str = "entry",
         **kwargs,
     ) -> dict:
+        # analyze(symbol, direction_hint=..., context=...)
         return _technical_engine_module.analyze(
             symbol,
             direction_hint=direction,
@@ -55,15 +56,22 @@ class ApplicationLayer:
     - Es lo que usa main.py, CommandBot y los demonios de reactivación.
     """
 
-    def __init__(self, notifier: Notifier) -> None:
-        self.notifier = notifier
+    def __init__(self, bot: Any) -> None:
+        """
+        `bot` = instancia de telegram.Bot (bot_app.bot en main.py)
+        Aquí creamos el Notifier a partir de ese bot.
+        """
+        # -----------------------------
+        # Notificador único
+        # -----------------------------
+        self.notifier = Notifier(bot)
 
         # -----------------------------
         # Servicios base
         # -----------------------------
         self.analysis_service = AnalysisService()
         self.signal_service = SignalService()
-        self.operation_service = OperationService(notifier)
+        self.operation_service = OperationService(self.notifier)
 
         # -----------------------------
         # Motores
@@ -80,10 +88,11 @@ class ApplicationLayer:
         # -----------------------------
         # 🧠 Señales (entrada + reactivación avanzada)
         self.signal = SignalCoordinator(
-            self.signal_service,
-            self.reactivation_engine,
-            self.notifier,
-            self.technical_engine,
+            signal_service=self.signal_service,
+            analysis_service=self.analysis_service,
+            technical_engine=self.technical_engine,
+            reactivation_engine=self.reactivation_engine,
+            notifier=self.notifier,
         )
 
         # Monitor de posiciones se deja para más adelante
@@ -106,51 +115,20 @@ class ApplicationLayer:
         Ejecuta un análisis técnico completo y envía el resultado a Telegram.
         Usado por /analizar.
         """
-        # 1) Ejecutar análisis
-        try:
-            # Versión actual de AnalysisService (async)
-            result: dict = await self.analysis_service.analyze_symbol(symbol, direction)
-        except (AttributeError, TypeError):
-            # Fallback por si AnalysisService usa otro nombre
-            result = _technical_engine_module.analyze(
-                symbol,
-                direction_hint=direction,
-                context="entry",
-            )
+        # 1) Ejecutar análisis (vía AnalysisService)
+        result: dict = await self.analysis_service.analyze_symbol(
+            symbol=symbol,
+            direction=direction,
+            context="entry",
+        )
 
         # 2) Formatear mensaje
-        try:
-            # Si existe un formateador dedicado, úsalo
-            from services.application.analysis_service import (
-                format_analysis_for_telegram,
-            )
-
-            text = format_analysis_for_telegram(symbol, direction, result)
-        except Exception:
-            # Fallback genérico
-            decision = result.get("decision", "-")
-            score = result.get("technical_score", 0)
-            match_ratio = result.get("match_ratio", 0)
-            confidence = result.get("confidence", 0)
-            grade = result.get("grade", "-")
-            reasons = result.get("decision_reasons", [])
-
-            lines = [
-                f"📊 *Análisis de {symbol}*",
-                "🧭 Contexto: *Entrada*",
-                "",
-                f"🔴 *Decisión:* `{decision}`",
-                f"📈 *Score técnico:* {score} / 100",
-                f"🎯 *Match técnico:* {match_ratio} %",
-                f"🔎 *Confianza:* {confidence * 100:.0f} %",
-                f"🏅 *Grade:* {grade}",
-            ]
-            if reasons:
-                lines.append("")
-                lines.append("📌 *Motivos:*")
-                for r in reasons:
-                    lines.append(f"• {r}")
-            text = "\n".join(lines)
+        text = self.analysis_service.format_for_telegram(
+            symbol=symbol,
+            direction=direction,
+            result=result,
+            context="entry",
+        )
 
         # 3) Enviar a Telegram
         await self.notifier.safe_send(text, chat_id=chat_id)
@@ -159,41 +137,17 @@ class ApplicationLayer:
     async def evaluate_reactivation(self, signal_id: int) -> Any:
         """
         Reactivación manual de una señal concreta (comando /reactivar).
+        De momento dejamos placeholder sencillo.
         """
-        # 1) Cargar señal
-        try:
-            signal = self.signal_service.get_signal_by_id(signal_id)
-        except Exception as e:
-            logger.error(
-                f"❌ Error obteniendo señal ID={signal_id}: {e}", exc_info=True
-            )
-            await self.notifier.safe_send(
-                f"❌ No se pudo cargar la señal ID={signal_id}",
-                chat_id=None,
-            )
-            return None
-
-        if not signal:
-            await self.notifier.safe_send(
-                f"⚠️ Señal ID={signal_id} no encontrada o ya cerrada.",
-                chat_id=None,
-            )
-            return None
-
-        # 2) Delegar en el reactivation engine vía SignalCoordinator
-        try:
-            result = await self.signal.evaluate_reactivation(signal)
-            return result
-        except Exception as e:
-            logger.error(
-                f"❌ Error evaluando reactivación ID={signal_id}: {e}",
-                exc_info=True,
-            )
-            await self.notifier.safe_send(
-                f"❌ Error evaluando reactivación de la señal {signal_id}",
-                chat_id=None,
-            )
-            return None
+        logger.warning(
+            "ℹ️ evaluate_reactivation(signal_id) aún no está implementado como "
+            "comando manual. El monitor automático sigue usando auto_reactivate()."
+        )
+        await self.notifier.safe_send(
+            "⚠️ Reactivación manual aún no está implementada.",
+            chat_id=None,
+        )
+        return None
 
     # ------------------------------------------------------
     # Monitoreo de posiciones abiertas (placeholder)

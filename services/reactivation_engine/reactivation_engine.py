@@ -4,11 +4,8 @@ from services.technical_engine.technical_engine import analyze as technical_anal
 logger = logging.getLogger("reactivation_engine")
 
 
-# ---------------------------------------------------------
-# Compatibilidad histórica (usado por signal_reactivation_sync)
-# ---------------------------------------------------------
 class ReactivationState:
-    """Estados posibles para reactivación (placeholder)."""
+    """Estados posibles para reactivación (placeholder simple)."""
 
     ALLOWED = "allowed"
     BLOCKED = "blocked"
@@ -21,18 +18,23 @@ class ReactivationEngine:
 
     - No recibe parámetros en __init__()
     - Invoca technical_engine.analyze() internamente
-    - Evalúa condiciones de activación tardía
+    - Evalúa condiciones de activación tardía de forma segura.
     """
 
     def __init__(self):
         logger.info("🔄 ReactivationEngine inicializado (constructor vacío).")
 
     # ---------------------------------------------------------
-    # MÉTODO PRINCIPAL
+    # MÉTODO PRINCIPAL (async para integrarse con el resto)
     # ---------------------------------------------------------
-    async def evaluate_signal(self, symbol: str, direction: str):
+    async def evaluate_signal(
+        self,
+        symbol: str,
+        direction: str,
+        analysis: dict | None = None,
+    ) -> dict:
         """
-        Evalúa si una señal puede/ debe ser reactivada.
+        Evalúa si una señal puede / debe ser reactivada.
 
         Devuelve un dict estandarizado:
         {
@@ -44,7 +46,13 @@ class ReactivationEngine:
         logger.info(f"🔎 ReactivationEngine: evaluando {symbol} ({direction})...")
 
         try:
-            analysis = await technical_analyze(symbol, direction)
+            # Si no nos pasan análisis pre-calculado, lo generamos
+            if analysis is None:
+                analysis = technical_analyze(
+                    symbol,
+                    direction_hint=direction,
+                    context="reactivation",
+                )
         except Exception as e:
             logger.error(f"❌ Error técnico analizando {symbol}: {e}", exc_info=True)
             return {
@@ -53,22 +61,33 @@ class ReactivationEngine:
                 "analysis": None,
             }
 
+        if not analysis:
+            return {
+                "allowed": False,
+                "reason": "Motor técnico no devolvió resultado",
+                "analysis": None,
+            }
+
         # -----------------------------------------------------
         # DECISIÓN BÁSICA (placeholder seguro)
-        # La lógica completa se implementará en Fase B del motor real.
+        # Aquí se puede conectar smart_reactivation_validator más adelante.
         # -----------------------------------------------------
-        match_ratio = analysis.get("match_ratio", 0)
-        tech_score = analysis.get("technical_score", 0)
+        match_ratio = float(analysis.get("match_ratio", 0) or 0)
+        tech_score = float(analysis.get("technical_score", 0) or 0)
 
-        if match_ratio >= 50 and tech_score >= 50:
+        # Regla simple:
+        # - match >= 60 y score >= 55 → permitir reactivación
+        if match_ratio >= 60 and tech_score >= 55:
             return {
                 "allowed": True,
-                "reason": "Condiciones favorables para reactivación",
+                "reason": f"Condiciones favorables (match={match_ratio:.1f}, "
+                f"score={tech_score:.1f})",
                 "analysis": analysis,
             }
 
         return {
             "allowed": False,
-            "reason": "Aún no coincide suficiente para reactivar",
+            "reason": f"Aún no coincide suficiente para reactivar "
+            f"(match={match_ratio:.1f}, score={tech_score:.1f})",
             "analysis": analysis,
         }

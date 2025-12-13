@@ -5,19 +5,34 @@ logger = logging.getLogger("analysis_service")
 
 
 # ============================================================
-# FUNCIÓN INTERNA (motor técnico)
+# MOTOR TÉCNICO (wrapper interno)
 # ============================================================
-async def analyze_symbol(symbol: str, direction: str) -> dict:
+async def analyze_symbol(symbol: str, direction: str, context: str = "entry") -> dict:
     """
-    Ejecuta el motor técnico unificado.
+    Ejecuta el motor técnico unificado en contexto dado.
     Esta función NO debe ser usada directamente por otros módulos.
+    Usa siempre AnalysisService.
     """
     try:
-        logger.info(f"🔍 Ejecutando análisis técnico para {symbol} ({direction})...")
-        result = engine_analyze(symbol, direction)
+        logger.info(
+            f"🔍 Ejecutando análisis técnico para {symbol} ({direction}) "
+            f"[context={context}]..."
+        )
+
+        # analyze(symbol, direction_hint=..., context=...)
+        result = engine_analyze(
+            symbol,
+            direction_hint=direction,
+            context=context,
+        )
 
         if not result:
             return {"error": True, "msg": "Motor técnico no devolvió resultado"}
+
+        # Normalizar contexto
+        result.setdefault("symbol", symbol.upper())
+        result.setdefault("direction", direction.lower())
+        result.setdefault("context", context)
 
         return result
 
@@ -29,19 +44,21 @@ async def analyze_symbol(symbol: str, direction: str) -> dict:
 # ============================================================
 # FORMATEO PARA TELEGRAM
 # ============================================================
-def format_analysis_for_telegram(result: dict) -> str:
+def format_analysis_for_telegram(
+    symbol: str,
+    direction: str,
+    result: dict,
+    context: str = "entry",
+) -> str:
     """
     Formatea el resultado del motor técnico para mostrarlo en Telegram
     de forma clara y compacta.
     """
+
     if not result or result.get("error"):
-        return "⚠️ No se pudo completar el análisis técnico."
+        return f"⚠️ No se pudo completar el análisis técnico de {symbol}."
 
     # Campos base
-    symbol = result.get("symbol", "N/D")
-    direction = result.get("direction", "").upper()
-    context = result.get("context", "entry")
-
     decision = (result.get("decision") or "unknown").lower()
     allowed = bool(result.get("allowed", False))
 
@@ -50,6 +67,35 @@ def format_analysis_for_telegram(result: dict) -> str:
     match_ratio = result.get("match_ratio")
     grade = result.get("grade", "N/D")
     reasons = result.get("decision_reasons") or []
+
+    # Bloque snapshot
+    trend_label = result.get("major_trend_label") or "-"
+    smart_bias = result.get("smart_bias_code") or result.get("smart_bias") or "-"
+    dominant_tf = None
+    dominant_reason = None
+
+    timeframes = result.get("timeframes") or []
+
+    # 1️⃣ Si hay divergencias claras, usar ese TF
+    for tf in timeframes:
+        tf_label = tf.get("tf_label")
+        if not tf_label:
+            continue
+
+        if tf.get("div_rsi") not in (None, "ninguna"):
+            dominant_tf = tf_label
+            dominant_reason = f"Divergencia RSI en {tf_label}"
+            break
+
+        if tf.get("div_macd") not in (None, "ninguna"):
+            dominant_tf = tf_label
+            dominant_reason = f"Divergencia MACD en {tf_label}"
+            break
+
+    # 2️⃣ Si no hubo divergencia, usar el TF mayor disponible
+    if not dominant_tf and timeframes:
+        dominant_tf = timeframes[0].get("tf_label")
+        dominant_reason = "TF de mayor jerarquía"
 
     # Normalizar confianza (0.6 → 60 %)
     if confidence_raw is None:
@@ -101,7 +147,6 @@ def format_analysis_for_telegram(result: dict) -> str:
         decision_icon = "⚪"
         decision_label = decision.upper()
 
-    # Contexto legible
     context_map = {
         "entry": "Entrada",
         "reactivation": "Reactivación",
@@ -110,47 +155,11 @@ def format_analysis_for_telegram(result: dict) -> str:
     }
     context_label = context_map.get(context, context.capitalize())
 
-    # Dirección legible
-    if direction in ("LONG", "SHORT"):
-        direction_label = direction
-    else:
-        direction_label = "N/D"
+    direction_label = direction.upper()
 
-    # Construir texto principal
-    header = f"📊 *Análisis de {symbol}*"
-    if direction_label != "N/D":
+    header = f"📊 *Análisis de {symbol.upper()}*"
+    if direction_label in ("LONG", "SHORT"):
         header += f" ({direction_label})"
-
-    # --------------------------------------------------
-    # Detectar TF dominante
-    # --------------------------------------------------
-    dominant_tf = None
-    dominant_reason = None
-
-    timeframes = result.get("timeframes") or []
-    divergences = result.get("divergences") or {}
-
-    # 1️⃣ Si hay divergencias claras, usar ese TF
-    for tf in timeframes:
-        tf_label = tf.get("tf_label")
-        if not tf_label:
-            continue
-
-        # Divergencias por TF
-        if tf.get("div_rsi") not in (None, "ninguna"):
-            dominant_tf = tf_label
-            dominant_reason = f"Divergencia RSI en {tf_label}"
-            break
-
-        if tf.get("div_macd") not in (None, "ninguna"):
-            dominant_tf = tf_label
-            dominant_reason = f"Divergencia MACD en {tf_label}"
-            break
-
-    # 2️⃣ Si no hubo divergencia, usar el TF mayor
-    if not dominant_tf and timeframes:
-        dominant_tf = timeframes[0].get("tf_label")
-        dominant_reason = "TF de mayor jerarquía"
 
     lines = [
         header,
@@ -163,6 +172,17 @@ def format_analysis_for_telegram(result: dict) -> str:
         f"🏅 *Grade:* {grade}",
     ]
 
+    if trend_label or smart_bias or dominant_tf:
+        lines.append("")
+        lines.append("📌 *Contexto de tendencia:*")
+        if trend_label:
+            lines.append(f"• Tendencia mayor: *{trend_label}*")
+        if smart_bias:
+            lines.append(f"• Smart Bias: `{smart_bias}`")
+        if dominant_tf:
+            extra = f" ({dominant_reason})" if dominant_reason else ""
+            lines.append(f"• TF dominante: *{dominant_tf}*{extra}")
+
     # Razones de la decisión (si existen)
     if reasons:
         lines.append("")
@@ -174,16 +194,38 @@ def format_analysis_for_telegram(result: dict) -> str:
 
 
 # ============================================================
-# ✅ CLASE QUE ESPERA ApplicationLayer
+# ✅ CLASE QUE USA ApplicationLayer y SignalCoordinator
 # ============================================================
 class AnalysisService:
     """
     Application Service estable para análisis técnico.
-    Es el ÚNICO punto de entrada al motor técnico.
+    Es el ÚNICO punto de entrada al motor técnico desde la app.
     """
 
-    async def analyze(self, symbol: str, direction: str) -> dict:
-        return await analyze_symbol(symbol, direction)
+    async def analyze_symbol(
+        self,
+        symbol: str,
+        direction: str,
+        context: str = "entry",
+    ) -> dict:
+        return await analyze_symbol(symbol, direction, context=context)
 
-    def format(self, result: dict) -> str:
-        return format_analysis_for_telegram(result)
+    async def analyze(
+        self,
+        symbol: str,
+        direction: str,
+        context: str = "entry",
+    ) -> dict:
+        """
+        Alias de compatibilidad (por si algún módulo usa .analyze()).
+        """
+        return await analyze_symbol(symbol, direction, context=context)
+
+    def format_for_telegram(
+        self,
+        symbol: str,
+        direction: str,
+        result: dict,
+        context: str = "entry",
+    ) -> str:
+        return format_analysis_for_telegram(symbol, direction, result, context=context)

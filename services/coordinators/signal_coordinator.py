@@ -1,9 +1,9 @@
 # ======================================================================
-# signal_coordinator.py — versión GPT 2025-12 final
+# signal_coordinator.py — versión estabilizada 2025-12
 # ======================================================================
 
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger("signal_coordinator")
 
@@ -12,10 +12,10 @@ class SignalCoordinator:
     """
     Coordina TODA la lógica relacionada con señales:
     - Procesar señales nuevas (desde telegram_reader)
-    - Ejecutar análisis técnico con TechnicalEngine
+    - Ejecutar análisis técnico con AnalysisService/TechnicalEngine
     - Guardar logs de análisis en la base de datos
     - Determinar reactivaciones con ReactivationEngine
-    - Auto-reanamizar señales pendientes cada X minutos
+    - Auto-reanalizar señales pendientes cada X minutos
     - Enviar resultados por Telegram
     """
 
@@ -38,9 +38,15 @@ class SignalCoordinator:
     # ==================================================================
     # 1) PROCESAR SEÑALES NUEVAS (desde telegram_reader)
     # ==================================================================
-    async def process_new_signal(self, signal: dict):
+    async def process_new_signal(self, signal: Dict[str, Any]):
         """
         Procesa UNA nueva señal recibida desde Telegram.
+
+        `signal` debe contener al menos:
+            - id
+            - symbol
+            - direction
+            - raw_text (opcional)
         """
         try:
             symbol = signal["symbol"]
@@ -48,25 +54,42 @@ class SignalCoordinator:
 
             logger.info(f"📩 Nueva señal recibida — {symbol} {direction}")
 
-            # Ejecutar análisis técnico
+            # Ejecutar análisis técnico (contexto = entrada)
             analysis = await self.analysis_service.analyze_symbol(
-                symbol=symbol, direction=direction
+                symbol=symbol,
+                direction=direction,
+                context="entry",
             )
 
-            # Guardar análisis en DB
-            self.signal_service.save_analysis_log(
-                signal_id=signal["id"],
-                result=analysis,
-                status="processed",
-            )
+            # Guardar análisis en DB (si hay id)
+            signal_id = signal.get("id")
+            if signal_id is not None:
+                try:
+                    # usamos context="entry" como etiqueta
+                    self.signal_service.save_analysis_log(
+                        signal_id=signal_id,
+                        context="entry",
+                        analysis=analysis,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        f"⚠️ No se pudo guardar log de análisis para señal {signal_id}: {e}"
+                    )
 
             # Enviar mensaje formateado
-            msg = self._format_analysis(analysis, symbol)
-            await self.notifier.send(msg)
+            msg = self.analysis_service.format_for_telegram(
+                symbol=symbol,
+                direction=direction,
+                result=analysis,
+                context="entry",
+            )
+            await self.notifier.safe_send(msg)
 
         except Exception as e:
             logger.exception(f"❌ Error procesando nueva señal: {e}")
-            await self.notifier.send(f"❌ Error analizando {signal.get('symbol')}")
+            await self.notifier.safe_send(
+                f"❌ Error analizando {signal.get('symbol', 'N/D')}"
+            )
 
     # ==================================================================
     # 2) MANUAL — /analizar SYMBOL DIRECTION
@@ -76,12 +99,21 @@ class SignalCoordinator:
         Permite ejecutar un análisis manual con /analizar.
         """
         try:
-            analysis = await self.analysis_service.analyze_symbol(symbol, direction)
-            txt = self._format_analysis(analysis, symbol, include_context=True)
-            await self.notifier.send(txt)
+            analysis = await self.analysis_service.analyze_symbol(
+                symbol=symbol,
+                direction=direction,
+                context="entry",
+            )
+            txt = self.analysis_service.format_for_telegram(
+                symbol=symbol,
+                direction=direction,
+                result=analysis,
+                context="entry",
+            )
+            await self.notifier.safe_send(txt)
         except Exception as e:
             logger.exception(f"❌ Error en análisis manual: {e}")
-            await self.notifier.send(f"❌ Error analizando {symbol}")
+            await self.notifier.safe_send(f"❌ Error analizando {symbol}")
 
     # ==================================================================
     # 3) AUTO-REACTIVACIÓN (background)
@@ -100,74 +132,48 @@ class SignalCoordinator:
 
         for sig in pending:
             try:
+                signal_id = sig["id"]
                 symbol = sig["symbol"]
                 direction = sig["direction"]
 
-                logger.info(f"🔍 Reactivando {symbol} {direction} (ID={sig['id']})")
+                logger.info(f"🔍 Reactivando {symbol} {direction} (ID={signal_id})")
 
+                # 1) Análisis técnico en contexto "reactivation"
                 analysis = await self.analysis_service.analyze_symbol(
-                    symbol=symbol, direction=direction
+                    symbol=symbol,
+                    direction=direction,
+                    context="reactivation",
                 )
 
-                decision = self.reactivation_engine.evaluate(
-                    analysis=analysis, signal=sig
+                # 2) Decisión táctica del motor de reactivación
+                decision = await self.reactivation_engine.evaluate_signal(
+                    symbol=symbol,
+                    direction=direction,
+                    analysis=analysis,
                 )
 
-                # Guardar resultado
-                self.signal_service.save_reactivation_event(
-                    signal_id=sig["id"],
-                    status=decision["status"],
-                    details=decision,
-                )
+                # decision esperado:
+                # {
+                #   "allowed": bool,
+                #   "reason": str,
+                #   "analysis": dict,
+                # }
 
-                # Notificar si aplica
-                if decision["should_notify"]:
-                    await self.notifier.send(
-                        f"📌 *Reactivación {symbol}:* {decision['message']}"
+                if decision.get("allowed"):
+                    # marcar como reactivada
+                    self.signal_service.mark_reactivated(signal_id)
+                    msg = (
+                        f"⚡ *Reactivación permitida* para {symbol} "
+                        f"({direction}) — {decision.get('reason')}"
+                    )
+                    await self.notifier.safe_send(msg)
+                else:
+                    logger.info(
+                        f"⏳ Señal {signal_id} aún no apta para reactivación: "
+                        f"{decision.get('reason')}"
                     )
 
             except Exception as e:
                 logger.exception(
                     f"❌ Error evaluando reactivación ID={sig.get('id')}: {e}"
                 )
-
-    # ==================================================================
-    # 4) FORMATO MENSAJES TELEGRAM
-    # ==================================================================
-    def _format_analysis(
-        self, result: dict, symbol: str, include_context: bool = False
-    ) -> str:
-        """
-        Construye mensaje final para Telegram.
-        """
-
-        try:
-            decision = result.get("decision", "-")
-            score = result.get("technical_score", 0)
-            match_ratio = result.get("match_ratio", 0)
-            confidence = result.get("confidence", 0)
-            grade = result.get("grade", "-")
-            reasons = result.get("decision_reasons", [])
-
-            msg = f"📊 *Análisis de {symbol}*\n"
-
-            if include_context:
-                msg += f"🧭 Contexto: *Entrada*\n\n"
-
-            msg += (
-                f"🔴 *Decisión:* `{decision}`\n"
-                f"📈 *Score técnico:* {score}\n"
-                f"🎯 *Match técnico:* {match_ratio} %\n"
-                f"🔎 *Confianza:* {confidence * 100:.0f} %\n"
-                f"🏅 *Grade:* {grade}\n\n"
-            )
-
-            msg += "📌 *Motivos:*\n"
-            for r in reasons:
-                msg += f"• {r}\n"
-
-            return msg
-
-        except Exception as e:
-            logger.exception(f"❌ Error formateando mensaje: {e}")
-            return "❌ Error generando mensaje."
