@@ -228,6 +228,25 @@ def analyze_single_tf(symbol: str, tf: str) -> Dict[str, Any] | None:
 
     df = _calc_indicators(df)
 
+    # -------------------------------------------------
+    # Normalización de nombres de indicadores
+    # -------------------------------------------------
+    # RSI
+    if "RSI_14" in df.columns and "rsi" not in df.columns:
+        df["rsi"] = df["RSI_14"]
+
+    # MACD histogram
+    for col in df.columns:
+        if col.startswith("MACDh_"):
+            df["macd_hist"] = df[col]
+            break
+
+    # Validación mínima
+    required_cols = ["rsi", "macd_hist", "close"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise RuntimeError(f"Indicadores faltantes en df: {missing}")
+
     last = df.iloc[-1]
     rsi = float(last["rsi"])
     ema_s = float(last["ema_short"])
