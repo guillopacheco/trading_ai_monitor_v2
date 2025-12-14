@@ -39,3 +39,31 @@ BYBIT_SETTLE_COIN = _get("BYBIT_SETTLE_COIN", "USDT")
 # Compat extra (por si otros módulos importan estos nombres)
 TELEGRAM_API_ID = API_ID
 TELEGRAM_API_HASH = API_HASH
+
+# ============================================================
+# 🔧 Technical Engine Defaults (para motor_wrapper_core)
+# ============================================================
+
+# EMA configuration
+EMA_SHORT_PERIOD = int(os.getenv("EMA_SHORT_PERIOD", 10))
+EMA_MID_PERIOD = int(os.getenv("EMA_MID_PERIOD", 30))
+EMA_LONG_PERIOD = int(os.getenv("EMA_LONG_PERIOD", 50))
+
+# RSI
+RSI_PERIOD = int(os.getenv("RSI_PERIOD", 14))
+RSI_OVERBOUGHT = float(os.getenv("RSI_OVERBOUGHT", 70))
+RSI_OVERSOLD = float(os.getenv("RSI_OVERSOLD", 30))
+
+# MACD
+MACD_FAST = int(os.getenv("MACD_FAST", 12))
+MACD_SLOW = int(os.getenv("MACD_SLOW", 26))
+MACD_SIGNAL = int(os.getenv("MACD_SIGNAL", 9))
+
+# ATR
+ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))
+ATR_HIGH_VOL_THRESHOLD = float(os.getenv("ATR_HIGH_VOL_THRESHOLD", 0.03))
+
+# Timeframes defaults (motor fallback)
+DEFAULT_TIMEFRAMES = os.getenv("DEFAULT_TIMEFRAMES", "240,60,30,15").split(",")
+
+DEFAULT_TIMEFRAMES = [tf.strip() for tf in DEFAULT_TIMEFRAMES]
