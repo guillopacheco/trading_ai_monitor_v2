@@ -204,31 +204,27 @@ def _detect_simple_divergence(
 # ============================================================
 # 🔍 Análisis por timeframe
 # ============================================================
-def analyze_single_tf(
-    symbol: str,
-    tf: str,
-) -> Dict[str, Any] | None:
-
-    {
-        "tf": "60",
-        "tf_label": "1h",
-        "trend_label": "Alcista",
-        "trend_code": "bull",
-        "votes_bull": 3,
-        "votes_bear": 1,
-        "rsi": 62.5,
-        "macd_hist": 0.0012,
-        "ema_short": 0.1234,
-        "ema_long": 0.1200,
-        "close": 0.1250,
-        "atr": 0.0021,
-        "div_rsi": "alcista" / "bajista" / "ninguna",
-        "div_macd": "alcista" / "bajista" / "ninguna",
-    }
+def analyze_single_tf(symbol: str, tf: str) -> Dict[str, Any] | None:
+    """
+    Retorna un dict con:
+      - tf, tf_label
+      - trend_label, trend_code
+      - votes_bull, votes_bear
+      - indicadores (rsi, macd_hist, ema, close, atr)
+      - series completas (rsi_series, macd_hist_series, close_series)
+      - divergencias locales (div_rsi, div_macd)
+    """
 
     df = _get_ohlcv(symbol, tf, limit=260)
     if df is None or len(df) < MIN_BARS_PER_TF:
         return None
+
+    # Series completas (para divergencias)
+    rsi_series = df["rsi"].dropna().tolist()
+    macd_hist_series = df["macd_hist"].dropna().tolist()
+    close_series = df["close"].dropna().tolist()
+
+    atr = atr_val
 
     df = _calc_indicators(df)
 
@@ -297,21 +293,22 @@ def analyze_single_tf(
         "tf_label": tf_label,
         "trend_label": trend_label,
         "trend_code": trend_code,
-        "votes_bull": votes_bull,
-        "votes_bear": votes_bear,
-        # indicadores actuales (último valor)
-        "rsi": rsi_series[-1],
-        "macd_hist": macd_hist_series[-1],
-        "ema_short": ema_short,
-        "ema_long": ema_long,
-        "close": close_series[-1],
+        "votes_bull": bull,
+        "votes_bear": bear,
+        # valores actuales
+        "rsi": rsi,
+        "macd_hist": macd_hist,
+        "ema_short": ema_s,
+        "ema_long": ema_l,
+        "close": close,
         "atr": atr,
-        # 🔥 NUEVO: series completas
+        # 🔥 series completas
         "rsi_series": rsi_series,
         "macd_hist_series": macd_hist_series,
         "close_series": close_series,
-        "div_rsi": "ninguna",
-        "div_macd": "ninguna",
+        # divergencias locales
+        "div_rsi": div_rsi,
+        "div_macd": div_macd,
     }
 
 
