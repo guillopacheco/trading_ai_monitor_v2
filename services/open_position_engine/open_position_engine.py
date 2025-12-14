@@ -36,11 +36,13 @@ class OpenPositionEngine:
             return
 
         for p in positions:
+            price_change_pct, roi_pct = self._calculate_roi(p)
+
             logger.info(
-                f"🔎 {p['symbol']} "
-                f"{p['side']} "
-                f"size={p['size']} "
-                f"pnl={p['unrealized_pnl']}"
+                f"🔎 {p['symbol']} {p['side']} "
+                f"Δprice={price_change_pct:.2f}% "
+                f"ROI={roi_pct:.2f}% "
+                f"lev={p['leverage']}x"
             )
 
     def _normalize_position(self, raw: dict) -> dict | None:
@@ -76,3 +78,26 @@ class OpenPositionEngine:
         except Exception as e:
             logger.exception(f"❌ Error normalizando posición: {e}")
             return None
+
+    def _calculate_roi(self, p: dict) -> tuple[float, float]:
+        """
+        Retorna:
+        - price_change_pct (sin leverage)
+        - roi_pct (con leverage)
+        """
+        entry = p["entry_price"]
+        price = p["mark_price"]
+        leverage = p["leverage"]
+        side = p["side"]
+
+        if entry <= 0 or price <= 0:
+            return 0.0, 0.0
+
+        if side == "long":
+            price_change_pct = (price - entry) / entry
+        else:  # short
+            price_change_pct = (entry - price) / entry
+
+        roi_pct = price_change_pct * leverage * 100
+
+        return price_change_pct * 100, roi_pct
