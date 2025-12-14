@@ -82,6 +82,27 @@ class SignalCoordinator:
                     analysis=analysis,
                 )
 
+                # -----------------------------------------
+                # Notificar reactivación
+                # -----------------------------------------
+                if result.get("allowed"):
+                    analysis = result.get("analysis", {})
+
+                    message = (
+                        "♻️ *SEÑAL REACTIVADA*\n\n"
+                        f"Par: {symbol}\n"
+                        f"Dirección: {direction.upper()}\n"
+                        f"Motivo: {result.get('reason')}\n"
+                        f"Score: {analysis.get('technical_score')}\n"
+                        f"Match: {analysis.get('match_ratio')}\n"
+                        f"Grade: {analysis.get('grade')}"
+                    )
+
+                    try:
+                        await self.app_layer.notifier.send_message(message)
+                    except Exception as e:
+                        logger.error(f"❌ Error enviando mensaje de reactivación: {e}")
+
                 # Guardar evento si existe el método (no revienta si no está)
                 if hasattr(self.signal_service, "save_reactivation_event"):
                     self.signal_service.save_reactivation_event(
