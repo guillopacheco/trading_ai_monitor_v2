@@ -10,6 +10,7 @@ class SignalCoordinator:
         self.analysis_service = analysis_service
         self.reactivation_engine = reactivation_engine
         self.notifier = notifier
+
         logger.info("🔧 SignalCoordinator inicializado correctamente.")
 
     def get_pending_signals(self, limit=None):
