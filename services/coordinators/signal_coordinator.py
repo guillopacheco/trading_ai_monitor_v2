@@ -64,8 +64,6 @@ class SignalCoordinator:
                     reason = result.get("reason") or "No apta"
                     logger.info(f"⏳ Señal {signal_id} aún no apta: {reason}")
 
-                    symbol = signal["symbol"]
-
                 # 🛑 A2: ignorar símbolos inválidos
                 if not symbol or not symbol.endswith("USDT"):
                     logger.warning(f"🧹 Símbolo inválido ignorado: {symbol}")
