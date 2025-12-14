@@ -44,3 +44,17 @@ class CommandBot:
         except Exception as e:
             logger.exception(f"❌ Error en /analizar: {e}")
             await update.message.reply_text("❌ Error ejecutando /analizar.")
+
+    # services/telegram_service/command_bot.py
+
+    def register_handlers(app, app_layer):
+        """
+        Punto único de registro de comandos.
+        NO cambia lógica existente.
+        """
+        # Si ya tienes handlers creados arriba, solo añádelos aquí
+        # Ejemplo:
+        # app.add_handler(CommandHandler("estado", estado_command))
+        # app.add_handler(CommandHandler("revisar", revisar_command))
+
+        pass
