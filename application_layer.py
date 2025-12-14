@@ -3,8 +3,8 @@ import logging
 
 from services.telegram_service.notifier import Notifier
 from services.coordinators.signal_coordinator import SignalCoordinator
+from services.reactivation_engine.reactivation_engine import ReactivationEngine
 
-# Estos existen en tu estructura. Si alguno cambia, lo adaptamos, pero no tocamos lógica.
 from services.application.analysis_service import AnalysisService
 from services.application.operation_service import OperationService
 from services.application.signal_service import SignalService
@@ -13,29 +13,26 @@ logger = logging.getLogger("application_layer")
 
 
 class ApplicationLayer:
-    """
-    Contrato estable:
-    - SIEMPRE recibe bot
-    - Construye notifier(bot)
-    - Construye servicios/coordinators con dependencias mínimas
-    """
-
     def __init__(self, bot):
         self.bot = bot
 
-        # Notificador (requiere bot)
+        # 1️⃣ Notifier (depende de bot)
         self.notifier = Notifier(bot)
 
-        # Servicios base
+        # 2️⃣ Servicios base
         self.signal_service = SignalService()
         self.analysis = AnalysisService()
         self.operation = OperationService(self.notifier)
 
-        # Coordinators
-        # Nota: SignalCoordinator en tu proyecto ya está operando en logs recientes.
+        # 3️⃣ ReactivationEngine (EXISTE y ya lo usas)
+        self.reactivation_engine = ReactivationEngine(notifier=self.notifier)
+
+        # 4️⃣ SignalCoordinator (CONSTRUCTOR COMPLETO)
         self.signal = SignalCoordinator(
             signal_service=self.signal_service,
             analysis_service=self.analysis,
+            reactivation_engine=self.reactivation_engine,
+            notifier=self.notifier,
         )
 
         logger.info("✅ ApplicationLayer inicializado correctamente.")
