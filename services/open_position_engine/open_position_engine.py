@@ -16,6 +16,7 @@ class OpenPositionEngine:
         Importante: NO debe reventar nunca.
         """
         positions = await get_open_positions()
+        logger.info(f"📌 Posiciones abiertas detectadas: {len(positions)}")
 
         if not positions:
             logger.info("📭 No hay posiciones abiertas actualmente.")
