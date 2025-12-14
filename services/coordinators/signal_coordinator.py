@@ -21,55 +21,54 @@ class SignalCoordinator:
         except TypeError:
             return self.signal_service.get_pending_signals()
 
-    async def auto_reactivate(self, limit=10):
+    async def auto_reactivate(self, limit: int = 10):
+        pending = self.get_pending_signals(limit=limit) or []
 
-        pending = self.get_pending_signals(limit) or []
-        logger.info(f"🔁 Auto-reactivación: {len(pending)} señales pendientes.")
+        if not pending:
+            self.logger.info("ℹ️ No hay señales pendientes para reactivación.")
+            return
 
-        for s in pending:
+        self.logger.info(f"🔁 Auto-reactivación: {len(pending)} señales pendientes.")
+
+        for sig in pending:
             try:
-                signal_id = s.get("id") or s.get("signal_id")
-                symbol = s.get("symbol")
-                direction = s.get("direction")
+                signal_id = sig.get("id")
+                symbol = sig.get("symbol")
+                direction = sig.get("direction")
 
-                logger.info(
+                if not symbol or not direction:
+                    self.logger.warning(f"⚠️ Señal inválida (ID={signal_id}): {sig}")
+                    continue
+
+                self.logger.info(
                     f"🔍 Reactivación eval → {symbol} {direction} (ID={signal_id})"
                 )
 
                 analysis = await self.analysis_service.analyze_symbol(
-                    symbol, direction, context="reactivation"
+                    symbol=symbol,
+                    direction=direction,
+                    context="reactivation",
                 )
 
-                result = await self.reactivation_engine.evaluate_signal(
-                    symbol, direction, analysis
-                )
-
-                if result.get("allowed"):
-                    # marca reactivada (si existe)
-                    try:
-                        self.signal_service.mark_signal_reactivated(signal_id)
-                    except Exception:
-                        try:
-                            self.signal_service.mark_signal_as_reactivated(signal_id)
-                        except Exception:
-                            pass
-
-                    msg = f"♻️ Señal REACTIVADA ✅\n{symbol} {direction}\nID={signal_id}\n{result.get('reason','')}"
-                    logger.info(msg)
-                    try:
-                        await self.notifier.send_message(msg)
-                    except Exception:
-                        pass
-                else:
-                    reason = result.get("reason") or "No apta"
-                    logger.info(f"⏳ Señal {signal_id} aún no apta: {reason}")
-
-                # 🛑 A2: ignorar símbolos inválidos
-                if not symbol or not symbol.endswith("USDT"):
-                    logger.warning(f"🧹 Símbolo inválido ignorado: {symbol}")
+                if not analysis:
+                    self.logger.info(
+                        f"⏳ Señal {signal_id} aún no apta: análisis vacío"
+                    )
                     continue
 
+                if analysis.get("allowed"):
+                    self.logger.info(f"✅ Señal {signal_id} REACTIVADA ({symbol})")
+                    self.signal_service.mark_signal_reactivated(signal_id)
+                else:
+                    self.logger.info(
+                        f"⏳ Señal {signal_id} aún no apta: "
+                        f"decision={analysis.get('decision')}, "
+                        f"score={analysis.get('technical_score')}, "
+                        f"match={analysis.get('match_ratio')}, "
+                        f"grade={analysis.get('grade')}"
+                    )
+
             except Exception as e:
-                logger.exception(
-                    f"❌ Error evaluando reactivación ID={s.get('id')}: {e}"
+                self.logger.exception(
+                    f"❌ Error evaluando reactivación ID={sig.get('id')}: {e}"
                 )
