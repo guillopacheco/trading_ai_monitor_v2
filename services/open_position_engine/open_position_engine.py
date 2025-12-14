@@ -37,13 +37,28 @@ class OpenPositionEngine:
 
         for p in positions:
             price_change_pct, roi_pct = self._calculate_roi(p)
+            action = self._decide_action(roi_pct)
 
             logger.info(
                 f"🔎 {p['symbol']} {p['side']} "
-                f"Δprice={price_change_pct:.2f}% "
                 f"ROI={roi_pct:.2f}% "
-                f"lev={p['leverage']}x"
+                f"action={action}"
             )
+
+            if action == "warning":
+                logger.warning(f"⚠️ WARNING {p['symbol']} → ROI {roi_pct:.2f}%")
+
+            elif action == "critical_evaluate":
+                logger.error(
+                    f"🔴 CRITICAL {p['symbol']} → ROI {roi_pct:.2f}% "
+                    f"(evaluar cierre/reversión)"
+                )
+
+            elif action == "force_close":
+                logger.critical(
+                    f"☠️ HARD STOP {p['symbol']} → ROI {roi_pct:.2f}% "
+                    f"(cierre obligatorio)"
+                )
 
     def _normalize_position(self, raw: dict) -> dict | None:
         try:
@@ -101,3 +116,18 @@ class OpenPositionEngine:
         roi_pct = price_change_pct * leverage * 100
 
         return price_change_pct * 100, roi_pct
+
+    def _decide_action(self, roi_pct: float) -> str:
+        """
+        Decide acción basada en ROI (con leverage).
+        """
+        if roi_pct <= -80:
+            return "force_close"
+
+        if roi_pct <= -50:
+            return "critical_evaluate"
+
+        if roi_pct <= -30:
+            return "warning"
+
+        return "ok"
