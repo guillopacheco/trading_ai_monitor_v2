@@ -132,7 +132,7 @@ class SignalCoordinator:
                     await self.notifier.safe_send(msg)
                 else:
                     logger.info(
-                        f"⏳ Señal {signal_id} aún no apta: {decision.get('reason')}"
+                        f"⏳ Señal {signal_id} aún no apta: {result.get('reason')}"
                     )
 
             except Exception as e:
