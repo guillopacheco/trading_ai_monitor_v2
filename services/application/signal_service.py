@@ -50,7 +50,7 @@ class SignalService:
     # ------------------------------------------------------------
     # 2) OBTENER SEÑALES PENDIENTES DE REACTIVACIÓN
     # ------------------------------------------------------------
-    def get_pending_signals(self):
+    def get_pending_signals(self, limit=None):
         """
         Devuelve una lista de todas las señales en estado 'pending'.
         Usado por signal_reactivation_sync.

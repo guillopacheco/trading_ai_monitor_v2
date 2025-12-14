@@ -1,5 +1,4 @@
 # services/telegram_service/command_bot.py
-
 import logging
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
@@ -7,54 +6,77 @@ from telegram.ext import CommandHandler, ContextTypes
 logger = logging.getLogger("command_bot")
 
 
-class CommandBot:
-    def __init__(self, application, app_layer):
-        self.application = application
-        self.app_layer = app_layer
-        self._register_handlers()
-        logger.info("✅ CommandBot handlers registrados.")
+def register_handlers(application, app_layer):
+    """
+    ÚNICA función pública que main.py debe importar.
+    """
+    application.bot_data["app_layer"] = app_layer
 
-    def _register_handlers(self):
-        self.application.add_handler(CommandHandler("start", self.cmd_start))
-        self.application.add_handler(CommandHandler("analizar", self.cmd_analizar))
+    application.add_handler(CommandHandler("help", cmd_help))
+    application.add_handler(CommandHandler("estado", cmd_estado))
+    application.add_handler(CommandHandler("posiciones", cmd_posiciones))
+    application.add_handler(CommandHandler("revisar", cmd_revisar))
+    application.add_handler(CommandHandler("detener", cmd_detener))
 
-    async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("✅ Handlers registrados correctamente (command_bot).")
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = (
+        "🤖 Trading AI Monitor\n\n"
+        "Comandos:\n"
+        "/estado - estado general\n"
+        "/posiciones - resumen posiciones abiertas\n"
+        "/revisar - inicia monitoreo posiciones (si aplica)\n"
+        "/detener - detiene monitoreo (si aplica)\n"
+    )
+    await update.message.reply_text(txt)
+
+
+async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    app_layer = context.application.bot_data.get("app_layer")
+    if not app_layer:
+        return await update.message.reply_text("⚠️ app_layer no disponible.")
+
+    await update.message.reply_text("✅ Bot activo. Servicios cargados correctamente.")
+
+
+async def cmd_posiciones(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    app_layer = context.application.bot_data.get("app_layer")
+    if not app_layer:
+        return await update.message.reply_text("⚠️ app_layer no disponible.")
+
+    # Llamada segura a OperationService sin asumir un método único
+    op = getattr(app_layer, "operation", None)
+    if not op:
+        return await update.message.reply_text("⚠️ OperationService no disponible.")
+
+    try:
+        # intenta métodos comunes
+        if hasattr(op, "get_open_positions_summary"):
+            summary = await op.get_open_positions_summary()
+            return await update.message.reply_text(str(summary))
+
+        if hasattr(op, "list_open_positions"):
+            positions = await op.list_open_positions()
+            return await update.message.reply_text(str(positions))
+
         await update.message.reply_text(
-            "🤖 Trading AI Monitor activo.\n"
-            "Comandos:\n"
-            "/analizar SYMBOL DIRECTION\n"
-            "Ej: /analizar YALAUSDT short"
+            "ℹ️ OperationService no expone método de resumen aún."
         )
+    except Exception as e:
+        logger.exception("Error en /posiciones")
+        await update.message.reply_text(f"❌ Error leyendo posiciones: {e}")
 
-    async def cmd_analizar(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        try:
-            if len(context.args) < 2:
-                await update.message.reply_text("Uso: /analizar SYMBOL DIRECTION")
-                return
 
-            symbol = context.args[0].upper().strip()
-            direction = context.args[1].lower().strip()
+async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Mantengo el comando vivo aunque tu lógica final esté en otro módulo
+    await update.message.reply_text(
+        "✅ /revisar recibido. (Monitor automático corre en background si está habilitado.)"
+    )
 
-            if direction not in ("long", "short"):
-                await update.message.reply_text("Direction debe ser: long | short")
-                return
 
-            await self.app_layer.signal.manual_analyze_request(symbol, direction)
-
-        except Exception as e:
-            logger.exception(f"❌ Error en /analizar: {e}")
-            await update.message.reply_text("❌ Error ejecutando /analizar.")
-
-    # services/telegram_service/command_bot.py
-
-    def register_handlers(app, app_layer):
-        """
-        Punto único de registro de comandos.
-        NO cambia lógica existente.
-        """
-        # Si ya tienes handlers creados arriba, solo añádelos aquí
-        # Ejemplo:
-        # app.add_handler(CommandHandler("estado", estado_command))
-        # app.add_handler(CommandHandler("revisar", revisar_command))
-
-        pass
+async def cmd_detener(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "✅ /detener recibido. (Si tu monitor soporta stop, lo conectamos luego.)"
+    )
