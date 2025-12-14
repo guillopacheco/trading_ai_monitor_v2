@@ -67,3 +67,14 @@ ATR_HIGH_VOL_THRESHOLD = float(os.getenv("ATR_HIGH_VOL_THRESHOLD", 0.03))
 DEFAULT_TIMEFRAMES = os.getenv("DEFAULT_TIMEFRAMES", "240,60,30,15").split(",")
 
 DEFAULT_TIMEFRAMES = [tf.strip() for tf in DEFAULT_TIMEFRAMES]
+
+# ============================================================
+# 🧠 Analysis / Engine Modes
+# ============================================================
+
+# analysis | reactivation | open_position
+ANALYSIS_MODE = os.getenv("ANALYSIS_MODE", "analysis")
+
+# strict = no fallback
+# safe   = allow fallbacks
+ENGINE_MODE = os.getenv("ENGINE_MODE", "safe")
