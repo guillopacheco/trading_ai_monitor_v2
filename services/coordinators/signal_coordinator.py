@@ -70,17 +70,23 @@ class SignalCoordinator:
                     f"🔍 Reactivación eval → {symbol} {direction} (ID={signal_id})"
                 )
 
-                analysis = await self.analysis_service.analyze_symbol(
-                    symbol=symbol,
-                    direction=direction,
-                    context="reactivation",
+                analysis = await self.analysis.analyze_symbol(
+                    symbol, direction, context="reactivation"
                 )
 
-                decision = await self.reactivation_engine.evaluate_signal(
-                    symbol=symbol,
-                    direction=direction,
-                    analysis=analysis,
+                # ✅ evaluar reactivación correctamente
+                result = await self.reactivation_engine.evaluate_signal(
+                    symbol, direction, analysis
                 )
+
+                if result.get("allowed"):
+                    logger.info(f"✅ Señal reactivada ID={signal_id}")
+                    self.signal_service.mark_signal_reactivated(signal_id)
+
+                else:
+                    logger.info(
+                        f"⏳ Señal aún no apta ID={signal_id} → {result.get('reason')}"
+                    )
 
                 # -----------------------------------------
                 # Notificar reactivación
