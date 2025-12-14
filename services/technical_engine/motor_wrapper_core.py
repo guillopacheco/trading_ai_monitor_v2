@@ -205,26 +205,23 @@ def _detect_simple_divergence(
 # 🔍 Análisis por timeframe
 # ============================================================
 def analyze_single_tf(symbol: str, tf: str) -> Dict[str, Any] | None:
-    """
-    Retorna un dict con:
-      - tf, tf_label
-      - trend_label, trend_code
-      - votes_bull, votes_bear
-      - indicadores (rsi, macd_hist, ema, close, atr)
-      - series completas (rsi_series, macd_hist_series, close_series)
-      - divergencias locales (div_rsi, div_macd)
-    """
-
     df = _get_ohlcv(symbol, tf, limit=260)
     if df is None or len(df) < MIN_BARS_PER_TF:
         return None
 
-    # Series completas (para divergencias)
+    # 1️⃣ calcular indicadores
+    df = _calc_indicators(df)
+
+    # 2️⃣ validar columnas
+    required_cols = ["rsi", "macd_hist", "close"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise RuntimeError(f"Indicadores faltantes en df: {missing}")
+
+    # 3️⃣ ahora sí, extraer series
     rsi_series = df["rsi"].dropna().tolist()
     macd_hist_series = df["macd_hist"].dropna().tolist()
     close_series = df["close"].dropna().tolist()
-
-    atr = atr_val
 
     df = _calc_indicators(df)
 
@@ -295,7 +292,7 @@ def analyze_single_tf(symbol: str, tf: str) -> Dict[str, Any] | None:
 
     # Divergencias simples
     div_rsi = _detect_simple_divergence(df["close"], df["rsi"])
-    div_macd = _detect_simple_divergence(df["close"], df["macd"])
+    div_macd = _detect_simple_divergence(df["close"], df["macd_hist"])
 
     tf_map = {
         "240": "4h",
