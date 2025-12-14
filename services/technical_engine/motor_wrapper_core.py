@@ -204,125 +204,116 @@ def _detect_simple_divergence(
 # ============================================================
 # 🔍 Análisis por timeframe
 # ============================================================
-def analyze_single_tf(symbol: str, tf: str) -> Dict[str, Any] | None:
+def analyze_single_tf(symbol: str, tf: str):
+    # -------------------------------------------------
+    # 1) Obtener OHLCV
+    # -------------------------------------------------
     df = _get_ohlcv(symbol, tf, limit=260)
-    if df is None or len(df) < MIN_BARS_PER_TF:
+    if df is None or df.empty or len(df) < 50:
         return None
 
-    # 1️⃣ calcular indicadores
+    # -------------------------------------------------
+    # 2) Calcular indicadores
+    # -------------------------------------------------
     df = _calc_indicators(df)
 
-    # 2️⃣ validar columnas
-    required_cols = ["rsi", "macd_hist", "close"]
-    missing = [c for c in required_cols if c not in df.columns]
+    # -------------------------------------------------
+    # 3) Normalizar nombres de indicadores
+    # -------------------------------------------------
+    # RSI
+    if "RSI_14" in df.columns:
+        df["rsi"] = df["RSI_14"]
+
+    # MACD histograma
+    macd_hist_col = None
+    for c in df.columns:
+        if c.startswith("MACDh_"):
+            macd_hist_col = c
+            break
+
+    if macd_hist_col:
+        df["macd_hist"] = df[macd_hist_col]
+
+    # -------------------------------------------------
+    # 4) Validación mínima
+    # -------------------------------------------------
+    required = ["rsi", "macd_hist", "close"]
+    missing = [c for c in required if c not in df.columns]
     if missing:
         raise RuntimeError(f"Indicadores faltantes en df: {missing}")
 
-    # 3️⃣ ahora sí, extraer series
+    # -------------------------------------------------
+    # 5) Series completas (para divergencias)
+    # -------------------------------------------------
     rsi_series = df["rsi"].dropna().tolist()
     macd_hist_series = df["macd_hist"].dropna().tolist()
     close_series = df["close"].dropna().tolist()
 
-    df = _calc_indicators(df)
+    # -------------------------------------------------
+    # 6) Últimos valores
+    # -------------------------------------------------
+    rsi = rsi_series[-1]
+    macd_hist = macd_hist_series[-1]
+    close = close_series[-1]
+
+    ema_short = float(df["ema_short"].iloc[-1]) if "ema_short" in df.columns else None
+    ema_long = float(df["ema_long"].iloc[-1]) if "ema_long" in df.columns else None
 
     # -------------------------------------------------
-    # Normalización de nombres de indicadores
+    # 7) ATR
     # -------------------------------------------------
-    # RSI
-    if "RSI_14" in df.columns and "rsi" not in df.columns:
-        df["rsi"] = df["RSI_14"]
+    atr = float(df["atr"].iloc[-1]) if "atr" in df.columns else 0.0
 
-    # MACD histogram
-    for col in df.columns:
-        if col.startswith("MACDh_"):
-            df["macd_hist"] = df[col]
-            break
-
-    # Validación mínima
-    required_cols = ["rsi", "macd_hist", "close"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise RuntimeError(f"Indicadores faltantes en df: {missing}")
-
-    last = df.iloc[-1]
-    rsi = float(last["rsi"])
-    ema_s = float(last["ema_short"])
-    ema_l = float(last["ema_long"])
-    macd_hist = float(last["macd_hist"])
-    close = float(last["close"])
-
-    atr_val = 0.0
-    if "atr" in df.columns:
-        try:
-            atr_raw = float(df["atr"].iloc[-1])
-            if not np.isnan(atr_raw):
-                atr_val = atr_raw
-        except Exception:
-            atr_val = 0.0
-
-    # Votos de tendencia
-    bull = 0
-    bear = 0
-
-    # Precio vs EMA larga
-    if close > ema_l:
-        bull += 1
-    elif close < ema_l:
-        bear += 1
-
-    # EMA corta vs larga
-    if ema_s > ema_l:
-        bull += 1
-    elif ema_s < ema_l:
-        bear += 1
-
-    # MACD hist
-    if macd_hist > 0:
-        bull += 1
-    elif macd_hist < 0:
-        bear += 1
-
-    # RSI (≥55 alcista; ≤45 bajista)
-    if rsi >= 55:
-        bull += 1
-    elif rsi <= 45:
-        bear += 1
-
-    trend_label, trend_code = _trend_from_votes(bull, bear)
-
-    # Divergencias simples
+    # -------------------------------------------------
+    # 8) Divergencias simples
+    # -------------------------------------------------
     div_rsi = _detect_simple_divergence(df["close"], df["rsi"])
     div_macd = _detect_simple_divergence(df["close"], df["macd_hist"])
 
-    tf_map = {
-        "240": "4h",
-        "60": "1h",
-        "30": "30m",
-        "15": "15m",
-        "5": "5m",
-        "1": "1m",
-    }
-    tf_label = tf_map.get(tf, tf)
+    # -------------------------------------------------
+    # 9) Tendencia básica (votos)
+    # -------------------------------------------------
+    bull = 0
+    bear = 0
 
+    if ema_short and ema_long:
+        if ema_short > ema_long:
+            bull += 1
+        else:
+            bear += 1
+
+    if rsi > 50:
+        bull += 1
+    else:
+        bear += 1
+
+    if macd_hist > 0:
+        bull += 1
+    else:
+        bear += 1
+
+    trend_code = "bull" if bull >= bear else "bear"
+    trend_label = "Alcista" if trend_code == "bull" else "Bajista"
+
+    # -------------------------------------------------
+    # 10) Resultado
+    # -------------------------------------------------
     return {
         "tf": tf,
-        "tf_label": tf_label,
+        "tf_label": tf,
         "trend_label": trend_label,
         "trend_code": trend_code,
         "votes_bull": bull,
         "votes_bear": bear,
-        # valores actuales
         "rsi": rsi,
         "macd_hist": macd_hist,
-        "ema_short": ema_s,
-        "ema_long": ema_l,
+        "ema_short": ema_short,
+        "ema_long": ema_long,
         "close": close,
         "atr": atr,
-        # 🔥 series completas
         "rsi_series": rsi_series,
         "macd_hist_series": macd_hist_series,
         "close_series": close_series,
-        # divergencias locales
         "div_rsi": div_rsi,
         "div_macd": div_macd,
     }
