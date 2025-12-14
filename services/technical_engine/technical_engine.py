@@ -5,8 +5,7 @@
 import logging
 from services.technical_engine.motor_wrapper_core import get_multi_tf_snapshot
 from services.technical_engine.smart_entry_validator import evaluate_smart_entry
-from services.technical_engine.trend_system_final import evaluate_major_trend
-from services.technical_engine.smart_divergences import detect_divergences
+
 
 logger = logging.getLogger("technical_engine")
 
@@ -44,32 +43,20 @@ async def analyze(symbol: str, direction: str = "auto", context: str = "entry") 
         if direction == "auto":
             direction = snapshot.get("direction_hint", "long")
 
-        # 3) Divergencias RSI/MACD
-        # ---------------------------------------------------------
-        # Divergencias (usar timeframe base: 1H si existe)
-        # ---------------------------------------------------------
-        divs = {
-            "RSI": "Ninguna",
-            "MACD": "Ninguna",
+        # 3) Divergencias (ya vienen del snapshot)
+        divs = snapshot.get("divergences", {"RSI": "Ninguna", "MACD": "Ninguna"})
+
+        # 4) Tendencia mayor (ya viene del snapshot)
+        major_trend = {
+            "trend_label": snapshot.get("major_trend_label", "Lateral / Mixta"),
+            "trend_code": snapshot.get("major_trend_code", "sideways"),
+            "trend_score": snapshot.get("trend_score", 0.0),
         }
 
-        try:
-            tf_1h = next(
-                tf
-                for tf in snapshot["timeframes"]
-                if tf["tf_label"] == "1h" and "rsi_series" in tf
-            )
-
-            divs = detect_divergences(
-                rsi_series=tf_1h["rsi_series"],
-                macd_hist_series=tf_1h["macd_hist_series"],
-                close_series=tf_1h["close_series"],
-            )
-
-        except StopIteration:
-            logger.warning("⚠️ No se encontró timeframe 1H para divergencias")
-        except Exception as e:
-            logger.warning(f"⚠️ Error calculando divergencias: {e}")
+    except StopIteration:
+        logger.warning("⚠️ No se encontró timeframe 1H para divergencias")
+    except Exception as e:
+        logger.warning(f"⚠️ Error calculando divergencias: {e}")
 
         # 4) Tendencia mayor
         major_trend = evaluate_major_trend(snapshot)
@@ -149,7 +136,7 @@ def _build_final_decision(
         "decision_reasons": reasons,
         "major_trend": major_trend,
         "smart_entry": smart_entry,
-        "divergences": snapshot.get("divergences", {}),
+        "divergences": divs,
     }
 
 
