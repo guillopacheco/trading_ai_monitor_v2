@@ -20,23 +20,20 @@ class OpenPositionEngine:
     async def evaluate_open_positions(self):
         """
         Evalúa posiciones abiertas en Bybit y decide acciones.
-        Importante: NO debe reventar nunca.
+        NO debe reventar nunca.
         """
-        positions_raw = get_open_positions()
+        try:
+            positions_raw = get_open_positions()
+        except Exception as e:
+            logger.exception(f"❌ Error obteniendo posiciones abiertas: {e}")
+            return
+
         positions = []
 
         for raw in positions_raw:
             p = self._normalize_position(raw)
             if p:
                 positions.append(p)
-
-            symbol = p["symbol"]
-            prev_state = self.last_position_states.get(symbol)
-
-            if prev_state == action:
-                continue  # ⛔ no repetir notificación
-
-        self.last_position_states[symbol] = action
 
         logger.info(f"📌 Posiciones abiertas detectadas: {len(positions)}")
 
@@ -45,27 +42,35 @@ class OpenPositionEngine:
             return
 
         for p in positions:
+            symbol = p["symbol"]
+
             price_change_pct, roi_pct = self._calculate_roi(p)
             action = self._decide_action(roi_pct)
 
+            prev_action = self.last_position_states.get(symbol)
+
+            # ⛔ Evitar repetir la misma alerta
+            if prev_action == action:
+                continue
+
+            self.last_position_states[symbol] = action
+
             logger.info(
-                f"🔎 {p['symbol']} {p['side']} "
-                f"ROI={roi_pct:.2f}% "
-                f"action={action}"
+                f"🔎 {symbol} {p['side']} " f"ROI={roi_pct:.2f}% " f"action={action}"
             )
 
             if action == "warning":
-                logger.warning(f"⚠️ WARNING {p['symbol']} → ROI {roi_pct:.2f}%")
+                logger.warning(f"⚠️ WARNING {symbol} → ROI {roi_pct:.2f}%")
 
             elif action == "critical_evaluate":
                 logger.error(
-                    f"🔴 CRITICAL {p['symbol']} → ROI {roi_pct:.2f}% "
+                    f"🔴 CRITICAL {symbol} → ROI {roi_pct:.2f}% "
                     f"(evaluar cierre/reversión)"
                 )
 
             elif action == "force_close":
                 logger.critical(
-                    f"☠️ HARD STOP {p['symbol']} → ROI {roi_pct:.2f}% "
+                    f"☠️ HARD STOP {symbol} → ROI {roi_pct:.2f}% "
                     f"(cierre obligatorio)"
                 )
 
