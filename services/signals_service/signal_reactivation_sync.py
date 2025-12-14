@@ -21,7 +21,7 @@ async def start_signal_reactivation_loop(app_layer, interval_sec=300):
                 direction = signal["direction"]
                 signal_id = signal["id"]
 
-                analysis = await app_layer.analysis.analyze_symbol(
+                analysis = await app_layer.signal.analyze_signal(
                     symbol, direction, context="reactivation"
                 )
 
