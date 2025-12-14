@@ -14,7 +14,7 @@ async def start_signal_reactivation_loop(app_layer, interval_sec=300):
 
     while True:
         try:
-            pending_signals = app_layer.signal.get_pending_signals()
+            pending_signals = app_layer.signal_service.get_pending_signals()
 
             for signal in pending_signals:
                 symbol = signal["symbol"]
@@ -32,7 +32,7 @@ async def start_signal_reactivation_loop(app_layer, interval_sec=300):
                 if result.get("allowed"):
                     logger.info(f"♻️ Reactivando señal {signal_id} ({symbol})")
 
-                    app_layer.signal.mark_signal_reactivated(signal_id)
+                    app_layer.signal_service.mark_signal_reactivated(signal_id)
 
                     # Mensaje Telegram (usa el mismo formato)
                     message = (
