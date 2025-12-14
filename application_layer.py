@@ -5,13 +5,13 @@ from services.reactivation_engine.reactivation_engine import ReactivationEngine
 
 
 class ApplicationLayer:
-    def __init__(self):
-        # 🔔 Notificador único
-        self.notifier = Notifier()
+    def __init__(self, bot):
+        # 🔔 Notificador único con bot real
+        self.notifier = Notifier(bot)
 
         # 📡 Coordinadores / servicios
         self.signal = SignalCoordinator(notifier=self.notifier)
         self.operation = OperationService(notifier=self.notifier)
 
-        # ♻️ Motor de reactivación
+        # ♻️ Reactivación
         self.reactivation_engine = ReactivationEngine(notifier=self.notifier)
