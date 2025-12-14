@@ -46,7 +46,7 @@ TELEGRAM_PHONE = os.getenv("TELEGRAM_PHONE", "")
 TELEGRAM_SESSION = os.getenv("TELEGRAM_SESSION", "trading_ai_monitor")
 
 # Canal VIP donde llegan las señales
-TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_CHANNEL_ID", "0"))
+TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHANNEL_ID", "0"))
 
 # ============================================================
 # TELEGRAM — BOT
@@ -78,7 +78,7 @@ BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 # Solo tradeamos futuros lineales
 BYBIT_CATEGORY = "linear"
 SIMULATION_MODE = False
-TRADING_MODE = "REAL"   # o "DEMO"
+TRADING_MODE = "REAL"  # o "DEMO"
 
 # ============================================================
 # FLAGS DEL SISTEMA
@@ -93,6 +93,7 @@ ANALYSIS_DEBUG_MODE = DEBUG_MODE
 # services/telegram_service/command_bot.py
 # --- versión async compatible con el loop global ---
 
+
 async def start_command_bot():
     logger.info("🤖 Iniciando bot de comandos (LITE)…")
 
@@ -106,17 +107,19 @@ async def start_command_bot():
     app.add_handler(CommandHandler("config", config_cmd))
 
     # ⬇️ Reemplaza run_polling() por control manual del ciclo
-    await app.initialize()     # prepara todo
-    await app.start()          # inicia conexión
+    await app.initialize()  # prepara todo
+    await app.start()  # inicia conexión
     app.updater.start_polling()  # ⬅️ inicia el polling sin tocar el event loop
 
     logger.info("🤖 Bot de comandos listo (modo async).")
 
-    return app     # ← retornamos la instancia para detenerla luego si se necesita
+    return app  # ← retornamos la instancia para detenerla luego si se necesita
+
 
 # ============================================================
 # VALIDACIÓN RÁPIDA (para evitar errores en tiempo de ejecución)
 # ============================================================
+
 
 def validate_config():
     errors = []
@@ -155,8 +158,8 @@ SIGNAL_RECHECK_INTERVAL_MINUTES = 5
 
 # Parámetros EMA usados por el motor técnico
 EMA_SHORT_PERIOD = 10
-EMA_MID_PERIOD   = 30
-EMA_LONG_PERIOD  = 50
+EMA_MID_PERIOD = 30
+EMA_LONG_PERIOD = 50
 
 # Parámetros MACD usados por el motor técnico
 MACD_FAST = 12
