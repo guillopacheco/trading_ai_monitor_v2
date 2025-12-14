@@ -1,23 +1,20 @@
+# services/signals_service/signal_reactivation_sync.py
 import asyncio
 import logging
 
 logger = logging.getLogger("signal_reactivation_sync")
 
 
-async def start_signal_reactivation_loop(app_layer, interval_sec=300):
-    """
-    Loop de reactivación:
-    delega TODA la lógica al SignalCoordinator
-    """
-
-    logger.info("♻️ Monitor automático de reactivación iniciado")
+async def start_signal_reactivation_loop(app_layer, interval_sec: int = 300):
+    logger.info("♻️  Monitor automático de reactivación iniciado")
 
     while True:
         try:
-            # 🔁 delegación limpia
-            await app_layer.signal.auto_reactivate()
-
+            await app_layer.signal.auto_reactivate(limit=10)
+        except asyncio.CancelledError:
+            logger.info("🛑 Loop reactivación cancelado")
+            return
         except Exception as e:
-            logger.exception(f"❌ Error en loop de reactivación: {e}")
+            logger.exception("❌ Error en loop de reactivación: %s", e)
 
         await asyncio.sleep(interval_sec)
