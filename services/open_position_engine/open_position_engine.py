@@ -15,6 +15,7 @@ class OpenPositionEngine:
     def __init__(self, notifier, analysis_service):
         self.notifier = notifier
         self.analysis_service = analysis_service
+        self.last_position_states = {}
 
     async def evaluate_open_positions(self):
         """
@@ -28,6 +29,14 @@ class OpenPositionEngine:
             p = self._normalize_position(raw)
             if p:
                 positions.append(p)
+
+            symbol = p["symbol"]
+            prev_state = self.last_position_states.get(symbol)
+
+            if prev_state == action:
+                continue  # ⛔ no repetir notificación
+
+        self.last_position_states[symbol] = action
 
         logger.info(f"📌 Posiciones abiertas detectadas: {len(positions)}")
 
