@@ -14,7 +14,7 @@ logger = logging.getLogger("main")
 
 async def post_init(app):
     # 1️⃣ Crear ApplicationLayer
-    app.app_layer = ApplicationLayer(app)
+    app.app_layer = ApplicationLayer()
 
     # 2️⃣ Telegram reader (Telethon)
     asyncio.create_task(start_telegram_reader(app.app_layer))
