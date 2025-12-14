@@ -22,6 +22,16 @@ class OpenPositionEngine:
         self.notifier = notifier
         self.last_position_count = 0  # ← estado inicial seguro
 
+    def classify_risk(self, pnl: float) -> str:
+        if pnl <= -0.50:
+            return "CRITICAL"
+        elif pnl <= -0.30:
+            return "RISK"
+        elif pnl <= -0.10:
+            return "WATCH"
+        else:
+            return "SAFE"
+
     # ==============================================================
     # 🚀 ENTRY POINT
     # ==============================================================
@@ -38,11 +48,20 @@ class OpenPositionEngine:
             if not positions:
                 return
 
-            for p in positions[:20]:
-                sym = p.get("symbol") or p.get("symbolName", "UNKNOWN")
-                size = p.get("size")
-                pnl = p.get("unrealisedPnl") or p.get("unrealizedPnl")
-                logger.info(f"🔎 {sym} size={size} pnl={pnl}")
+            for p in positions:
+                symbol = p.get("symbol") or p.get("symbolName") or "UNKNOWN"
+                size = p.get("size", 0)
+
+                pnl = p.get("unrealisedPnl") or p.get("unrealizedPnl") or 0
+
+                try:
+                    pnl = float(pnl)
+                except Exception:
+                    pnl = 0.0
+
+                risk = self.classify_risk(pnl)
+
+                logger.info(f"📊 {symbol} | size={size} | pnl={pnl:.2f} | risk={risk}")
 
         except Exception as e:
             logger.exception("❌ Error evaluando posiciones abiertas")
