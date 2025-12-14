@@ -22,6 +22,7 @@ class SignalCoordinator:
             return self.signal_service.get_pending_signals()
 
     async def auto_reactivate(self, limit=10):
+
         pending = self.get_pending_signals(limit) or []
         logger.info(f"🔁 Auto-reactivación: {len(pending)} señales pendientes.")
 
@@ -62,6 +63,13 @@ class SignalCoordinator:
                 else:
                     reason = result.get("reason") or "No apta"
                     logger.info(f"⏳ Señal {signal_id} aún no apta: {reason}")
+
+                    symbol = signal["symbol"]
+
+                # 🛑 A2: ignorar símbolos inválidos
+                if not symbol or not symbol.endswith("USDT"):
+                    logger.warning(f"🧹 Símbolo inválido ignorado: {symbol}")
+                    continue
 
             except Exception as e:
                 logger.exception(
