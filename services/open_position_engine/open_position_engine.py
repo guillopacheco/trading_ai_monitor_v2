@@ -15,14 +15,13 @@ class OpenPositionEngine:
         Evalúa posiciones abiertas en Bybit y decide acciones (placeholder).
         Importante: NO debe reventar nunca.
         """
-        positions = await get_open_positions()
+        positions = get_open_positions()
+
         logger.info(f"📌 Posiciones abiertas detectadas: {len(positions)}")
 
         if not positions:
             logger.info("📭 No hay posiciones abiertas actualmente.")
             return
-
-        logger.info(f"📌 Posiciones abiertas detectadas: {len(positions)}")
 
         # Aquí luego metes tu lógica (pérdida >=30/50%, reversión, etc.)
         # Por ahora solo loguea:

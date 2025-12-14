@@ -268,32 +268,36 @@ logger = logging.getLogger("bybit_client")
 # ... tu resto del archivo queda igual ...
 
 
-async def get_open_positions(symbol: str | None = None, settle_coin: str | None = None):
+def get_open_positions(symbol: str | None = None):
     """
-    Retorna lista de posiciones abiertas.
-    - ES ASYNC para que 'await get_open_positions()' sea válido.
-    - Bybit requiere symbol o settleCoin => usamos settleCoin=USDT por defecto.
+    Obtiene las posiciones abiertas en Bybit (V5).
+    Devuelve SIEMPRE una lista.
     """
-    settle_coin = settle_coin or BYBIT_SETTLE_COIN or "USDT"
 
     try:
-        # ⚠️ Ajusta esto a TU cliente real.
-        # Si usas pybit: session.get_positions(category="linear", settleCoin=settle_coin, symbol=symbol)
-        # Si tienes ya una función sync interna, llámala aquí.
+        params = {"category": "linear", "settleCoin": "USDT"}
 
-        params = {"category": "linear", "settleCoin": settle_coin}
         if symbol:
             params["symbol"] = symbol
 
-        if isinstance(res, dict) and res.get("retCode") != 0:
-            logger.error(f"Error get_open_positions: {res}")
+        res = _get("/v5/position/list", params)
+
+        if not isinstance(res, dict):
+            logger.error(f"❌ Respuesta inválida get_open_positions: {res}")
             return []
 
-        # Normaliza salida
-        result = res.get("result", {}) if isinstance(res, dict) else {}
-        positions = result.get("list", []) if isinstance(result, dict) else []
+        if res.get("retCode") != 0:
+            logger.error(f"❌ Error get_open_positions: {res}")
+            return []
+
+        positions = res.get("result", {}).get("list", [])
+
+        if not isinstance(positions, list):
+            logger.error(f"❌ Formato inesperado posiciones: {positions}")
+            return []
+
         return positions
 
     except Exception as e:
-        logger.exception(f"❌ Error get_open_positions: {e}")
+        logger.exception(f"❌ Excepción get_open_positions: {e}")
         return []
