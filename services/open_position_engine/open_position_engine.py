@@ -21,21 +21,58 @@ class OpenPositionEngine:
         Evalúa posiciones abiertas en Bybit y decide acciones.
         Importante: NO debe reventar nunca.
         """
+        positions_raw = get_open_positions()
+        positions = []
+
+        for raw in positions_raw:
+            p = self._normalize_position(raw)
+            if p:
+                positions.append(p)
+
+        logger.info(f"📌 Posiciones abiertas detectadas: {len(positions)}")
+
+        if not positions:
+            logger.info("📭 No hay posiciones abiertas.")
+            return
+
+        for p in positions:
+            logger.info(
+                f"🔎 {p['symbol']} "
+                f"{p['side']} "
+                f"size={p['size']} "
+                f"pnl={p['unrealized_pnl']}"
+            )
+
+    def _normalize_position(self, raw: dict) -> dict | None:
         try:
-            positions = get_open_positions()
+            symbol = raw.get("symbol") or raw.get("symbolName")
+            size = float(raw.get("size", 0))
+            if not symbol or size == 0:
+                return None
 
-            logger.info(f"📌 Posiciones abiertas detectadas: {len(positions)}")
+            side = raw.get("side")
+            if not side:
+                side = "long" if size > 0 else "short"
 
-            if not positions:
-                logger.info("📭 No hay posiciones abiertas actualmente.")
-                return
+            entry_price = float(raw.get("entryPrice") or raw.get("avgPrice") or 0)
+            mark_price = float(raw.get("markPrice") or raw.get("lastPrice") or 0)
 
-            for p in positions[:20]:
-                sym = p.get("symbol") or p.get("symbolName") or "UNKNOWN"
-                size = p.get("size")
-                pnl = p.get("unrealisedPnl") or p.get("unrealizedPnl")
+            leverage = int(raw.get("leverage") or 20)  # default explícito
 
-                logger.info(f"🔎 {sym} size={size} pnl={pnl}")
+            unrealized_pnl = float(
+                raw.get("unrealisedPnl") or raw.get("unrealizedPnl") or 0
+            )
+
+            return {
+                "symbol": symbol,
+                "side": side.lower(),
+                "size": abs(size),
+                "entry_price": entry_price,
+                "mark_price": mark_price,
+                "leverage": leverage,
+                "unrealized_pnl": unrealized_pnl,
+            }
 
         except Exception as e:
-            logger.exception(f"❌ Error obteniendo posiciones abiertas: {e}")
+            logger.exception(f"❌ Error normalizando posición: {e}")
+            return None
