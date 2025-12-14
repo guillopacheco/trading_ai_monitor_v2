@@ -18,54 +18,34 @@ logger = logging.getLogger("open_position_engine")
 
 
 class OpenPositionEngine:
-    def __init__(self, notifier=None, analysis_service=None):
+    def __init__(self, notifier=None):
         self.notifier = notifier
-        self.analysis_service = analysis_service
-
-        # Estado interno
-        self.last_position_states: Dict[str, str] = {}
-        self._alert_cooldown: Dict[str, float] = {}
-        self.last_position_count = 0
-        self.last_position_count = len(positions)
+        self.last_position_count = 0  # ← estado inicial seguro
 
     # ==============================================================
     # 🚀 ENTRY POINT
     # ==============================================================
     async def evaluate_open_positions(self):
-        """
-        Evalúa posiciones abiertas en Bybit.
-        IMPORTANTE: nunca debe lanzar excepción.
-        """
         try:
-            positions = get_open_positions()
+            positions = get_open_positions()  # o await, según tu wrapper
+
+            self.last_position_count = len(positions)
+
+            logger.info(
+                f"📌 Posiciones abiertas detectadas: {self.last_position_count}"
+            )
+
+            if not positions:
+                return
+
+            for p in positions[:20]:
+                sym = p.get("symbol") or p.get("symbolName", "UNKNOWN")
+                size = p.get("size")
+                pnl = p.get("unrealisedPnl") or p.get("unrealizedPnl")
+                logger.info(f"🔎 {sym} size={size} pnl={pnl}")
+
         except Exception as e:
-            logger.exception(f"❌ Error obteniendo posiciones abiertas: {e}")
-            return
-
-        if not positions:
-            logger.info("📭 No hay posiciones abiertas actualmente.")
-            return
-
-        logger.info(f"📌 Posiciones abiertas detectadas: {len(positions)}")
-
-        for raw in positions:
-            try:
-                position = self._normalize_position(raw)
-                roi_pct = self._calculate_roi(position)
-                action = self._decide_action(roi_pct)
-
-                symbol = position["symbol"]
-
-                # Evitar repetir alertas iguales
-                if action:
-                    if not self._can_send_alert(symbol, action):
-                        continue
-
-                    await self._run_action(position, roi_pct, action)
-                    self._register_alert(symbol, action)
-
-            except Exception as e:
-                logger.exception(f"❌ Error evaluando posición: {e}")
+            logger.exception("❌ Error evaluando posiciones abiertas")
 
     # ==============================================================
     # 🧩 NORMALIZACIÓN
