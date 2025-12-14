@@ -15,9 +15,10 @@ async def post_init(app):
     logger.info("✅ Background tasks iniciadas correctamente")
 
 
-from services.reactivation_engine.signal_reactivation_sync import (
+from services.signals_service.signal_reactivation_sync import (
     start_signal_reactivation_loop,
 )
+
 
 app.create_task(start_signal_reactivation_loop(app_layer, interval_sec=300))
 
