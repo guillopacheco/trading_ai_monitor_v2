@@ -145,3 +145,58 @@ class OpenPositionEngine:
             return "warning"
 
         return "ok"
+
+    async def _run_technical_evaluation(self, position, roi_pct):
+        symbol = position["symbol"]
+        side = position["side"]  # long / short
+
+        try:
+            from services.technical_engine.technical_engine import analyze
+
+            logger.info(f"🧠 B5 → Análisis técnico para {symbol} ({side})")
+
+            result = analyze(symbol=symbol, direction=side, context="open_position")
+
+        except Exception as e:
+            logger.exception(f"❌ Error técnico analizando {symbol}: {e}")
+            return
+
+        decision = result.get("decision")
+        grade = result.get("grade")
+        confidence = result.get("confidence", 0)
+        match = result.get("match_ratio", 0)
+
+        # ===============================
+        # 🎯 DECISIÓN FINAL (reglas duras)
+        # ===============================
+
+        if decision in ("skip", "block"):
+            final_action = "close_recommended"
+
+        elif decision == "allow" and confidence >= 0.6:
+            final_action = "hold_recovery"
+
+        elif decision == "reverse" and confidence >= 0.65:
+            final_action = "reverse_recommended"
+
+        else:
+            final_action = "close_recommended"
+
+        # ===============================
+        # 📣 NOTIFICACIÓN
+        # ===============================
+
+        msg = (
+            f"🔴 *B5 – Evaluación Crítica*\n"
+            f"📌 {symbol} ({side.upper()})\n"
+            f"📉 ROI: {roi_pct:.2f}%\n\n"
+            f"🧠 Decisión técnica: *{decision}*\n"
+            f"🎓 Grade: {grade}\n"
+            f"📊 Match: {match}%\n"
+            f"🎯 Confianza: {confidence:.2f}\n\n"
+            f"📌 Acción sugerida: *{final_action.replace('_', ' ').upper()}*"
+        )
+
+        self.notifier.send(msg)
+
+        logger.warning(f"📌 B5 {symbol}: {final_action}")
