@@ -36,6 +36,12 @@ class SignalCoordinator:
             pending = pending[:limit]
         return pending
 
+    def get_pending_count(self):
+        return len(self.signal_service.get_pending_signals())
+
+    def is_running(self):
+        return True  # luego lo conectamos al flag real
+
     async def auto_reactivate(self, limit: int = 10):
         pending = self.get_pending_signals(limit=limit)
         self.logger.info(f"🔁 Auto-reactivación: {len(pending)} señales pendientes.")

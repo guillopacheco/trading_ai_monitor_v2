@@ -25,6 +25,8 @@ class OpenPositionEngine:
         # Estado interno
         self.last_position_states: Dict[str, str] = {}
         self._alert_cooldown: Dict[str, float] = {}
+        self.last_position_count = 0
+        self.last_position_count = len(positions)
 
     # ==============================================================
     # 🚀 ENTRY POINT

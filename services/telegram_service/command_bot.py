@@ -1,52 +1,30 @@
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
+from telegram.ext import CommandHandler
 import logging
-import time
 
 logger = logging.getLogger("command_bot")
 
 
-def register_handlers(application):
-    application.add_handler(CommandHandler("estado", estado_command))
-    logger.info("✅ Comando /estado registrado")
-
-
-async def estado_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    app = context.application
-    app_layer = getattr(app, "app_layer", None)
-
-    if not app_layer:
-        await update.message.reply_text("❌ ApplicationLayer no inicializado")
-        return
-
-    lines = []
-    lines.append("🧠 <b>Trading AI Monitor — ESTADO</b>\n")
-
-    # Kernel
-    lines.append("✅ Kernel: OK" if hasattr(app_layer, "kernel") else "❌ Kernel")
-
-    # Engines
-    lines.append("✅ Technical Engine: OK")
-    lines.append(
-        "✅ Reactivation Engine: OK"
-        if hasattr(app_layer, "signal")
-        else "❌ Reactivation Engine"
+def register_handlers(application, app_layer):
+    application.add_handler(
+        CommandHandler("estado", lambda u, c: estado_command(u, c, app_layer))
     )
+    logger.info("✅ register_handlers(): comandos cargados")
 
-    # Open positions monitor
-    if hasattr(app_layer, "open_position_engine"):
-        lines.append("✅ Open Position Monitor: ACTIVO")
-    else:
-        lines.append("❌ Open Position Monitor")
 
-    # Telegram reader
-    lines.append("✅ Telegram Reader: ACTIVO")
-
-    # Señales pendientes (safe)
+async def estado_command(update, context, app_layer):
     try:
-        pending = app_layer.signal.get_pending_signals()
-        lines.append(f"\n📊 Señales pendientes: {len(pending)}")
-    except Exception:
-        lines.append("\n📊 Señales pendientes: N/D")
+        status = app_layer.get_status()
 
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        text = (
+            "🤖 *Trading AI Monitor*\n"
+            f"📡 Señales pendientes: {status['pending_signals']}\n"
+            f"♻️ Reactivación: {'ACTIVA' if status['reactivation_active'] else 'PAUSADA'}\n"
+            f"📌 Posiciones abiertas: {status['open_positions']}\n"
+            f"🧠 Motor técnico: {status['engine']}\n"
+        )
+
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.exception("❌ Error en /estado")
+        await update.message.reply_text("❌ Error obteniendo estado del sistema")

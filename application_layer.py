@@ -25,3 +25,11 @@ class ApplicationLayer:
         self.open_position_engine = self.kernel.open_position_engine
 
         logger.info("✅ ApplicationLayer inicializado correctamente.")
+
+    def get_status(self):
+        return {
+            "pending_signals": self.signal.get_pending_count(),
+            "reactivation_active": self.signal.is_running(),
+            "open_positions": self.open_position_engine.last_position_count,
+            "engine": "OK",
+        }
