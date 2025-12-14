@@ -19,6 +19,62 @@ def _safe_float(value, default=0.0):
         return default
 
 
+def _apply_divergence_weight(
+    technical_score: float,
+    confidence: float,
+    divergences: dict,
+    direction: str,
+):
+    """
+    Ajusta score y confianza según divergencias.
+    Retorna: (new_score, new_confidence, reasons[])
+    """
+    reasons = []
+    score = technical_score
+    conf = confidence
+
+    rsi = (divergences or {}).get("RSI", "Ninguna")
+    macd = (divergences or {}).get("MACD", "Ninguna")
+
+    def _is_favor(div):
+        return (direction == "long" and div == "alcista") or (
+            direction == "short" and div == "bajista"
+        )
+
+    def _is_against(div):
+        return (direction == "long" and div == "bajista") or (
+            direction == "short" and div == "alcista"
+        )
+
+    favor = 0
+    against = 0
+
+    if _is_favor(rsi):
+        favor += 1
+    if _is_favor(macd):
+        favor += 1
+
+    if _is_against(rsi):
+        against += 1
+    if _is_against(macd):
+        against += 1
+
+    # Aplicar efectos
+    if favor:
+        delta = 5 * favor
+        score += delta
+        conf = min(1.0, conf + 0.05 * favor)
+        reasons.append(f"Divergencia a favor (+{delta})")
+
+    if against:
+        delta = 10 * against
+        score -= delta
+        conf = max(0.0, conf - 0.10 * against)
+        reasons.append(f"Divergencia en contra (-{delta})")
+
+    return score, conf, reasons
+
+
 # ============================================================
 #   API PRINCIPAL DEL MOTOR TÉCNICO
 # ============================================================
@@ -136,10 +192,22 @@ def _build_final_decision(
     """
 
     match_ratio = _safe_float(snapshot.get("match_ratio"))
-    technical_score = _safe_float(snapshot.get("technical_score"))
+    base_score = _safe_float(snapshot.get("technical_score"))
     grade = snapshot.get("grade", "-")
 
+    # Confianza base (desde smart_entry)
+    base_confidence = _safe_float(smart_entry.get("entry_score")) / 100.0
+
+    # Aplicar ponderación por divergencias
+    technical_score, confidence, div_reasons = _apply_divergence_weight(
+        technical_score=base_score,
+        confidence=base_confidence,
+        divergences=divergences,
+        direction=direction,
+    )
+
     reasons = []
+    reasons.extend(div_reasons)
 
     # ---------------------------
     # Reglas de decisión
@@ -174,7 +242,7 @@ def _build_final_decision(
         "match_ratio": match_ratio,
         "technical_score": technical_score,
         "grade": grade,
-        "confidence": _safe_float(smart_entry.get("entry_score")) / 100.0,
+        "confidence": confidence,
         "decision_reasons": reasons,
         "major_trend": major_trend,
         "smart_entry": smart_entry,
