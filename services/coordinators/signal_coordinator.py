@@ -70,8 +70,10 @@ class SignalCoordinator:
                     f"🔍 Reactivación eval → {symbol} {direction} (ID={signal_id})"
                 )
 
-                analysis = await self.analysis.analyze_symbol(
-                    symbol, direction, context="reactivation"
+                analysis = await self.analysis_service.analyze_symbol(
+                    symbol=symbol,
+                    direction=direction,
+                    context="reactivation",
                 )
 
                 # ✅ evaluar reactivación correctamente
@@ -105,7 +107,8 @@ class SignalCoordinator:
                     )
 
                     try:
-                        await self.app_layer.notifier.send_message(message)
+                        await self.notifier.safe_send(message)
+
                     except Exception as e:
                         logger.error(f"❌ Error enviando mensaje de reactivación: {e}")
 
@@ -113,11 +116,11 @@ class SignalCoordinator:
                 if hasattr(self.signal_service, "save_reactivation_event"):
                     self.signal_service.save_reactivation_event(
                         signal_id=signal_id,
-                        status="allowed" if decision.get("allowed") else "blocked",
-                        details=decision,
+                        status="allowed" if result.get("allowed") else "blocked",
+                        details=result,
                     )
 
-                if decision.get("allowed"):
+                if result.get("allowed"):
                     if hasattr(self.signal_service, "mark_reactivated"):
                         self.signal_service.mark_reactivated(signal_id)
 
