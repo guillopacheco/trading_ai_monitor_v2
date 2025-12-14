@@ -5,44 +5,19 @@ import logging
 logger = logging.getLogger("position_monitor")
 
 
-async def start_open_position_monitor(app_layer, interval_sec: int = 60):
-    """
-    Monitor mínimo y estable:
-    - No asume método exacto
-    - Intenta varias firmas comunes
-    - No rompe la app si falla una vez
-    """
+async def start_open_position_monitor(app_layer, interval_sec: int = 120):
     logger.info("📌 Monitor de posiciones abiertas iniciado")
 
     while True:
         try:
-            op = getattr(app_layer, "operation", None)
-            if not op:
-                logger.warning(
-                    "⚠️ ApplicationLayer no tiene OperationService (app_layer.operation)"
-                )
+            # si el engine tiene método, lo llama; si no, no rompe
+            engine = getattr(app_layer, "open_position_engine", None)
+            if engine and hasattr(engine, "evaluate_open_positions"):
+                await engine.evaluate_open_positions()
             else:
-                # Intentos en orden (sin tocar tu lógica interna)
-                if hasattr(op, "check_open_positions"):
-                    res = op.check_open_positions()
-                    if asyncio.iscoroutine(res):
-                        await res
-
-                elif hasattr(op, "monitor_open_positions"):
-                    res = op.monitor_open_positions()
-                    if asyncio.iscoroutine(res):
-                        await res
-
-                elif hasattr(op, "evaluate_open_positions"):
-                    res = op.evaluate_open_positions()
-                    if asyncio.iscoroutine(res):
-                        await res
-
-                else:
-                    logger.warning(
-                        "⚠️ OperationService no expone check/monitor/evaluate_open_positions()"
-                    )
-
+                logger.warning(
+                    "⚠️ open_position_engine.evaluate_open_positions() no existe aún."
+                )
         except Exception as e:
             logger.exception(f"❌ Error en monitor de posiciones: {e}")
 
