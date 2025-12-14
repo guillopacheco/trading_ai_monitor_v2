@@ -4,6 +4,12 @@ import logging
 logger = logging.getLogger("signal_coordinator")
 
 
+import logging
+
+
+import logging
+
+
 class SignalCoordinator:
     def __init__(self, signal_service, analysis_service, reactivation_engine, notifier):
         self.signal_service = signal_service
@@ -11,7 +17,7 @@ class SignalCoordinator:
         self.reactivation_engine = reactivation_engine
         self.notifier = notifier
 
-        logger.info("🔧 SignalCoordinator inicializado correctamente.")
+        self.logger = logging.getLogger("signal_coordinator")
 
     def get_pending_signals(self, limit=None):
         # ✅ tolera service con o sin limit
