@@ -1,29 +1,17 @@
-# application_layer.py
-
-from services.application.analysis_service import AnalysisService
-from services.application.signal_service import SignalService
+from services.telegram_service.notifier import Notifier
 from services.application.operation_service import OperationService
 from services.coordinators.signal_coordinator import SignalCoordinator
-from services.telegram_service.notifier import Notifier
-
-import logging
-
-logger = logging.getLogger(__name__)
+from services.reactivation_engine.reactivation_engine import ReactivationEngine
 
 
 class ApplicationLayer:
     def __init__(self):
-        # Servicios base
-        self.analysis = AnalysisService()
-        self.signal_service = SignalService()
-        self.operation = OperationService()
+        # 🔔 Notificador único
         self.notifier = Notifier()
 
-        # Coordinadores (usan servicios)
-        self.signal = SignalCoordinator(
-            analysis=self.analysis,
-            signal_service=self.signal_service,
-            notifier=self.notifier,
-        )
+        # 📡 Coordinadores / servicios
+        self.signal = SignalCoordinator(notifier=self.notifier)
+        self.operation = OperationService(notifier=self.notifier)
 
-        logger.info("✅ ApplicationLayer inicializado correctamente.")
+        # ♻️ Motor de reactivación
+        self.reactivation_engine = ReactivationEngine(notifier=self.notifier)
