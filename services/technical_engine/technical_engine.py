@@ -45,7 +45,31 @@ async def analyze(symbol: str, direction: str = "auto", context: str = "entry") 
             direction = snapshot.get("direction_hint", "long")
 
         # 3) Divergencias RSI/MACD
-        divs = detect_divergences(snapshot)
+        # ---------------------------------------------------------
+        # Divergencias (usar timeframe base: 1H si existe)
+        # ---------------------------------------------------------
+        divs = {
+            "RSI": "Ninguna",
+            "MACD": "Ninguna",
+        }
+
+        try:
+            tf_1h = next(
+                tf
+                for tf in snapshot["timeframes"]
+                if tf["tf_label"] == "1h" and "rsi_series" in tf
+            )
+
+            divs = detect_divergences(
+                rsi_series=tf_1h["rsi_series"],
+                macd_hist_series=tf_1h["macd_hist_series"],
+                close_series=tf_1h["close_series"],
+            )
+
+        except StopIteration:
+            logger.warning("⚠️ No se encontró timeframe 1H para divergencias")
+        except Exception as e:
+            logger.warning(f"⚠️ Error calculando divergencias: {e}")
 
         # 4) Tendencia mayor
         major_trend = evaluate_major_trend(snapshot)

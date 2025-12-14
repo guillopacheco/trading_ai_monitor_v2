@@ -30,7 +30,6 @@ import pandas as pd
 import pandas_ta as ta
 
 
-
 from services.bybit_service.bybit_client import get_ohlcv_data
 from config import (
     EMA_SHORT_PERIOD,
@@ -38,7 +37,7 @@ from config import (
     MACD_FAST,
     MACD_SLOW,
     MACD_SIGNAL,
-    ANALYSIS_MODE
+    ANALYSIS_MODE,
 )
 
 
@@ -109,6 +108,7 @@ def _choose_timeframes(symbol: str) -> List[str]:
 
     return tfs
 
+
 def _calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Añade EMA, MACD, RSI y ATR al DataFrame."""
     close = df["close"]
@@ -138,6 +138,7 @@ def _calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df["atr"] = np.nan
 
     return df
+
 
 def _trend_from_votes(bull: int, bear: int) -> Tuple[str, str]:
     """
@@ -207,26 +208,24 @@ def analyze_single_tf(
     symbol: str,
     tf: str,
 ) -> Dict[str, Any] | None:
-    """
-    Devuelve un dict con el análisis de UN timeframe:
 
     {
-      "tf": "60",
-      "tf_label": "1h",
-      "trend_label": "Alcista",
-      "trend_code": "bull",
-      "votes_bull": 3,
-      "votes_bear": 1,
-      "rsi": 62.5,
-      "macd_hist": 0.0012,
-      "ema_short": 0.1234,
-      "ema_long": 0.1200,
-      "close": 0.1250,
-      "atr": 0.0021,
-      "div_rsi": "alcista" / "bajista" / "ninguna",
-      "div_macd": "alcista" / "bajista" / "ninguna",
+        "tf": "60",
+        "tf_label": "1h",
+        "trend_label": "Alcista",
+        "trend_code": "bull",
+        "votes_bull": 3,
+        "votes_bear": 1,
+        "rsi": 62.5,
+        "macd_hist": 0.0012,
+        "ema_short": 0.1234,
+        "ema_long": 0.1200,
+        "close": 0.1250,
+        "atr": 0.0021,
+        "div_rsi": "alcista" / "bajista" / "ninguna",
+        "div_macd": "alcista" / "bajista" / "ninguna",
     }
-    """
+
     df = _get_ohlcv(symbol, tf, limit=260)
     if df is None or len(df) < MIN_BARS_PER_TF:
         return None
@@ -298,17 +297,23 @@ def analyze_single_tf(
         "tf_label": tf_label,
         "trend_label": trend_label,
         "trend_code": trend_code,
-        "votes_bull": bull,
-        "votes_bear": bear,
-        "rsi": rsi,
-        "macd_hist": macd_hist,
-        "ema_short": ema_s,
-        "ema_long": ema_l,
-        "close": close,
-        "atr": atr_val,
-        "div_rsi": div_rsi,
-        "div_macd": div_macd,
+        "votes_bull": votes_bull,
+        "votes_bear": votes_bear,
+        # indicadores actuales (último valor)
+        "rsi": rsi_series[-1],
+        "macd_hist": macd_hist_series[-1],
+        "ema_short": ema_short,
+        "ema_long": ema_long,
+        "close": close_series[-1],
+        "atr": atr,
+        # 🔥 NUEVO: series completas
+        "rsi_series": rsi_series,
+        "macd_hist_series": macd_hist_series,
+        "close_series": close_series,
+        "div_rsi": "ninguna",
+        "div_macd": "ninguna",
     }
+
 
 # ============================================================
 # 🧠 Motor principal multi-TF
@@ -341,7 +346,9 @@ def get_multi_tf_snapshot(
 
     tfs = _choose_timeframes(symbol)
     if not tfs:
-        raise RuntimeError(f"No se pudieron obtener temporalidades válidas para {symbol}.")
+        raise RuntimeError(
+            f"No se pudieron obtener temporalidades válidas para {symbol}."
+        )
 
     tf_results: List[Dict[str, Any]] = []
     for tf in tfs:
@@ -382,8 +389,11 @@ def get_multi_tf_snapshot(
         major_trend_label = "Lateral / Mixta"
 
     total_w = bull_w + bear_w + side_w
-    trend_score = bull_w / total_w if major_trend_code == "bull" else \
-        (bear_w / total_w if major_trend_code == "bear" else side_w / total_w)
+    trend_score = (
+        bull_w / total_w
+        if major_trend_code == "bull"
+        else (bear_w / total_w if major_trend_code == "bear" else side_w / total_w)
+    )
 
     # ---------------------- Match ratio con la señal ----------------------
     match_ratio = 50.0
@@ -459,7 +469,9 @@ def get_multi_tf_snapshot(
     if direction_hint:
         if direction_hint == "long" and "Bajista" in (div_rsi_global + div_macd_global):
             conf -= 0.15
-        if direction_hint == "short" and "Alcista" in (div_rsi_global + div_macd_global):
+        if direction_hint == "short" and "Alcista" in (
+            div_rsi_global + div_macd_global
+        ):
             conf -= 0.15
 
     conf = max(0.0, min(conf, 1.0))
@@ -523,11 +535,11 @@ def get_multi_tf_snapshot(
     if base_tf and base_tf.get("atr", 0.0) > 0 and base_tf["close"] > 0:
         atr_pct = (base_tf["atr"] / base_tf["close"]) * 100.0
         if 0.3 <= atr_pct <= 3.0:
-            vol_pts = 10.0   # ATR ideal
+            vol_pts = 10.0  # ATR ideal
         elif 0.1 <= atr_pct < 0.3 or 3.0 < atr_pct <= 8.0:
-            vol_pts = 5.0    # aceptable
+            vol_pts = 5.0  # aceptable
         else:
-            vol_pts = -5.0   # demasiado bajo o demasiado alto
+            vol_pts = -5.0  # demasiado bajo o demasiado alto
 
     # 5) Smart Bias / Structure Bias Score (5 / 2 / -5)
     if smart_bias_code == "continuation":
