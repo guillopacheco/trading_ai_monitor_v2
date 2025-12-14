@@ -64,10 +64,7 @@ class Kernel:
             OpenPositionEngine,
         )
 
-        self.open_position_engine = OpenPositionEngine(
-            notifier=self.notifier,
-            analysis_service=self.analysis_service,
-        )
+        self.open_position_engine = OpenPositionEngine(notifier=self.notifier)
 
         logger.info("✅ Kernel build() completado correctamente.")
         return self
