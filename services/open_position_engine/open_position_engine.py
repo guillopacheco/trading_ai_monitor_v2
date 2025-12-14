@@ -73,9 +73,18 @@ class OpenPositionEngine:
 
                 # Detectar cambio de riesgo
                 if prev_risk != risk:
-                    if prev_risk is not None:
-                        logger.info(f"🔄 RISK CHANGE {symbol}: {prev_risk} → {risk}")
                     self.position_risk_state[symbol] = risk
+
+                    if risk in ("WATCH", "RISK", "CRITICAL"):
+                        action = f"risk_{risk.lower()}"
+
+                        if self._can_send_alert(symbol, action):
+                            msg = self._format_risk_message(symbol, roi, risk)
+
+                            if self.notifier:
+                                self.notifier.send(msg)
+
+                            self._register_alert(symbol, action)
 
                 # Decisión B5
                 roi = self._calculate_roi(p)
@@ -155,6 +164,27 @@ class OpenPositionEngine:
                 self.notifier.send(f"⚠️ {symbol} | ROI {roi_pct}% | Acción: {action}")
             except Exception:
                 pass
+
+    def _format_risk_message(self, symbol: str, roi: float, risk: str) -> str:
+        icons = {
+            "WATCH": "🟡",
+            "RISK": "🟠",
+            "CRITICAL": "🔴",
+        }
+
+        titles = {
+            "WATCH": "Posición en observación",
+            "RISK": "Posición en riesgo",
+            "CRITICAL": "🚨 POSICIÓN CRÍTICA",
+        }
+
+        return (
+            f"{icons.get(risk, '⚠️')} *{titles.get(risk, 'Riesgo detectado')}*\n\n"
+            f"📌 *Par:* `{symbol}`\n"
+            f"📉 *ROI (20x):* `{roi:.2f}%`\n"
+            f"⚠️ *Estado:* `{risk}`\n\n"
+            f"🧠 Recomendación: revisar tendencia y exposición"
+        )
 
     # ==============================================================
     # ⏱️ COOLDOWN (B5.4.2)
