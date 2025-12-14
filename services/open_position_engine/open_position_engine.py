@@ -21,6 +21,7 @@ class OpenPositionEngine:
     def __init__(self, notifier=None):
         self.notifier = notifier
         self.last_position_count = 0  # ← estado inicial seguro
+        self.position_risk_state = {}
 
     def classify_risk(self, pnl: float) -> str:
         if pnl <= -0.50:
@@ -31,6 +32,13 @@ class OpenPositionEngine:
             return "WATCH"
         else:
             return "SAFE"
+
+    prev_risk = self.position_risk_state.get(symbol)
+
+    if prev_risk != risk:
+        if prev_risk is not None:
+            logger.info(f"🔄 RISK CHANGE {symbol}: {prev_risk} → {risk}")
+        self.position_risk_state[symbol] = risk
 
     # ==============================================================
     # 🚀 ENTRY POINT
