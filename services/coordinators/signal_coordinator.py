@@ -17,24 +17,27 @@ class SignalCoordinator:
         self.reactivation_engine = reactivation_engine
         self.notifier = notifier
 
-        self.logger = logging.getLogger("signal_coordinator")
+        # ✅ B2: evita el crash por self.logger inexistente
+        self.logger = logger
 
-    def get_pending_signals(self, limit=None):
-        # ✅ tolera service con o sin limit
+    def get_pending_signals(self, limit: int = 10):
+        """
+        Devuelve señales pendientes. Compatible con SignalService con o sin parámetro `limit`.
+        """
         try:
-            if limit is None:
-                return self.signal_service.get_pending_signals()
-            return self.signal_service.get_pending_signals(limit)
+            # si el service soporta limit
+            pending = self.signal_service.get_pending_signals(limit=limit)
         except TypeError:
-            return self.signal_service.get_pending_signals()
+            # si el service NO soporta limit
+            pending = self.signal_service.get_pending_signals()
+
+        pending = pending or []
+        if limit:
+            pending = pending[:limit]
+        return pending
 
     async def auto_reactivate(self, limit: int = 10):
-        pending = self.get_pending_signals(limit=limit) or []
-
-        if not pending:
-            self.logger.info("ℹ️ No hay señales pendientes para reactivación.")
-            return
-
+        pending = self.get_pending_signals(limit=limit)
         self.logger.info(f"🔁 Auto-reactivación: {len(pending)} señales pendientes.")
 
         for sig in pending:
