@@ -15,7 +15,7 @@ class OpenPositionEngine:
         Evalúa posiciones abiertas en Bybit y decide acciones (placeholder).
         Importante: NO debe reventar nunca.
         """
-        positions = get_open_positions()
+        positions = await get_open_positions()
 
         if not positions:
             logger.info("📭 No hay posiciones abiertas actualmente.")
