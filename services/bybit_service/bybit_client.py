@@ -280,15 +280,10 @@ async def get_open_positions(symbol: str | None = None, settle_coin: str | None 
         # ⚠️ Ajusta esto a TU cliente real.
         # Si usas pybit: session.get_positions(category="linear", settleCoin=settle_coin, symbol=symbol)
         # Si tienes ya una función sync interna, llámala aquí.
-        from services.bybit_service.bybit_client import (
-            session,
-        )  # si ya existe en tu archivo
 
         params = {"category": "linear", "settleCoin": settle_coin}
         if symbol:
             params["symbol"] = symbol
-
-        res = session.get_positions(**params)
 
         if isinstance(res, dict) and res.get("retCode") != 0:
             logger.error(f"Error get_open_positions: {res}")
