@@ -7,6 +7,7 @@ import logging
 import pandas as pd
 from urllib.parse import urlencode
 import ccxt
+from config import BYBIT_SETTLE_COIN
 
 # Instancia CCXT (ajusta si ya la tienes global)
 exchange = ccxt.bybit({"enableRateLimit": True, "options": {"defaultType": "linear"}})
@@ -116,7 +117,7 @@ def get_ohlcv_data(
 # ======================================================
 # 📌 POSICIONES ABIERTAS
 # ======================================================
-def get_open_positions(symbol: str = None):
+"""def get_open_positions(symbol: str = None):
     params = {"category": "linear"}
     if symbol:
         params["symbol"] = symbol
@@ -124,7 +125,7 @@ def get_open_positions(symbol: str = None):
     if not data or data.get("retCode") != 0:
         logger.error(f"Error get_open_positions: {data}")
         return []
-    return data["result"]["list"]
+    return data["result"]["list"]""" """"""
 
 
 # ======================================================
@@ -256,3 +257,48 @@ def place_market_order(symbol: str, side: str, usdt: float, leverage: int = 20):
 
     logger.error(f"❌ Error al abrir orden de mercado: {data}")
     return False
+
+
+# services/bybit_service/bybit_client.py
+import logging
+from config import BYBIT_SETTLE_COIN
+
+logger = logging.getLogger("bybit_client")
+
+# ... tu resto del archivo queda igual ...
+
+
+async def get_open_positions(symbol: str | None = None, settle_coin: str | None = None):
+    """
+    Retorna lista de posiciones abiertas.
+    - ES ASYNC para que 'await get_open_positions()' sea válido.
+    - Bybit requiere symbol o settleCoin => usamos settleCoin=USDT por defecto.
+    """
+    settle_coin = settle_coin or BYBIT_SETTLE_COIN or "USDT"
+
+    try:
+        # ⚠️ Ajusta esto a TU cliente real.
+        # Si usas pybit: session.get_positions(category="linear", settleCoin=settle_coin, symbol=symbol)
+        # Si tienes ya una función sync interna, llámala aquí.
+        from services.bybit_service.bybit_client import (
+            session,
+        )  # si ya existe en tu archivo
+
+        params = {"category": "linear", "settleCoin": settle_coin}
+        if symbol:
+            params["symbol"] = symbol
+
+        res = session.get_positions(**params)
+
+        if isinstance(res, dict) and res.get("retCode") != 0:
+            logger.error(f"Error get_open_positions: {res}")
+            return []
+
+        # Normaliza salida
+        result = res.get("result", {}) if isinstance(res, dict) else {}
+        positions = result.get("list", []) if isinstance(result, dict) else []
+        return positions
+
+    except Exception as e:
+        logger.exception(f"❌ Error get_open_positions: {e}")
+        return []
