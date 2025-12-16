@@ -96,7 +96,7 @@ class SignalCoordinator:
         # ----------------------------------------------------------
         # 📤 ENVÍO GARANTIZADO
         # ----------------------------------------------------------
-        await self.notifier.send_message(message)
+        await self.notifier.safe_send(message)
 
         self.logger.info(
             f"📨 Notificado {symbol}: decision={analysis.get('decision')} | score={analysis.get('technical_score')}"
