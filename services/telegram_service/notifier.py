@@ -6,29 +6,18 @@ logger = logging.getLogger("notifier")
 
 
 class Notifier:
-    def __init__(self, bot: Bot):
+    def __init__(self, bot, chat_id):
         self.bot = bot
+        self.chat_id = chat_id
 
-    async def notify_position_event(self, event: dict):
-        """
-        Envía una alerta de posición abierta a Telegram.
-        No decide lógica. Solo presenta información.
-        """
-
+    async def safe_send(self, text: str):
         try:
-            message = self._format_position_event(event)
-
             await self.bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode="HTML"
+                chat_id=self.chat_id, text=text, disable_web_page_preview=True
             )
-
-            logger.info(
-                f"📤 Alerta enviada: {event.get('symbol')} "
-                f"action={event.get('action')} severity={event.get('severity')}"
-            )
-
         except Exception as e:
-            logger.exception(f"❌ Error enviando alerta Telegram: {e}")
+            # nunca debe romper el sistema
+            print(f"❌ Error enviando mensaje Telegram: {e}")
 
     # ------------------------------------------------------------------
 
