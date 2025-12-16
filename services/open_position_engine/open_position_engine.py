@@ -450,7 +450,8 @@ class OpenPositionEngine:
 
         try:
             if hasattr(self.notifier, "send_message"):
-                await self.notifier.send_message(msg)
+                await self.notifier.safe_send(msg)
+
                 return
         except Exception:
             pass

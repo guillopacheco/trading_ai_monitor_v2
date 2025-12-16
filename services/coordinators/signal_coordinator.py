@@ -63,7 +63,7 @@ class SignalCoordinator:
             )
         except Exception as e:
             self.logger.exception(f"❌ Error analizando {symbol}: {e}")
-            await self.notifier.send_message(f"❌ Error analizando {symbol}\n{str(e)}")
+            await self.notifier.safe_send(f"❌ Error analizando {symbol}\n{str(e)}")
             return
 
         # ----------------------------------------------------------
@@ -115,7 +115,8 @@ class SignalCoordinator:
             pass
         try:
             if hasattr(self.notifier, "send_message"):
-                await self.notifier.send_message(text)
+                await self.notifier.safe_send(msg)
+
                 return
         except Exception:
             pass
