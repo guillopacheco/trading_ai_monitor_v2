@@ -461,3 +461,50 @@ class OpenPositionEngine:
                 return
         except Exception:
             pass
+
+
+class ReactivationEngine:
+    def __init__(self, analysis_service, signal_service, notifier):
+        self.analysis_service = analysis_service
+        self.signal_service = signal_service
+        self.notifier = notifier
+        self.cooldowns = {}
+
+    async def evaluate_signal(self, signal):
+        symbol = signal["symbol"]
+        direction = signal["direction"]
+
+        analysis = await self.analysis_service.analyze_symbol(
+            symbol=symbol, direction=direction, context="reactivation"
+        )
+
+        if not analysis or analysis.get("error"):
+            return "wait"
+
+        if self._advanced_reactivation(analysis):
+            return "reactivate"
+
+        return "wait"
+
+
+def _advanced_reactivation(self, analysis: dict) -> bool:
+    direction = analysis["direction"]
+    trend = analysis["major_trend"]["trend_code"]
+
+    if direction == "short" and trend != "bear":
+        return False
+
+    ind = analysis.get("indicators", {})
+
+    rsi_ok = ind["rsi"]["5m"]["value"] < 50 or ind["rsi"]["5m"]["slope"] == "down"
+
+    macd_ok = (
+        ind["macd"]["5m"]["histogram"] < 0 and ind["macd"]["5m"]["slope"] == "down"
+    )
+
+    ema_ok = (
+        ind["ema"]["5m"]["ema10"] < ind["ema"]["5m"]["ema30"]
+        and not ind["ema"]["5m"]["price_above_ema30"]
+    )
+
+    return rsi_ok and macd_ok and ema_ok
