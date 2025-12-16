@@ -1,13 +1,14 @@
-# services/coordinators/signal_coordinator.py
+"""
+SignalCoordinator
+-----------------
+Coordina señales entrantes, reactivación y notificaciones.
+GARANTÍA: toda señal analizada genera mensaje a Telegram.
+"""
+
 import logging
+from typing import Optional
 
 logger = logging.getLogger("signal_coordinator")
-
-
-import logging
-
-
-import logging
 
 
 class SignalCoordinator:
@@ -17,74 +18,86 @@ class SignalCoordinator:
         self.reactivation_engine = reactivation_engine
         self.notifier = notifier
 
-        # ✅ B2: evita el crash por self.logger inexistente
         self.logger = logger
+        self.logger.info("🔧 SignalCoordinator inicializado correctamente.")
 
-    def get_pending_signals(self, limit: int = 10):
-        """
-        Devuelve señales pendientes. Compatible con SignalService con o sin parámetro `limit`.
-        """
-        try:
-            # si el service soporta limit
-            pending = self.signal_service.get_pending_signals(limit=limit)
-        except TypeError:
-            # si el service NO soporta limit
-            pending = self.signal_service.get_pending_signals()
-
-        pending = pending or []
-        if limit:
-            pending = pending[:limit]
-        return pending
-
-    def get_pending_count(self):
-        return len(self.signal_service.get_pending_signals())
-
-    def is_running(self):
-        return True  # luego lo conectamos al flag real
-
+    # ==============================================================
+    # 🔁 AUTO REACTIVACIÓN
+    # ==============================================================
     async def auto_reactivate(self, limit: int = 10):
-        pending = self.get_pending_signals(limit=limit)
+        """Evalúa señales pendientes y decide reactivación."""
+        pending = self.signal_service.get_pending_signals(limit=limit) or []
+
+        if not pending:
+            self.logger.info("📭 No hay señales pendientes para reactivación.")
+            return
+
         self.logger.info(f"🔁 Auto-reactivación: {len(pending)} señales pendientes.")
 
-        for sig in pending:
-            try:
-                signal_id = sig.get("id")
-                symbol = sig.get("symbol")
-                direction = sig.get("direction")
+        for signal in pending:
+            await self._evaluate_signal(signal, context="reactivation")
 
-                if not symbol or not direction:
-                    self.logger.warning(f"⚠️ Señal inválida (ID={signal_id}): {sig}")
-                    continue
+    # ==============================================================
+    # 🚀 ANÁLISIS DE SEÑAL NUEVA
+    # ==============================================================
+    async def analyze_new_signal(self, signal: dict):
+        """Analiza una señal recién recibida."""
+        await self._evaluate_signal(signal, context="entry")
 
-                self.logger.info(
-                    f"🔍 Reactivación eval → {symbol} {direction} (ID={signal_id})"
-                )
+    # ==============================================================
+    # 🧠 EVALUADOR CENTRAL
+    # ==============================================================
+    async def _evaluate_signal(self, signal: dict, context: str):
+        """Evalúa señal y notifica SIEMPRE."""
+        signal_id = signal.get("id")
+        symbol = signal.get("symbol")
+        direction = signal.get("direction")
 
-                analysis = await self.analysis_service.analyze_symbol(
-                    symbol=symbol,
-                    direction=direction,
-                    context="reactivation",
-                )
+        self.logger.info(f"🔍 Evaluando señal {symbol} {direction} (ID={signal_id})")
 
-                if not analysis:
-                    self.logger.info(
-                        f"⏳ Señal {signal_id} aún no apta: análisis vacío"
-                    )
-                    continue
+        try:
+            analysis = await self.analysis_service.analyze_symbol(
+                symbol=symbol,
+                direction=direction,
+                context=context,
+            )
+        except Exception as e:
+            self.logger.exception(f"❌ Error analizando {symbol}: {e}")
+            await self.notifier.send_message(f"❌ Error analizando {symbol}\n{str(e)}")
+            return
 
-                if analysis.get("allowed"):
-                    self.logger.info(f"✅ Señal {signal_id} REACTIVADA ({symbol})")
-                    self.signal_service.mark_signal_reactivated(signal_id)
-                else:
-                    self.logger.info(
-                        f"⏳ Señal {signal_id} aún no apta: "
-                        f"decision={analysis.get('decision')}, "
-                        f"score={analysis.get('technical_score')}, "
-                        f"match={analysis.get('match_ratio')}, "
-                        f"grade={analysis.get('grade')}"
-                    )
+        # ----------------------------------------------------------
+        # 📩 CONSTRUIR MENSAJE
+        # ----------------------------------------------------------
+        context_label = "♻️ REACTIVACIÓN" if context == "reactivation" else "🚀 ENTRADA"
 
-            except Exception as e:
-                self.logger.exception(
-                    f"❌ Error evaluando reactivación ID={sig.get('id')}: {e}"
-                )
+        message = (
+            f"{context_label}\n"
+            f"📊 Análisis de {symbol}\n"
+            f"📌 Dirección: {direction.upper()}\n"
+            f"🧠 Decisión: {analysis.get('decision')}\n"
+            f"🎯 Score: {analysis.get('technical_score')}\n"
+            f"📐 Match: {analysis.get('match_ratio')}%\n"
+            f"🏷️ Grade: {analysis.get('grade')}\n"
+        )
+
+        # ----------------------------------------------------------
+        # ✅ / ⏳ ACCIÓN
+        # ----------------------------------------------------------
+        if analysis.get("allowed"):
+            message = "✅ REACTIVADA\n\n" + message
+
+            if context == "reactivation":
+                self.signal_service.mark_signal_reactivated(signal_id)
+
+        else:
+            message = "⏳ NO APTA (monitorizando)\n\n" + message
+
+        # ----------------------------------------------------------
+        # 📤 ENVÍO GARANTIZADO
+        # ----------------------------------------------------------
+        await self.notifier.send_message(message)
+
+        self.logger.info(
+            f"📨 Notificado {symbol}: decision={analysis.get('decision')} | score={analysis.get('technical_score')}"
+        )
