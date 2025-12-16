@@ -101,3 +101,29 @@ class SignalCoordinator:
         self.logger.info(
             f"📨 Notificado {symbol}: decision={analysis.get('decision')} | score={analysis.get('technical_score')}"
         )
+
+    # dentro de class SignalCoordinator
+
+    async def _notify(self, text: str) -> None:
+        if not self.notifier:
+            return
+        try:
+            if hasattr(self.notifier, "safe_send"):
+                await self.notifier.safe_send(text)
+                return
+        except Exception:
+            pass
+        try:
+            if hasattr(self.notifier, "send_message"):
+                await self.notifier.send_message(text)
+                return
+        except Exception:
+            pass
+        try:
+            if hasattr(self.notifier, "send"):
+                res = self.notifier.send(text)
+                if hasattr(res, "__await__"):
+                    await res
+                return
+        except Exception:
+            pass
