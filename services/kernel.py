@@ -1,6 +1,6 @@
 # services/kernel.py
 import logging
-from config import TELEGRAM_CHANNEL_ID
+from config import TELEGRAM_VIP_CHANNEL_ID
 from services.telegram_service.notifier import Notifier
 
 logger = logging.getLogger("kernel")

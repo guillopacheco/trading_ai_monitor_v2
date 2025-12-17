@@ -25,7 +25,7 @@ API_HASH = _get("API_HASH", _get("TELEGRAM_API_HASH"))
 TELEGRAM_SESSION = _get("TELEGRAM_SESSION", "session")
 
 # Canal origen (ID numérico -100....)
-TELEGRAM_CHANNEL_ID = _get("TELEGRAM_CHANNEL_ID", None, int)
+TELEGRAM_VIP_CHANNEL_ID = _get("TELEGRAM_VIP_CHANNEL_ID", None, int)
 
 # --- Bybit
 BYBIT_API_KEY = _get("BYBIT_API_KEY")

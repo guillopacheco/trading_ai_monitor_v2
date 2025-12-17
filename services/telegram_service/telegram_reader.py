@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from telethon import TelegramClient, events
-from config import API_ID, API_HASH, TELEGRAM_SESSION, TELEGRAM_CHANNEL_ID
+from config import API_ID, API_HASH, TELEGRAM_SESSION, TELEGRAM_VIP_CHANNEL_ID
 
 logger = logging.getLogger("telegram_reader")
 
@@ -11,9 +11,9 @@ async def start_telegram_reader(app_layer):
     """
     Inicia Telethon y escucha señales del canal.
     """
-    if not (API_ID and API_HASH and TELEGRAM_CHANNEL_ID):
+    if not (API_ID and API_HASH and TELEGRAM_VIP_CHANNEL_ID):
         logger.error(
-            "❌ Telethon no puede iniciar: faltan API_ID/API_HASH/TELEGRAM_CHANNEL_ID en config/.env"
+            "❌ Telethon no puede iniciar: faltan API_ID/API_HASH/TELEGRAM_VIP_CHANNEL_ID en config/.env"
         )
         return
 
@@ -23,7 +23,7 @@ async def start_telegram_reader(app_layer):
     logger.info("📡 Cliente Telethon conectado y listo para escuchar señales...")
     logger.info("📡 Escuchando canal VIP...")
 
-    @client.on(events.NewMessage(chats=TELEGRAM_CHANNEL_ID))
+    @client.on(events.NewMessage(chats=TELEGRAM_VIP_CHANNEL_ID))
     async def handler(event):
         text = event.message.message or ""
         # Aquí enlazas tu parser / save_signal / analyze, etc.

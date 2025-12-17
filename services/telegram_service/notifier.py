@@ -1,6 +1,6 @@
 import logging
 from telegram import Bot
-from config import TELEGRAM_CHANNEL_ID
+from config import TELEGRAM_VIP_CHANNEL_ID
 
 logger = logging.getLogger("notifier")
 
