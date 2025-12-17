@@ -33,7 +33,6 @@ class Kernel:
         Construye todo con imports locales para evitar ciclos.
         """
         # --- Notifier (requiere bot)
-        from services.telegram_service.notifier import Notifier
 
         self.notifier = Notifier(bot=self.bot, chat_id=TELEGRAM_USER_ID)
 
