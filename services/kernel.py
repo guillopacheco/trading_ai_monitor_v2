@@ -34,7 +34,7 @@ class Kernel:
         # --- Notifier (requiere bot)
         from services.telegram_service.notifier import Notifier
 
-        self.notifier = Notifier(bot=self.bot, chat_id=TELEGRAM_CHANNEL_ID)
+        self.notifier = Notifier(bot=self.bot, chat_id=TELEGRAM_USER_ID)
 
         # --- ReactivationEngine (NO pasar notifier por keyword; tu clase no lo acepta)
         from services.reactivation_engine.reactivation_engine import ReactivationEngine
