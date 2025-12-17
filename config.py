@@ -20,7 +20,7 @@ BOT_TOKEN = _get("BOT_TOKEN")
 TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
 
 # Chat destino donde notifica tu bot
-TELEGRAM_CHAT_ID = _get("TELEGRAM_CHAT_ID", None, int)
+TELEGRAM_CHANNEL_ID = _get("TELEGRAM_CHANNEL_ID", None, int)
 
 # --- Telethon (lector de canal)
 API_ID = _get("API_ID", _get("TELEGRAM_API_ID"), int)
