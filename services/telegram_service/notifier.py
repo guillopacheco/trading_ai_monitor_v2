@@ -6,18 +6,15 @@ logger = logging.getLogger("notifier")
 
 
 class Notifier:
-    def __init__(self, bot, chat_id):
+    def __init__(self, bot, chat_id: int):
         self.bot = bot
         self.chat_id = chat_id
 
-    async def safe_send(self, text: str):
-        try:
-            await self.bot.send_message(
-                chat_id=self.chat_id, text=text, disable_web_page_preview=True
-            )
-        except Exception as e:
-            # nunca debe romper el sistema
-            print(f"❌ Error enviando mensaje Telegram: {e}")
+    async def send_message(self, text: str):
+        if not self.chat_id:
+            raise RuntimeError("chat_id no configurado en Notifier")
+
+        await self.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="HTML")
 
     # ------------------------------------------------------------------
 
