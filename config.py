@@ -16,7 +16,7 @@ def _get(name, default=None, cast=str):
 
 
 # --- Telegram Bot (PTB)
-TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_USER_ID = _get("TELEGRAM_USER_ID", None, int)
 
 # --- Telethon (lector de canal)
