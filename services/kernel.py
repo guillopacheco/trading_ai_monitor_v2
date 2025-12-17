@@ -18,10 +18,13 @@ class Kernel:
         # Instancias (se llenan en build)
         self.notifier = None
         self.reactivation_engine = None
+
         self.analysis_service = None
         self.signal_service = None
         self.operation_service = None
+
         self.signal_coordinator = None
+
         self.open_position_engine = None
 
     def build(self):
@@ -31,6 +34,7 @@ class Kernel:
         # --- Notifier (requiere bot)
         from services.telegram_service.notifier import Notifier
 
+        self.notifier = Notifier(self.bot)
         self.notifier = Notifier(bot=self.bot, chat_id=TELEGRAM_CHAT_ID)
 
         # --- ReactivationEngine (NO pasar notifier por keyword; tu clase no lo acepta)
