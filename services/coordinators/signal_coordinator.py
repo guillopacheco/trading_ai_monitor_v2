@@ -35,7 +35,7 @@ class SignalCoordinator:
         self.logger.info(f"🔁 Auto-reactivación: {len(pending)} señales pendientes.")
 
         for signal in pending:
-            await self._evaluate_signal(signal, context="reactivation")
+            await self.evaluate_signal(signal, context="reactivation")
 
     # ==============================================================
     # 🚀 ANÁLISIS DE SEÑAL NUEVA
