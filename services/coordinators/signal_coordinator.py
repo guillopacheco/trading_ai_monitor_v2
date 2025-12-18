@@ -50,27 +50,37 @@ class SignalCoordinator:
         message = self._format_analysis_message(signal, result)
         await self.notifier.send(message)
 
-    # ==============================================================
-    # 🧠 EVALUADOR CENTRAL
-    # ==============================================================
-    async def _evaluate_signal(self, signal: dict, context: str):
-        """Evalúa señal y notifica SIEMPRE."""
-        signal_id = signal.get("id")
-        symbol = signal.get("symbol")
-        direction = signal.get("direction")
+        # ==============================================================
+        # 🧠 EVALUADOR CENTRAL
+        # ==============================================================
+        allowed = analysis.get("allowed", False)
+        decision = analysis.get("decision")
+        score = analysis.get("technical_score")
 
-        self.logger.info(f"🔍 Evaluando señal {symbol} {direction} (ID={signal_id})")
-
-        try:
-            analysis = await self.analysis_service.analyze_symbol(
-                symbol=symbol,
-                direction=direction,
-                context=context,
+        # ❌ NO NOTIFICAR si NO reactivó
+        if not allowed:
+            self.logger.info(
+                f"⏳ Señal {symbol} aún no apta: decision={decision}, score={score}"
             )
-        except Exception as e:
-            self.logger.exception(f"❌ Error analizando {symbol}: {e}")
-            await self.notifier.safe_send(f"❌ Error analizando {symbol}\n{str(e)}")
             return
+
+        # ✅ SOLO AQUÍ hay notificación
+        message = (
+            "✅ REACTIVADA\n\n"
+            f"📊 Análisis de {symbol}\n"
+            f"📌 Dirección: {direction.upper()}\n"
+            f"🧠 Decisión: {decision}\n"
+            f"🎯 Score: {score}\n"
+            f"📐 Match: {analysis.get('match_ratio')}%\n"
+            f"🏷️ Grade: {analysis.get('grade')}\n"
+        )
+
+        if context == "reactivation":
+            self.signal_service.mark_signal_reactivated(signal_id)
+
+        await self.notifier.send(message)
+
+        self.logger.info(f"✅ Señal {symbol} REACTIVADA | score={score}")
 
         # ----------------------------------------------------------
         # 📩 CONSTRUIR MENSAJE
