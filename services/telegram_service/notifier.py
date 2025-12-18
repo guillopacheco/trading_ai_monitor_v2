@@ -10,19 +10,18 @@ class Notifier:
         self.bot = bot
         self.chat_id = chat_id
 
-        if not chat_id:
-            logger.error("❌ Notifier inicializado sin chat_id")
-
     async def send(self, text: str):
-        """Método único y seguro para enviar mensajes."""
         if not self.chat_id:
             logger.error("❌ Chat_id vacío. No se puede enviar mensaje.")
             return
-
         try:
             await self.bot.send_message(chat_id=self.chat_id, text=text)
         except Exception as e:
             logger.exception(f"❌ Error enviando mensaje Telegram: {e}")
+
+    # 🔒 Alias de compatibilidad (NO usar en código nuevo)
+    async def safe_send(self, text: str):
+        await self.send(text)
 
     # ------------------------------------------------------------------
 

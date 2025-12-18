@@ -40,9 +40,15 @@ class SignalCoordinator:
     # ==============================================================
     # 🚀 ANÁLISIS DE SEÑAL NUEVA
     # ==============================================================
-    async def analyze_new_signal(self, signal: dict):
-        """Analiza una señal recién recibida."""
-        await self._evaluate_signal(signal, context="entry")
+    async def handle_new_signal(self, signal):
+        logger.info(f"🧠 Analizando nueva señal {signal['symbol']}")
+
+        result = await self.analysis_service.analyze_symbol(
+            symbol=signal["symbol"], direction=signal["direction"], context="entry"
+        )
+
+        message = self._format_analysis_message(signal, result)
+        await self.notifier.send(message)
 
     # ==============================================================
     # 🧠 EVALUADOR CENTRAL
