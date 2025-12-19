@@ -36,13 +36,6 @@ class Kernel:
         self.notifier = Notifier(bot=self.bot, chat_id=TELEGRAM_USER_ID)
 
         # ------------------------
-        # 🔁 Reactivation engine
-        # ------------------------
-        from services.reactivation_engine.reactivation_engine import ReactivationEngine
-
-        self.reactivation_engine = ReactivationEngine()
-
-        # ------------------------
         # 📦 Application services
         # ------------------------
         from services.application.analysis_service import AnalysisService
