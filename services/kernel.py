@@ -17,7 +17,6 @@ class Kernel:
 
         # Instancias (se llenan en build)
         self.notifier = None
-        self.reactivation_engine = None
 
         self.analysis_service = None
         self.signal_service = None
@@ -62,7 +61,7 @@ class Kernel:
         self.signal_coordinator = SignalCoordinator(
             signal_service=self.signal_service,
             analysis_service=self.analysis_service,
-            reactivation_engine=self.reactivation_engine,
+            reactivation_engine=None,
             notifier=self.notifier,
         )
 
