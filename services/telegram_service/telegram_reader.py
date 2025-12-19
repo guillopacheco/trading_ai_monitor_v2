@@ -29,9 +29,25 @@ async def start_telegram_reader(app_layer):
         # Aquí enlazas tu parser / save_signal / analyze, etc.
         logger.info(f"📩 Señal recibida: {text[:120]}")
 
-        signal = parse_signal(text)
+        signal = parse_signal(event.message.text)
+        if not signal:
+            return
 
-        # 🔑 ESTO ES LO QUE FALTA
-        await app_layer.signal.handle_new_signal(signal)
+        signal_id = app_layer.signal_service.register_signal(
+            symbol=signal["symbol"],
+            direction=signal["direction"],
+            raw_text=event.message.text,
+        )
+
+        if not signal_id:
+            return
+
+        await app_layer.signal.handle_new_signal(
+            {
+                "id": signal_id,
+                "symbol": signal["symbol"],
+                "direction": signal["direction"],
+            }
+        )
 
     await client.run_until_disconnected()
