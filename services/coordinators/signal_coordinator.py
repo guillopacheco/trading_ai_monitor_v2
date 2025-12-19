@@ -30,13 +30,13 @@ class SignalCoordinator:
     # ==============================================================
     # 🚀 NUEVA SEÑAL
     # ==============================================================
-    async def handle_new_signal(self, signal: dict):
+    async def _evaluate_signal(self, signal, context):
         await self.evaluate_signal(signal, context="entry")
 
     # ==============================================================
     # 🧠 EVALUADOR CENTRAL (ÚNICO)
     # ==============================================================
-    async def evaluate_signal(self, signal: dict, context: str):
+    async def _evaluate_signal(self, signal, context):
         symbol = signal["symbol"]
         direction = signal["direction"]
 
@@ -88,3 +88,5 @@ class SignalCoordinator:
         await self.notifier.send(message)
 
         logger.info(f"📨 Notificado {symbol}: decision={decision} | score={score}")
+
+        def is_running(self) -> bool:

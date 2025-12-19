@@ -31,8 +31,6 @@ async def start_telegram_reader(app_layer):
 
         signal = parse_signal(text)
 
-        await signal_service.save_signal(signal)
-
         # 🔑 ESTO ES LO QUE FALTA
         await app_layer.signal.handle_new_signal(signal)
 

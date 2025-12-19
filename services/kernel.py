@@ -1,72 +1,74 @@
-# services/kernel.py
 import logging
-from config import TELEGRAM_VIP_CHANNEL_ID
-from config import TELEGRAM_USER_ID
-from services.telegram_service.notifier import Notifier
 
-logger = logging.getLogger("kernel")
+logger = logging.getLogger("signal_coordinator")
 
 
-class Kernel:
-    """
-    Kernel = contenedor de dependencias.
-    Construye servicios/coordinators/engines con un contrato estable.
-    """
+class SignalCoordinator:
+    def __init__(self, signal_service, analysis_service, reactivation_engine, notifier):
+        self.signal_service = signal_service
+        self.analysis_service = analysis_service
+        self.reactivation_engine = reactivation_engine
+        self.notifier = notifier
 
-    def __init__(self, bot):
-        self.bot = bot
+        logger.info("🔧 SignalCoordinator inicializado correctamente.")
 
-        # Instancias (se llenan en build)
-        self.notifier = None
-        self.reactivation_engine = None
+    # ==============================================================
+    # 🚀 NUEVA SEÑAL
+    # ==============================================================
+    async def handle_new_signal(self, signal: dict):
+        await self.evaluate_signal(signal, context="entry")
 
-        self.analysis_service = None
-        self.signal_service = None
-        self.operation_service = None
+    # ==============================================================
+    # 🔁 AUTO REACTIVACIÓN
+    # ==============================================================
+    async def auto_reactivate(self, limit: int = 10):
+        pending = self.signal_service.get_pending_signals(limit=limit) or []
 
-        self.signal_coordinator = None
+        if not pending:
+            logger.info("📭 No hay señales pendientes.")
+            return
 
-        self.open_position_engine = None
+        for signal in pending:
+            await self.evaluate_signal(signal, context="reactivation")
 
-    def build(self):
-        """
-        Construye todo con imports locales para evitar ciclos.
-        """
-        # --- Notifier (requiere bot)
+    # ==============================================================
+    # 🧠 MÉTODO ÚNICO CENTRAL
+    # ==============================================================
+    async def evaluate_signal(self, signal: dict, context: str):
+        symbol = signal["symbol"]
+        direction = signal["direction"]
 
-        self.notifier = Notifier(bot=self.bot, chat_id=TELEGRAM_USER_ID)
+        logger.info(f"🔍 Evaluando {symbol} | contexto={context}")
 
-        # --- ReactivationEngine (NO pasar notifier por keyword; tu clase no lo acepta)
-        from services.reactivation_engine.reactivation_engine import ReactivationEngine
-
-        self.reactivation_engine = ReactivationEngine()
-
-        # --- Servicios de aplicación
-        from services.application.analysis_service import AnalysisService
-        from services.application.signal_service import SignalService
-        from services.application.operation_service import OperationService
-
-        # OJO: OperationService en tu proyecto requiere notifier en __init__
-        self.analysis_service = AnalysisService()
-        self.signal_service = SignalService()
-        self.operation_service = OperationService(self.notifier)
-
-        # --- Coordinators
-        from services.coordinators.signal_coordinator import SignalCoordinator
-
-        self.signal_coordinator = SignalCoordinator(
-            signal_service=self.signal_service,
-            analysis_service=self.analysis_service,
-            reactivation_engine=self.reactivation_engine,
-            notifier=self.notifier,
+        analysis = await self.analysis_service.analyze_symbol(
+            symbol=symbol,
+            direction=direction,
+            context=context,
         )
 
-        # --- Open position engine
-        from services.open_position_engine.open_position_engine import (
-            OpenPositionEngine,
+        allowed = analysis.get("allowed", False)
+
+        # ❌ FILTRO CRÍTICO (Commit 4)
+        if context == "reactivation" and not allowed:
+            logger.info(f"⏳ Señal {symbol} aún no apta para reactivar")
+            return
+
+        # ----------------------------------------------------------
+        # 📩 MENSAJE
+        # ----------------------------------------------------------
+        header = "♻️ REACTIVADA" if context == "reactivation" else "🚀 ANÁLISIS SEÑAL"
+
+        message = (
+            f"{header}\n\n"
+            f"📊 {symbol}\n"
+            f"📌 Dirección: {direction.upper()}\n"
+            f"🧠 Decisión: {analysis.get('decision')}\n"
+            f"🎯 Score: {analysis.get('technical_score')}\n"
+            f"📐 Match: {analysis.get('match_ratio')}%\n"
+            f"🏷️ Grade: {analysis.get('grade')}\n"
         )
 
-        self.open_position_engine = OpenPositionEngine(notifier=self.notifier)
+        if context == "reactivation":
+            self.signal_service.mark_reactivated(signal["id"])
 
-        logger.info("✅ Kernel build() completado correctamente.")
-        return self
+        await self.notifier.send(message)

@@ -6,22 +6,25 @@ logger = logging.getLogger("notifier")
 
 
 class Notifier:
+    """
+    Contrato ÚNICO:
+    - constructor requiere bot y chat_id
+    - único método público: send(text)
+    """
+
     def __init__(self, bot, chat_id: int):
+        if not chat_id:
+            raise ValueError("❌ Notifier requiere chat_id válido")
         self.bot = bot
         self.chat_id = chat_id
 
     async def send(self, text: str):
-        if not self.chat_id:
-            logger.error("❌ Chat_id vacío. No se puede enviar mensaje.")
-            return
         try:
-            await self.bot.send_message(chat_id=self.chat_id, text=text)
+            await self.bot.send_message(
+                chat_id=self.chat_id, text=text, parse_mode="Markdown"
+            )
         except Exception as e:
             logger.exception(f"❌ Error enviando mensaje Telegram: {e}")
-
-    # 🔒 Alias de compatibilidad (NO usar en código nuevo)
-    async def safe_send(self, text: str):
-        await self.send(text)
 
     # ------------------------------------------------------------------
 
