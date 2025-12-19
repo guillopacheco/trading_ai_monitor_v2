@@ -1,23 +1,28 @@
+# services/coordinators/signal_coordinator.py
 import logging
 
 logger = logging.getLogger("signal_coordinator")
 
 
 class SignalCoordinator:
+    """
+    Coordinador ÚNICO de señales:
+    - entrada nueva
+    - reactivación
+    """
+
     def __init__(self, signal_service, analysis_service, reactivation_engine, notifier):
         self.signal_service = signal_service
         self.analysis_service = analysis_service
-        self.reactivation_engine = reactivation_engine
         self.notifier = notifier
 
         logger.info("🔧 SignalCoordinator inicializado correctamente.")
 
-    def is_running(self) -> bool:
-        """
-        Indica si el coordinador está activo.
-        Usado por /estado.
-        """
-        return True
+    # ==============================================================
+    # 🚀 NUEVA SEÑAL
+    # ==============================================================
+    async def handle_new_signal(self, signal: dict):
+        await self.evaluate_signal(signal, context="entry")
 
     # ==============================================================
     # 🔁 AUTO REACTIVACIÓN
@@ -26,7 +31,7 @@ class SignalCoordinator:
         pending = self.signal_service.get_pending_signals(limit=limit) or []
 
         if not pending:
-            logger.info("📭 No hay señales pendientes para reactivación.")
+            logger.info("📭 No hay señales pendientes.")
             return
 
         logger.info(f"🔁 Auto-reactivación: {len(pending)} señales pendientes.")
@@ -35,19 +40,13 @@ class SignalCoordinator:
             await self.evaluate_signal(signal, context="reactivation")
 
     # ==============================================================
-    # 🚀 NUEVA SEÑAL
+    # 🧠 MÉTODO ÚNICO CENTRAL (ESTE ERA EL QUE FALTABA)
     # ==============================================================
-    async def _evaluate_signal(self, signal, context):
-        await self.evaluate_signal(signal, context="entry")
-
-    # ==============================================================
-    # 🧠 EVALUADOR CENTRAL (ÚNICO)
-    # ==============================================================
-    async def _evaluate_signal(self, signal, context):
+    async def evaluate_signal(self, signal: dict, context: str):
         symbol = signal["symbol"]
         direction = signal["direction"]
 
-        logger.info(f"🔍 Evaluando señal {symbol} ({context})")
+        logger.info(f"🔍 Evaluando {symbol} | contexto={context}")
 
         analysis = await self.analysis_service.analyze_symbol(
             symbol=symbol,
@@ -56,42 +55,31 @@ class SignalCoordinator:
         )
 
         allowed = analysis.get("allowed", False)
-        decision = analysis.get("decision")
-        score = analysis.get("technical_score")
 
-        # ----------------------------------------------------------
-        # ❌ NO NOTIFICAR si NO reactivó
-        # ----------------------------------------------------------
+        # ❌ FILTRO CRÍTICO: no notificar si NO reactivó
         if context == "reactivation" and not allowed:
-            logger.info(
-                f"⏳ Señal {symbol} aún no apta: decision={decision}, score={score}"
-            )
+            logger.info(f"⏳ Señal {symbol} aún no apta para reactivar")
             return
 
-        # ----------------------------------------------------------
-        # 📩 CONSTRUIR MENSAJE
-        # ----------------------------------------------------------
         header = "♻️ REACTIVADA" if context == "reactivation" else "🚀 ANÁLISIS SEÑAL"
 
         message = (
             f"{header}\n\n"
             f"📊 {symbol}\n"
             f"📌 Dirección: {direction.upper()}\n"
-            f"🧠 Decisión: {decision}\n"
-            f"🎯 Score: {score}\n"
+            f"🧠 Decisión: {analysis.get('decision')}\n"
+            f"🎯 Score: {analysis.get('technical_score')}\n"
             f"📐 Match: {analysis.get('match_ratio')}%\n"
             f"🏷️ Grade: {analysis.get('grade')}\n"
         )
 
-        # ----------------------------------------------------------
-        # ✅ MARCAR REACTIVACIÓN
-        # ----------------------------------------------------------
         if context == "reactivation":
-            self.signal_service.mark_signal_reactivated(signal["id"])
+            self.signal_service.mark_reactivated(signal["id"])
 
-        # ----------------------------------------------------------
-        # 📤 ENVÍO
-        # ----------------------------------------------------------
         await self.notifier.send(message)
 
-        logger.info(f"📨 Notificado {symbol}: decision={decision} | score={score}")
+    # ==============================================================
+    # 🧾 ESTADO
+    # ==============================================================
+    def is_running(self) -> bool:
+        return True
