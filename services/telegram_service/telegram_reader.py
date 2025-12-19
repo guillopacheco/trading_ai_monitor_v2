@@ -1,6 +1,7 @@
 # services/telegram_service/telegram_reader.py
 import asyncio
 import logging
+from services.telegram_service.signal_parser import parse_signal
 from telethon import TelegramClient, events
 from config import API_ID, API_HASH, TELEGRAM_SESSION, TELEGRAM_VIP_CHANNEL_ID
 
