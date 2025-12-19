@@ -12,6 +12,13 @@ class SignalCoordinator:
 
         logger.info("🔧 SignalCoordinator inicializado correctamente.")
 
+    def is_running(self) -> bool:
+        """
+        Indica si el coordinador está activo.
+        Usado por /estado.
+        """
+        return True
+
     # ==============================================================
     # 🔁 AUTO REACTIVACIÓN
     # ==============================================================
@@ -88,5 +95,3 @@ class SignalCoordinator:
         await self.notifier.send(message)
 
         logger.info(f"📨 Notificado {symbol}: decision={decision} | score={score}")
-
-        def is_running(self) -> bool:
