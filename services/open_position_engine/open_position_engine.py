@@ -458,10 +458,10 @@ class OpenPositionEngine:
 
         try:
             if hasattr(self.notifier, "send"):
-                self.notifier.send(msg)
+                await self.notifier.send(msg)
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"❌ Error enviando notificación: {e}")
 
 
 class ReactivationEngine:
