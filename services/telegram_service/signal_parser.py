@@ -10,7 +10,7 @@ def parse_signal(text: str) -> dict | None:
         return None
 
     # 🔎 símbolo tolerante a emojis
-    m_symbol = re.search(r"#([A-Z0-9]+)\s*/\s*USDT", text.upper())
+    m_symbol = re.search(r"#\s*([A-Z0-9]+)[^\w]{0,5}USDT", text.upper())
     if not m_symbol:
         logger.warning("❌ parse_signal: no se detectó símbolo")
         return None

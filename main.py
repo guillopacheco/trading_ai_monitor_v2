@@ -11,6 +11,15 @@ logger = logging.getLogger("main")
 
 
 async def post_init(app: Application):
+
+    try:
+        from database import init_db
+
+        init_db()
+    except Exception as e:
+        logger.exception(f"❌ Error inicializando base de datos: {e}")
+        raise
+
     # 1) Construir capa aplicación con BOT real
     app.app_layer = ApplicationLayer(app.bot)
 
