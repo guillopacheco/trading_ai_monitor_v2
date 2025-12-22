@@ -80,6 +80,13 @@ def evaluate_smart_entry(snapshot: dict, major_trend: dict, direction: str) -> d
     entry_score = max(0, min(100, entry_score))
 
     # ================================================
+    # EXCEPCIÓN DE CONTINUACIÓN POR TENDENCIA MAYOR
+    # ================================================
+    major_trend_aligned = (direction == "long" and major_code >= 2) or (
+        direction == "short" and major_code <= -2
+    )
+
+    # ================================================
     # CLASIFICACIÓN (A–D)
     # ================================================
     if entry_score >= 75:
@@ -103,10 +110,16 @@ def evaluate_smart_entry(snapshot: dict, major_trend: dict, direction: str) -> d
         entry_mode = "block"
         reasons.append("Condiciones técnicas insuficientes")
 
-    # Bias de reversión → bloquear siempre si score es bajo
+    # Bias de reversión: solo bloquea si NO hay tendencia mayor alineada
     if "reversal" in bias_code and entry_grade in ("C", "D"):
-        entry_mode = "block"
-        reasons.append("Smart Bias indica reversión fuerte en contra")
+        if major_trend_aligned:
+            entry_mode = "warn"
+            reasons.append(
+                "Bias de reversión ignorado por tendencia mayor fuerte a favor"
+            )
+        else:
+            entry_mode = "block"
+            reasons.append("Smart Bias indica reversión fuerte en contra")
 
     # ================================================
     # RETORNO UNIFICADO
