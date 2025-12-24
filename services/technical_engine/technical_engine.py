@@ -206,6 +206,42 @@ def _build_final_decision(
         direction=direction,
     )
 
+    # ============================================================
+    #   DETECCIÓN DE MOMENTUM INTRADÍA (FASE 1)
+    # ============================================================
+
+    # Indicadores ya presentes en snapshot
+    rsi_15m = snapshot.get("rsi", {}).get("15m")
+    macd_15m = snapshot.get("macd", {}).get("15m", {})
+
+    macd_hist = macd_15m.get("histogram")
+    macd_hist_prev = macd_15m.get("histogram_prev")
+
+    momentum_intraday = False
+
+    if technical_score >= 70:
+        if direction == "long":
+            if (
+                rsi_15m is not None
+                and rsi_15m >= 55
+                and macd_hist is not None
+                and macd_hist_prev is not None
+                and macd_hist > macd_hist_prev
+                and macd_hist > 0
+            ):
+                momentum_intraday = True
+
+        elif direction == "short":
+            if (
+                rsi_15m is not None
+                and rsi_15m <= 45
+                and macd_hist is not None
+                and macd_hist_prev is not None
+                and macd_hist < macd_hist_prev
+                and macd_hist < 0
+            ):
+                momentum_intraday = True
+
     reasons = []
     reasons.extend(div_reasons)
 
@@ -233,10 +269,21 @@ def _build_final_decision(
         and smart_entry.get("entry_mode") != "block"
     )
 
+    # ============================================================
+    #   OVERRIDE POR MOMENTUM INTRADÍA (CONTROLADO)
+    # ============================================================
+
+    decision = "enter" if allowed else "skip"
+
+    if decision == "skip" and momentum_intraday:
+        decision = "enter_momentum"
+        allowed = True
+        reasons.append("Override por momentum intradía fuerte")
+
     return {
         "symbol": snapshot.get("symbol"),
         "context": "entry",
-        "decision": "enter" if allowed else "skip",
+        "decision": decision,
         "allowed": allowed,
         "direction": direction,
         "match_ratio": match_ratio,
